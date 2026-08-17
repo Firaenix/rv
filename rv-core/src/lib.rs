@@ -2,5 +2,6 @@
 //! `.review/` I/O. Nothing here may touch a terminal, and `jj_lib` is confined to
 //! [`vcs`] so that a jj-lib upgrade has a one-file blast radius.
 
+pub mod diff;
 pub mod model;
 pub mod vcs;
