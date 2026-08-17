@@ -9,10 +9,21 @@
 //! under review.
 //!
 //! [`Store::append_comment`] is write-through: it persists to
-//! `.review/comments.json` and `.review/snapshots/<id>` before returning, and
-//! there is no in-memory cache in front of either file, so a crash mid-review
-//! can lose at most the comment currently being written, never one already
-//! appended.
+//! `.review/snapshots/<id>` and then `.review/comments.json` before
+//! returning, with no in-memory cache in front of either file. Every write
+//! this module makes — those two, plus `session.toml` and the
+//! `.git/info/exclude` update — goes through [`write_atomic`]: new content
+//! is written to a fresh temp file in the destination's own directory,
+//! fsynced, then renamed into place. `rename` on POSIX either completes
+//! wholly or not at all, so a reader can never observe a half-written file;
+//! a crash mid-write leaves the *previous* complete contents exactly as they
+//! were, never a truncated or corrupted mix of old and new. `comments.json`
+//! is the authority on which comments exist. Because its snapshot is
+//! written first, a crash between the two writes can strand an orphaned
+//! snapshot file with no matching entry in `comments.json` (harmless —
+//! nothing looks a snapshot up except by an id already found in
+//! `comments.json`), but never the reverse: a comment recorded in
+//! `comments.json` whose snapshot was never written.
 //!
 //! On-disk formats are chosen to be readable by a human poking around
 //! `.review/`, not just by `rv` itself: `comments.json` is pretty-printed,
@@ -23,17 +34,25 @@
 
 use std::fs;
 use std::io::ErrorKind;
+use std::io::Write as _;
 use std::path::Path;
 use std::path::PathBuf;
 
 use serde::Deserialize;
 use serde::Serialize;
+use tempfile::Builder;
 
 use crate::model::Anchor;
 use crate::model::ChangeRef;
 
 /// The line [`Store::ensure_excluded`] appends to `.git/info/exclude`.
 const EXCLUDE_LINE: &str = "/.review/";
+
+/// Prefix on the temp file [`write_atomic`] creates before renaming it into
+/// place, so a leftover (only possible if the process is killed between the
+/// `fsync` and the `rename` — every other early return drops and so deletes
+/// the [`tempfile::NamedTempFile`]) is easy to recognize as `rv`'s.
+const ATOMIC_TEMP_PREFIX: &str = ".rv-store-";
 
 /// Errors from reading or writing `.review/`.
 #[derive(Debug, thiserror::Error)]
@@ -165,7 +184,7 @@ impl Store {
         }
         updated.push_str(EXCLUDE_LINE);
         updated.push('\n');
-        fs::write(&path, updated).map_err(|source| Error::Io { path, source })?;
+        write_atomic(&path, updated.as_bytes())?;
         Ok(true)
     }
 
@@ -173,8 +192,7 @@ impl Store {
     pub fn write_session(&self, session: &Session) -> Result<(), Error> {
         let serialized = toml::to_string_pretty(session)
             .map_err(|source| Error::SerializeSession(Box::new(source)))?;
-        let path = self.session_path();
-        fs::write(&path, serialized).map_err(|source| Error::Io { path, source })
+        write_atomic(&self.session_path(), serialized.as_bytes())
     }
 
     /// Reads and parses `session.toml`.
@@ -206,9 +224,14 @@ impl Store {
     /// Persists `comment`: upserts it by `id` into `comments.json` (an
     /// existing entry with the same id is updated in place, keeping its
     /// position; a new id is appended) and writes its anchor's context lines
-    /// verbatim to `.review/snapshots/<id>`. Both writes complete before this
-    /// returns — there is no buffering, so a crash right after this call
-    /// cannot lose the comment.
+    /// verbatim to `.review/snapshots/<id>`. Both writes go through
+    /// [`write_atomic`] and complete before this returns — there is no
+    /// buffering, so a crash right after this call cannot lose the comment.
+    ///
+    /// The snapshot is written first and `comments.json` — the authority on
+    /// which comments exist — last, so a crash between the two can only
+    /// leave a harmless orphaned snapshot file, never a comment that
+    /// `comments.json` claims exists but whose snapshot was never written.
     pub fn append_comment(&self, comment: &Comment) -> Result<(), Error> {
         let mut comments = self.comments()?;
         match comments
@@ -218,21 +241,14 @@ impl Store {
             Some(existing) => *existing = comment.clone(),
             None => comments.push(comment.clone()),
         }
-
         let serialized =
             serde_json::to_string_pretty(&comments).map_err(Error::SerializeComments)?;
-        let comments_path = self.comments_path();
-        fs::write(&comments_path, serialized).map_err(|source| Error::Io {
-            path: comments_path,
-            source,
-        })?;
 
         let snapshot_path = self.snapshots_dir().join(&comment.id);
         let snapshot = comment.anchor.context.join("\n");
-        fs::write(&snapshot_path, snapshot).map_err(|source| Error::Io {
-            path: snapshot_path,
-            source,
-        })
+        write_atomic(&snapshot_path, snapshot.as_bytes())?;
+
+        write_atomic(&self.comments_path(), serialized.as_bytes())
     }
 
     /// Where the markdown export (a later task) writes review feedback.
@@ -260,4 +276,51 @@ impl Store {
     fn exclude_path(&self) -> PathBuf {
         self.root.join(".git").join("info").join("exclude")
     }
+}
+
+/// Writes `contents` to `path` without ever leaving `path` itself partially
+/// written.
+///
+/// The bytes go to a fresh, uniquely-named temp file created in `path`'s own
+/// directory — never a shared temp directory, since `rename` is only atomic
+/// when source and destination share a filesystem — and are fsynced there
+/// (so the write survives a power loss, not just a killed process) before
+/// the temp file is renamed onto `path`. `rename` on POSIX is atomic: any
+/// reader of `path` sees either the old complete contents or the new
+/// complete contents, never a mix. This function does not additionally
+/// fsync `path`'s parent directory after the rename, so it does not
+/// guarantee the *directory entry* update itself survives a power loss the
+/// instant after `persist` returns — closing that gap needs an extra
+/// directory fsync this module skips as unwarranted complexity for a local
+/// review scratch directory.
+fn write_atomic(path: &Path, contents: &[u8]) -> Result<(), Error> {
+    let dir = path.parent().ok_or_else(|| Error::Io {
+        path: path.to_owned(),
+        source: std::io::Error::new(
+            ErrorKind::InvalidInput,
+            "path has no parent directory to hold its temp file",
+        ),
+    })?;
+
+    let mut temp = Builder::new()
+        .prefix(ATOMIC_TEMP_PREFIX)
+        .suffix(".tmp")
+        .tempfile_in(dir)
+        .map_err(|source| Error::Io {
+            path: dir.to_owned(),
+            source,
+        })?;
+    temp.write_all(contents).map_err(|source| Error::Io {
+        path: path.to_owned(),
+        source,
+    })?;
+    temp.as_file().sync_all().map_err(|source| Error::Io {
+        path: path.to_owned(),
+        source,
+    })?;
+    temp.persist(path).map_err(|error| Error::Io {
+        path: path.to_owned(),
+        source: error.error,
+    })?;
+    Ok(())
 }

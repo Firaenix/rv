@@ -126,6 +126,104 @@ fn snapshot_file_written() {
     assert_eq!(snapshot, comment.anchor.context.join("\n"));
 }
 
+/// Every write in the store goes through a temp-file-plus-rename helper so
+/// that a destination file is never observed half-written. On the happy
+/// path — no crash, no kill — that temp file is renamed away, so after a
+/// batch of successful appends (inserts and an update, exercising both
+/// `write_atomic` call sites in `append_comment`) neither `.review/` nor
+/// `.review/snapshots/` should have any of the helper's temp files left
+/// behind.
+#[test]
+fn append_comment_leaves_no_stray_temp_files() {
+    let repo = repo_root();
+    let store = Store::open(repo.path()).expect("open store");
+
+    store
+        .append_comment(&sample_comment("c1"))
+        .expect("append c1");
+    store
+        .append_comment(&sample_comment("c2"))
+        .expect("append c2");
+    let mut updated = sample_comment("c1");
+    updated.state = CommentState::Resolved;
+    store.append_comment(&updated).expect("append updated c1");
+
+    assert_no_stray_temp_files(&repo.path().join(".review"));
+    assert_no_stray_temp_files(&repo.path().join(".review/snapshots"));
+}
+
+/// Simulates a crash between "temp file written" and "temp file renamed
+/// into place": a stray, half-written temp file is dropped next to an
+/// already-good `comments.json`, without ever renaming it on top. This is
+/// exactly the write `write_atomic` would have been doing at the moment of
+/// an interruption. Because reads only ever look at `comments.json` itself
+/// — never at sibling temp files — the last good state must still be
+/// exactly what `comments()` returns: the interrupted write can strand a
+/// stray file, but it can never corrupt the file readers actually consult.
+#[test]
+fn interrupted_write_never_disturbs_last_good_comments_json() {
+    let repo = repo_root();
+    let store = Store::open(repo.path()).expect("open store");
+    let good = sample_comment("c1");
+    store.append_comment(&good).expect("append good comment");
+
+    let stray_temp = repo.path().join(".review/.rv-store-crash-simulated.tmp");
+    fs::write(
+        &stray_temp,
+        b"not valid json: this is what a half-written\n",
+    )
+    .expect("seed stray temp file simulating an interrupted write");
+
+    let comments = store
+        .comments()
+        .expect("comments() must still read the last good file");
+    assert_eq!(comments, vec![good]);
+}
+
+/// Proves the write is a wholesale replacement, not an in-place patch: after
+/// shrinking a comment's body (so the freshly serialized `comments.json` is
+/// shorter than what was on disk before), the file on disk is byte-for-byte
+/// exactly the new serialization — no trailing bytes surviving from the
+/// longer previous version, which a non-atomic in-place overwrite (write
+/// new bytes over old without truncating) could otherwise leave behind.
+#[test]
+fn append_comment_shrinking_body_leaves_no_residual_bytes() {
+    let repo = repo_root();
+    let store = Store::open(repo.path()).expect("open store");
+
+    let mut long = sample_comment("c1");
+    long.body = "x".repeat(500);
+    store
+        .append_comment(&long)
+        .expect("append long-bodied comment");
+
+    let mut short = sample_comment("c1");
+    short.body = "y".to_owned();
+    store.append_comment(&short).expect("append shrunk comment");
+
+    let on_disk =
+        fs::read_to_string(repo.path().join(".review/comments.json")).expect("read comments.json");
+    let expected = serde_json::to_string_pretty(&vec![short]).expect("serialize expected");
+    assert_eq!(on_disk, expected);
+}
+
+/// A directory listing helper for [`append_comment_leaves_no_stray_temp_files`]:
+/// none of `write_atomic`'s temp files (recognizable by the module's
+/// `.rv-store-` prefix) should remain in `dir`.
+fn assert_no_stray_temp_files(dir: &std::path::Path) {
+    let stray: Vec<String> = fs::read_dir(dir)
+        .expect("read dir")
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.contains(".rv-store-"))
+        .collect();
+    assert!(
+        stray.is_empty(),
+        "stray temp files left in {}: {stray:?}",
+        dir.display()
+    );
+}
+
 /// `write_session` followed by `read_session` (even from a freshly opened
 /// `Store`) reproduces the exact `Session` that was written.
 #[test]
