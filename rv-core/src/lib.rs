@@ -5,4 +5,5 @@
 pub mod anchor;
 pub mod diff;
 pub mod model;
+pub mod store;
 pub mod vcs;
