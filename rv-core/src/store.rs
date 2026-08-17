@@ -11,8 +11,9 @@
 //! [`Store::append_comment`] is write-through: it persists to
 //! `.review/snapshots/<id>` and then `.review/comments.json` before
 //! returning, with no in-memory cache in front of either file. Every write
-//! this module makes — those two, plus `session.toml` and the
-//! `.git/info/exclude` update — goes through [`write_atomic`]: new content
+//! this module makes — those two, plus `session.toml`,
+//! `REVIEW-FEEDBACK.md` and the `.git/info/exclude` update — goes through
+//! [`write_atomic`]: new content
 //! is written to a fresh temp file in the destination's own directory,
 //! fsynced, then renamed into place. `rename` on POSIX either completes
 //! wholly or not at all, so a reader can never observe a half-written file;
@@ -251,8 +252,22 @@ impl Store {
         write_atomic(&self.comments_path(), serialized.as_bytes())
     }
 
-    /// Where the markdown export (a later task) writes review feedback.
-    /// This module never writes the file itself.
+    /// Overwrites `REVIEW-FEEDBACK.md` with `document`.
+    ///
+    /// Atomic like every other file this module writes, which matters more
+    /// here than anywhere else: the markdown is the one file another program
+    /// reads *while* `rv` is running, and it is rewritten from
+    /// `comments.json` after every saved comment. A reader that caught a
+    /// half-written document would see an entry without its anchor marker, or
+    /// a truncated reply.
+    ///
+    /// Rendering the document is [`crate::markdown::render`]'s job; this
+    /// method only puts the bytes on disk.
+    pub fn write_markdown(&self, document: &str) -> Result<(), Error> {
+        write_atomic(&self.markdown_path(), document.as_bytes())
+    }
+
+    /// Where [`Store::write_markdown`] puts the review feedback document.
     pub fn markdown_path(&self) -> PathBuf {
         self.review_dir().join("REVIEW-FEEDBACK.md")
     }

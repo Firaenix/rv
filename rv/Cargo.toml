@@ -18,6 +18,8 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow.workspace = true
+# Comment ids are a short blake3 digest of the location and body they cover.
+blake3.workspace = true
 clap.workspace = true
 # The terminal stack. Unused until the TUI lands; declared here so the crate's
 # dependency set does not churn when it does.

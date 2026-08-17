@@ -2,9 +2,10 @@
 //!
 //! Every invocation assembles the same thing first — a [`Review`] over one
 //! revision range, via [`session::build`] — and only then branches on what the
-//! user asked for. Two subcommands exist so far: `render` writes
-//! `.review/REVIEW-FEEDBACK.md`, and `status` reports the range, its stack, its
-//! files and its comment counts as text or as JSON.
+//! user asked for. With no subcommand that is the interactive reviewer. Two
+//! subcommands exist beside it, for the same review without a terminal:
+//! `render` writes `.review/REVIEW-FEEDBACK.md`, and `status` reports the
+//! range, its stack, its files and its comment counts as text or as JSON.
 //!
 //! # Naming the range
 //!
@@ -22,7 +23,6 @@
 //! exits non-zero, so an unreadable workspace or an empty range reads as a
 //! sentence rather than a backtrace.
 
-use std::fs;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -30,9 +30,9 @@ use anyhow::Context as _;
 use anyhow::Result;
 use clap::Parser;
 use clap::Subcommand;
+use rv::app::App;
 use rv::session;
 use rv::session::Review;
-use rv_core::markdown;
 use rv_core::model::ChangeKind;
 use rv_core::store::Comment;
 use rv_core::store::CommentState;
@@ -102,23 +102,21 @@ fn run() -> Result<()> {
 
     let review = session::build(&repo_root, cli.from.as_deref(), head.as_deref())?;
 
-    // No subcommand means `render` for now. The TUI task takes this slot: a
-    // bare `rv` will launch the interactive reviewer, and `render` will stay
-    // the way to produce the markdown without one.
-    match cli.command.unwrap_or(Command::Render) {
-        Command::Render => render(&review),
-        Command::Status { json } => status(&review, json),
+    // A bare `rv` is the reviewer; the subcommands are the same review with no
+    // terminal in the way.
+    match cli.command {
+        None => App::run(review),
+        Some(Command::Render) => render(&review),
+        Some(Command::Status { json }) => status(&review, json),
     }
 }
 
 /// Writes `.review/REVIEW-FEEDBACK.md` from the session and its stored
-/// comments.
+/// comments, folding any reply already in the document back into the store
+/// first — see [`session::write_markdown`], which the TUI shares.
 fn render(review: &Review) -> Result<()> {
-    let comments = read_comments(review)?;
-    let document = markdown::render(&review.session, &comments);
-    let path = review.store.markdown_path();
-    fs::write(&path, document).with_context(|| format!("could not write {}", path.display()))?;
-    println!("wrote {}", path.display());
+    session::write_markdown(review)?;
+    println!("wrote {}", review.store.markdown_path().display());
     Ok(())
 }
 
