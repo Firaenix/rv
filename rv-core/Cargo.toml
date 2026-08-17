@@ -1,0 +1,20 @@
+[package]
+name = "rv-core"
+description = "Terminal-free core of rv: jj-lib access, diffs, anchors and .review/ I/O"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+blake3.workspace = true
+futures.workspace = true
+jj-lib.workspace = true
+pollster.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+similar.workspace = true
+# Regular (not dev-only) dependency: diff production writes blobs to temp files
+# so that difftastic, which takes paths rather than stdin, can read them.
+tempfile.workspace = true
+thiserror.workspace = true
+toml.workspace = true
