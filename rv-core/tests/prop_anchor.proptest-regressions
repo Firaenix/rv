@@ -1,0 +1,12 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 7947c84ae6e1c11ed246be24849c403dc2e096a7857949fd0cd4c4529be6f27c # shrinks to raw = ""
+cc 2d87fde85cfd9870b871833403bea835d3f8918ad6dd22dd72e2213773385ca0 # shrinks to raw = ""
+cc 15277b4a0ba1a55dddd2f7a192bab041e3552f687a1a5a00d8f0aab695be34b8 # shrinks to lines = ["", "", "", "", ""], blank_seed = 282511295785464713, pad = "", after = [""], left = false
+cc 19a97e9b796bfc010b5dc47cb872fef26a375a5c41b2ddc93e20cde50a29324c # shrinks to raw = (["\t\u{a0}\t", "\t\u{a0}\t", "\t\u{a0}\t", "\t\u{a0}\t", "\t\u{a0}\t", "\t\u{a0}\t"], ["\t\u{a0}\t", "\t\u{a0}\t"], 4120202606, false)
+cc 72da57a7281e9d3c8f2e04cbe99f4a4728ff01dfe3b7c12879988c9e22037a1d # shrinks to raw = (["\u{a0}", "\u{a0}", "\u{a0}", "\u{a0}"], ["\u{a0}"], 295866231, true)
+cc 07af68ab433f80fe93348eb1e970cdd54bea940bdf5b0e817590ccba71970bfc # shrinks to raw = (["", "", "", "", "", ""], [""], 2716659947, false)

@@ -95,11 +95,40 @@ pub struct App {
     mode: Mode,
     buffer: String,
     status: String,
+    /// Set to skip difftastic for every file in this review and take
+    /// [`diff::compute_with`]'s `similar` fallback instead. See
+    /// [`App::with_fallback_diffs`].
+    force_fallback: bool,
 }
 
 impl App {
     /// Opens `review` in the reviewer, loading the first file's diff.
+    ///
+    /// Which diff engine each file goes through is left to
+    /// [`diff::compute`], which honours `RV_NO_DIFFT`.
     pub fn new(review: Review) -> Result<Self> {
+        Self::open(review, false)
+    }
+
+    /// Opens `review` with difftastic bypassed: every file's diff comes from
+    /// the `similar` fallback.
+    ///
+    /// That is the diff a user with no `difft` on `PATH` gets, and the only one
+    /// that carries [`LineKind::Context`] lines and a
+    /// [`rv_core::diff::DiffSource::Similar`] label — so it is a distinct set
+    /// of branches through this module and through [`crate::ui`], not a
+    /// degraded copy of the difftastic path.
+    ///
+    /// Per-`App` rather than through `RV_NO_DIFFT`, for the same reason
+    /// [`diff::compute_with`] takes the choice as an argument: the environment
+    /// variable is process-wide, and a caller that wants the fallback for
+    /// *this* review should not have to change what every other review in the
+    /// process sees.
+    pub fn with_fallback_diffs(review: Review) -> Result<Self> {
+        Self::open(review, true)
+    }
+
+    fn open(review: Review, force_fallback: bool) -> Result<Self> {
         let diffs = vec![None; review.files.len()];
         let mut app = Self {
             review,
@@ -109,6 +138,7 @@ impl App {
             mode: Mode::Browse,
             buffer: String::new(),
             status: HELP.to_owned(),
+            force_fallback,
         };
         app.load_selected()?;
         Ok(app)
@@ -295,7 +325,11 @@ impl App {
             .read_blob(&session.head_commit, &file.path)
             .with_context(|| format!("could not read {} at the head of the review", file.path))?;
 
-        let diff = diff::compute(old.as_deref(), new.as_deref(), &file.path);
+        let diff = if self.force_fallback {
+            diff::compute_with(old.as_deref(), new.as_deref(), &file.path, false)
+        } else {
+            diff::compute(old.as_deref(), new.as_deref(), &file.path)
+        };
         self.line_index = self.line_index.min(diff.lines.len().saturating_sub(1));
         self.diffs[self.file_index] = Some(diff);
         Ok(())
@@ -346,6 +380,20 @@ impl App {
     /// The outer [`Result`] is reserved for a repository that could not be
     /// read, which is a real failure rather than a refusal.
     ///
+    /// Two of the refusals below are unreachable through the keyboard and are
+    /// kept as defence in depth rather than as behaviour any test can drive.
+    /// "the review covers no change to comment on" needs an empty
+    /// `session.changes`, but [`rv_core::vcs::Repository::stack`] returns
+    /// `EmptyRange` for an empty range, so no [`Review`] — and therefore no
+    /// `App` — can be built with one. "this line has no number on the side it
+    /// belongs to" needs a [`rv_core::diff::DiffLine`] whose anchored side
+    /// carries no number, and every producer in [`rv_core::diff`] numbers the
+    /// side it dispatches to: difftastic's paired entries set both sides, an
+    /// unpaired lhs is `Removed` with `left`, an unpaired rhs is `Added` with
+    /// `right`, `all_added`/`all_removed` number their own side, and the
+    /// `similar` fallback's Equal/Delete/Insert each set the side
+    /// [`anchored_side`] sends them to.
+    ///
     /// The body is stored trimmed: surrounding whitespace is a slip of the
     /// keyboard, and it would otherwise end up in the comment id.
     fn prepare_comment(&self) -> Result<Result<Comment, String>> {
@@ -387,7 +435,7 @@ impl App {
         let anchor = anchor::create(path, side, number, text.as_deref().unwrap_or_default());
 
         Ok(Ok(Comment {
-            id: comment_id(&change.change_id, path, number, body),
+            id: comment_id(&change.change_id, path, side, number, body),
             change_id: change.change_id.clone(),
             commit_id: change.commit_id.clone(),
             anchor,
@@ -418,8 +466,38 @@ pub fn anchored_side(kind: LineKind) -> Side {
 /// Derived rather than random so that re-typing the same comment on the same
 /// line of the same change upserts the entry it already made instead of
 /// stacking a duplicate beside it.
-fn comment_id(change_id: &str, path: &str, line: u32, body: &str) -> String {
-    let seed = format!("{change_id}:{path}:{line}:{body}");
+///
+/// # Why `side` is part of the seed
+///
+/// The *whole* location has to be in here, and a location is a side as well as
+/// a path and a number. difftastic aligns a rewritten line with its counterpart
+/// and gives both halves of the pair both numbers, so a rewrite that stays at
+/// the same line number (nothing inserted above it) produces a removed line and
+/// an added line at, say, `same.rs:2` on the base and head sides respectively.
+/// Without the side, one sentence typed on each half — "which of these two is
+/// right?" — seeds two identical ids, and
+/// [`rv_core::store::Store::append_comment`] upserts by id: the second save
+/// silently replaces the first, snapshot and all, under a "comment saved"
+/// status line. That is the loss [`ID_CHARS`] argues must never happen, and
+/// unlike a digest collision it happens with probability 1.
+///
+/// The path alone is not enough, even though [`App::prepare_comment`] resolves
+/// it per side: the two paths differ only for a rename.
+///
+/// Adding the side changed every id this function produces. Nothing recomputes
+/// an id to find a comment — `comments.json` is keyed by the id it stored,
+/// snapshots are filed under it, and `session::fold_replies` matches the id a
+/// document's marker carries against the stored one — so a review in progress
+/// keeps working across the change: its comments, snapshots and replies all
+/// still resolve. The only visible effect is that re-typing a comment saved
+/// *before* the change no longer upserts that entry; it appends a second one
+/// beside it. A duplicate is recoverable; the loss above is not.
+fn comment_id(change_id: &str, path: &str, side: Side, line: u32, body: &str) -> String {
+    let side = match side {
+        Side::Left => "left",
+        Side::Right => "right",
+    };
+    let seed = format!("{change_id}:{path}:{side}:{line}:{body}");
     let digest = blake3::hash(seed.as_bytes()).to_hex();
     digest[..ID_CHARS].to_owned()
 }

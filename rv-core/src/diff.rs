@@ -14,6 +14,7 @@
 //! JSON shape this module expects, non-UTF-8 content — degrades to the
 //! `similar` fallback rather than failing the caller.
 
+use std::collections::HashSet;
 use std::io::Write as _;
 use std::path::Path;
 use std::process::Command;
@@ -33,9 +34,11 @@ pub struct FileDiff {
     pub path: String,
     pub lines: Vec<DiffLine>,
     pub source: DiffSource,
-    /// Set when difftastic reports the change as syntactically unchanged
-    /// (e.g. pure reindentation): the lines above are not worth showing a
-    /// reviewer by default.
+    /// Set when the file differs but the difference is not one the lines above
+    /// can show a reviewer, so they are not worth showing by default:
+    /// difftastic's `unchanged` status (e.g. pure reindentation), or — on the
+    /// fallback path — a difference that lives entirely in the line
+    /// terminators, which no line's `text` carries.
     pub suppressed: bool,
 }
 
@@ -108,11 +111,12 @@ pub fn compute_with(
         };
     }
 
+    let (lines, suppressed) = similar_diff(old, new);
     FileDiff {
         path: path.to_owned(),
-        lines: similar_diff(old, new),
+        lines,
         source: DiffSource::Similar,
-        suppressed: false,
+        suppressed,
     }
 }
 
@@ -214,54 +218,169 @@ fn parse_difft_json(
     let old_lines: Vec<&str> = old_text.lines().collect();
     let new_lines: Vec<&str> = new_text.lines().collect();
 
-    let mut lines = Vec::new();
+    // Resolve every entry first, then order and emit. Two things make that
+    // necessary rather than fussy, both of them observed from difft 0.70 and
+    // both of them things a reviewer would see, since the TUI renders
+    // `lines` in order:
+    //
+    // - The same entry can appear in two chunks (old `"b\n\n"` vs new
+    //   `"a\n\n"` yields `[[{lhs:0,rhs:0}],[{lhs:0,rhs:0}]]`), so appending
+    //   chunk after chunk showed a one-line change in a two-line file as four
+    //   lines, the same pair drawn twice.
+    // - Chunks are not ordered by line number (old `"a\nb\nc\nd\n"` vs new
+    //   `"a\nB\nc\nd\ne\n"` reports new line 5 before line 2), so appending
+    //   put the file's last line above its second.
+    let mut seen = HashSet::new();
+    let mut entries = Vec::new();
     for chunk in chunks {
         for entry in chunk.as_array()? {
             let lhs = entry.get("lhs").filter(|value| !value.is_null());
             let rhs = entry.get("rhs").filter(|value| !value.is_null());
-            match (lhs, rhs) {
+            let entry = match (lhs, rhs) {
+                // difftastic aligned these two lines together (they may be
+                // identical apart from an inline change); both sides' line
+                // numbers apply to each of the lines this produces.
                 (Some(lhs), Some(rhs)) => {
-                    // difftastic aligned these two lines together (they may
-                    // be identical apart from an inline change); both sides'
-                    // line numbers apply to each of the lines this produces.
                     let (left, left_text) = line_ref(lhs, &old_lines)?;
                     let (right, right_text) = line_ref(rhs, &new_lines)?;
-                    lines.push(DiffLine {
-                        kind: LineKind::Removed,
-                        left: Some(left),
-                        right: Some(right),
-                        text: left_text,
-                    });
-                    lines.push(DiffLine {
-                        kind: LineKind::Added,
-                        left: Some(left),
-                        right: Some(right),
-                        text: right_text,
-                    });
+                    Entry::Aligned {
+                        left,
+                        left_text,
+                        right,
+                        right_text,
+                    }
                 }
                 (Some(lhs), None) => {
                     let (left, text) = line_ref(lhs, &old_lines)?;
-                    lines.push(DiffLine {
-                        kind: LineKind::Removed,
-                        left: Some(left),
-                        right: None,
-                        text,
-                    });
+                    Entry::Removed { left, text }
                 }
                 (None, Some(rhs)) => {
                     let (right, text) = line_ref(rhs, &new_lines)?;
-                    lines.push(DiffLine {
-                        kind: LineKind::Added,
-                        left: None,
-                        right: Some(right),
-                        text,
-                    });
+                    Entry::Added { right, text }
                 }
                 (None, None) => return None,
+            };
+            // An entry is fully described by the line numbers it carries —
+            // the text comes from those numbers — so a repeat carries no
+            // information and dropping it loses none.
+            if seen.insert(entry.numbers()) {
+                entries.push(entry);
             }
         }
     }
-    Some((lines, source, false))
+
+    order_entries(&mut entries);
+    Some((
+        entries.into_iter().flat_map(Entry::lines).collect(),
+        source,
+        false,
+    ))
+}
+
+/// One chunk entry, resolved against the two files: the base-side line it
+/// drops, the head-side line it introduces, or the two lines difftastic
+/// aligned with each other.
+enum Entry {
+    Removed {
+        left: u32,
+        text: String,
+    },
+    Added {
+        right: u32,
+        text: String,
+    },
+    Aligned {
+        left: u32,
+        left_text: String,
+        right: u32,
+        right_text: String,
+    },
+}
+
+impl Entry {
+    /// The 1-based line numbers this entry carries, which identify it: two
+    /// entries with the same pair say the same thing about the same lines.
+    fn numbers(&self) -> (Option<u32>, Option<u32>) {
+        match self {
+            Entry::Removed { left, .. } => (Some(*left), None),
+            Entry::Added { right, .. } => (None, Some(*right)),
+            Entry::Aligned { left, right, .. } => (Some(*left), Some(*right)),
+        }
+    }
+
+    /// The diff lines this entry becomes. An aligned pair becomes exactly two
+    /// adjacent lines carrying both numbers.
+    fn lines(self) -> Vec<DiffLine> {
+        match self {
+            Entry::Removed { left, text } => vec![DiffLine {
+                kind: LineKind::Removed,
+                left: Some(left),
+                right: None,
+                text,
+            }],
+            Entry::Added { right, text } => vec![DiffLine {
+                kind: LineKind::Added,
+                left: None,
+                right: Some(right),
+                text,
+            }],
+            Entry::Aligned {
+                left,
+                left_text,
+                right,
+                right_text,
+            } => vec![
+                DiffLine {
+                    kind: LineKind::Removed,
+                    left: Some(left),
+                    right: Some(right),
+                    text: left_text,
+                },
+                DiffLine {
+                    kind: LineKind::Added,
+                    left: Some(left),
+                    right: Some(right),
+                    text: right_text,
+                },
+            ],
+        }
+    }
+}
+
+/// Sorts `entries` into the order a reviewer reads the file in: base-side
+/// numbers ascending and head-side numbers ascending at the same time.
+///
+/// The aligned pairs are the fixed points — they are the only entries that
+/// name a line on both sides — so they are laid out in order first, and every
+/// one-sided entry falls into the gap between the two pairs it belongs
+/// between: a removal by its base-side number, an insertion by its head-side
+/// one. Within a gap, removals come before insertions and both come before the
+/// pair that closes it, which is the same order a unified diff would print.
+///
+/// Sorting each side's gaps by that side's own numbers is what keeps *both*
+/// sequences ascending, which sorting by either number alone would not: a
+/// block deleted early in the base file pushes the two sides' numbering apart.
+fn order_entries(entries: &mut [Entry]) {
+    let mut pair_lefts: Vec<u32> = Vec::new();
+    let mut pair_rights: Vec<u32> = Vec::new();
+    for entry in entries.iter() {
+        if let Entry::Aligned { left, right, .. } = entry {
+            pair_lefts.push(*left);
+            pair_rights.push(*right);
+        }
+    }
+    pair_lefts.sort_unstable();
+    pair_rights.sort_unstable();
+
+    // (which gap, what goes first inside it, this entry's own number) — a
+    // stable sort, so entries that tie keep difftastic's own order.
+    entries.sort_by_key(|entry| match entry {
+        Entry::Removed { left, .. } => (pair_lefts.partition_point(|at| at < left), 0, *left),
+        Entry::Added { right, .. } => (pair_rights.partition_point(|at| at < right), 1, *right),
+        Entry::Aligned { left, right, .. } => {
+            (pair_lefts.partition_point(|at| at < left), 2, *right)
+        }
+    });
 }
 
 /// Resolves one side of a chunk entry (`difftastic`'s 0-based `line_number`)
@@ -305,30 +424,91 @@ fn all_removed(text: &str) -> Vec<DiffLine> {
 }
 
 /// The fallback line diff, used when difftastic is skipped, fails to run, or
-/// returns something [`parse_difft_json`] cannot make sense of.
-fn similar_diff(old: Option<&[u8]>, new: Option<&[u8]>) -> Vec<DiffLine> {
+/// returns something [`parse_difft_json`] cannot make sense of. Returns the
+/// lines and whether the diff should be suppressed.
+///
+/// The diff runs over the lines *as this module renders them* — terminators
+/// stripped — not over `similar`'s own tokens, which keep the terminator
+/// attached. Diffing the tokens marked a line as changed when only its
+/// terminator changed, and since `DiffLine::text` is the whole of what a
+/// reviewer sees, that showed up as a `Removed`/`Added` pair whose displayed
+/// text was character-for-character identical: a change with nothing changed
+/// in it. Comparing what is displayed keeps "what changed" and "what is shown"
+/// the same question.
+///
+/// A terminator-only difference is still a difference, though, and the diff
+/// must not go silent about it — it says so through the suppression flag, the
+/// same way difftastic reports the same inputs (`status: "unchanged"`), rather
+/// than by inventing lines. The two sides differ only in their terminators
+/// exactly when they render to the same lines but their decoded text does not
+/// match.
+fn similar_diff(old: Option<&[u8]>, new: Option<&[u8]>) -> (Vec<DiffLine>, bool) {
     let old_text = decode(old.unwrap_or(&[]));
     let new_text = decode(new.unwrap_or(&[]));
-    let diff = similar::TextDiff::from_lines(old_text.as_str(), new_text.as_str());
+    let old_lines = split_lines(&old_text);
+    let new_lines = split_lines(&new_text);
+    let diff = similar::TextDiff::from_slices(&old_lines, &new_lines);
 
-    diff.iter_all_changes()
+    let lines = diff
+        .iter_all_changes()
         .map(|change| {
             let kind = match change.tag() {
                 similar::ChangeTag::Equal => LineKind::Context,
                 similar::ChangeTag::Delete => LineKind::Removed,
                 similar::ChangeTag::Insert => LineKind::Added,
             };
-            let left = index_to_line(change.old_index());
-            let right = index_to_line(change.new_index());
-            let text = change.value().trim_end_matches(['\n', '\r']).to_owned();
             DiffLine {
                 kind,
-                left,
-                right,
-                text,
+                left: index_to_line(change.old_index()),
+                right: index_to_line(change.new_index()),
+                text: change.value().to_owned(),
             }
         })
-        .collect()
+        .collect();
+
+    let suppressed = old_lines == new_lines && old_text != new_text;
+    (lines, suppressed)
+}
+
+/// The lines of `text` as this module renders them: `\r\n`, `\n` and a bare
+/// `\r` all terminate a line — matching what `similar`'s own line tokenizer
+/// recognizes, which is what the fallback used to inherit — the terminator is
+/// not part of the line, and a file ending in a terminator does not gain an
+/// empty last line.
+///
+/// Byte indexing is safe here: `\r` and `\n` are ASCII, so they never occur
+/// inside a multi-byte UTF-8 sequence and every split lands on a character
+/// boundary.
+fn split_lines(text: &str) -> Vec<&str> {
+    let bytes = text.as_bytes();
+    let mut lines = Vec::new();
+    let mut start = 0;
+    let mut at = 0;
+    while at < bytes.len() {
+        match bytes[at] {
+            b'\n' => {
+                lines.push(&text[start..at]);
+                at += 1;
+            }
+            b'\r' => {
+                lines.push(&text[start..at]);
+                at += if bytes.get(at + 1) == Some(&b'\n') {
+                    2
+                } else {
+                    1
+                };
+            }
+            _ => {
+                at += 1;
+                continue;
+            }
+        }
+        start = at;
+    }
+    if start < bytes.len() {
+        lines.push(&text[start..]);
+    }
+    lines
 }
 
 /// `similar`'s 0-based index to this module's 1-based line number.

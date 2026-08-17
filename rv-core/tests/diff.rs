@@ -66,6 +66,81 @@ fn binary() {
     assert!(!diff.suppressed, "{diff:?}");
 }
 
+/// difftastic can report the same change in two chunks: for old `"b\n\n"` vs
+/// new `"a\n\n"`, difft 0.70 returns
+/// `chunks: [[{lhs:0,rhs:0}],[{lhs:0,rhs:0}]]` — the identical entry twice.
+/// Concatenating chunks blindly turned a one-line change in a two-line file
+/// into four diff lines, and the TUI, which windows `diff.lines` in order,
+/// drew the same change twice. The module owns chunk concatenation, so it is
+/// the module that must show the change once.
+///
+/// Needs `difft` on `PATH`, like `changed_line`.
+#[test]
+fn a_change_difftastic_reports_in_two_chunks_is_shown_once() {
+    let old = b"b\n\n";
+    let new = b"a\n\n";
+
+    let diff = compute_with(Some(old), Some(new), "notes.txt", true);
+
+    assert!(
+        matches!(diff.source, DiffSource::Difftastic { .. }),
+        "{diff:#?}"
+    );
+    assert_eq!(diff.lines.len(), 2, "{diff:#?}");
+    assert_eq!(diff.lines[0].kind, LineKind::Removed, "{diff:#?}");
+    assert_eq!(diff.lines[0].text, "b", "{diff:#?}");
+    assert_eq!(diff.lines[0].left, Some(1), "{diff:#?}");
+    assert_eq!(diff.lines[1].kind, LineKind::Added, "{diff:#?}");
+    assert_eq!(diff.lines[1].text, "a", "{diff:#?}");
+    assert_eq!(diff.lines[1].right, Some(1), "{diff:#?}");
+}
+
+/// difftastic's chunks are not ordered by line number: for old
+/// `"a\nb\nc\nd\n"` vs new `"a\nB\nc\nd\ne\n"`, difft 0.70 reports the entry
+/// for new line 5 *before* the entry for line 2. The TUI renders
+/// `diff.lines` in order, so a reviewer was shown the file's last line above
+/// its second. The module must put the lines back in file order.
+///
+/// Needs `difft` on `PATH`, like `changed_line`.
+#[test]
+fn difftastic_chunks_reported_out_of_order_are_shown_in_file_order() {
+    let old = b"a\nb\nc\nd\n";
+    let new = b"a\nB\nc\nd\ne\n";
+
+    let diff = compute_with(Some(old), Some(new), "notes.txt", true);
+
+    assert!(
+        matches!(diff.source, DiffSource::Difftastic { .. }),
+        "{diff:#?}"
+    );
+    let rendered: Vec<String> = diff
+        .lines
+        .iter()
+        .map(|line| {
+            let sigil = match line.kind {
+                LineKind::Added => '+',
+                LineKind::Removed => '-',
+                LineKind::Context => ' ',
+            };
+            format!(
+                "{sigil}{}/{} {}",
+                line.left.map_or_else(|| ".".to_owned(), |n| n.to_string()),
+                line.right.map_or_else(|| ".".to_owned(), |n| n.to_string()),
+                line.text
+            )
+        })
+        .collect();
+    assert_eq!(
+        rendered,
+        vec![
+            "-2/2 b".to_owned(),
+            "+2/2 B".to_owned(),
+            "+./5 e".to_owned()
+        ],
+        "{diff:#?}"
+    );
+}
+
 /// `compute_with(..., false)` never spawns `difft` or reads the environment,
 /// so this test is hermetic regardless of what is installed.
 #[test]
