@@ -229,6 +229,12 @@ impl Store {
     /// [`write_atomic`] and complete before this returns — there is no
     /// buffering, so a crash right after this call cannot lose the comment.
     ///
+    /// `id` is the only identity here. `change_id` deliberately does *not*
+    /// participate: every comment a reviewer leaves during one session
+    /// against the same change shares that change's id, so keying the upsert
+    /// on `change_id` would cap the store at one comment per change and let
+    /// each new note silently overwrite the previous one.
+    ///
     /// The snapshot is written first and `comments.json` — the authority on
     /// which comments exist — last, so a crash between the two can only
     /// leave a harmless orphaned snapshot file, never a comment that

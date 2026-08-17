@@ -111,6 +111,46 @@ fn same_id_updates() {
     assert_eq!(comments[1], second, "c2 is untouched");
 }
 
+/// Comment identity is `id`, not `change_id`. Every comment made during one
+/// review session against the same change carries that change's id, so a
+/// reviewer leaving several notes on one change is the *normal* case, not an
+/// edge case: two comments with distinct ids must both survive, in insertion
+/// order, even though their `change_id` is identical. Upserting by
+/// `change_id` instead would let the second comment silently replace the
+/// first, losing review work with no error.
+#[test]
+fn distinct_ids_with_one_change_id_all_persist() {
+    let repo = repo_root();
+    let store = Store::open(repo.path()).expect("open store");
+
+    let mut first = sample_comment("c1");
+    first.body = "first note on this change".to_owned();
+    first.anchor.line = 3;
+
+    let mut second = sample_comment("c2");
+    second.body = "second note on the same change".to_owned();
+    second.anchor.line = 9;
+
+    assert_eq!(
+        first.change_id, second.change_id,
+        "the whole point: one change, two comments"
+    );
+    assert_ne!(first.id, second.id, "distinct comment identities");
+
+    store.append_comment(&first).expect("append first");
+    store.append_comment(&second).expect("append second");
+
+    let comments = store.comments().expect("read comments");
+
+    assert_eq!(
+        comments.len(),
+        2,
+        "both comments on the same change must persist, got: {comments:#?}"
+    );
+    assert_eq!(comments[0], first, "first comment, in insertion order");
+    assert_eq!(comments[1], second, "second comment, in insertion order");
+}
+
 /// Every appended comment gets a snapshot file named after its id, holding
 /// its anchor's context lines verbatim.
 #[test]
