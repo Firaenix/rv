@@ -45,9 +45,13 @@
 //!   all read. A line that announces itself as `rv:anchor` but carries no
 //!   readable `id=` clears the binding, for the same reason as above.
 //! - **A reply above every marker is dropped**, never bound to a *later* id.
-//! - **An unbalanced fence is text, not a fence.** A fence with no closing
-//!   partner before EOF is treated as an ordinary line, so one stray
-//!   ` ``` ` in a hand-written body cannot swallow every later reply.
+//! - **An unbalanced fence is text, not a fence.** A fence only counts when
+//!   its closing partner sits in the same region — no entry boundary and no
+//!   column-0 `**Comment:**`/`**Reply:**` marker in between (see
+//!   [`bounds_fence`]). Otherwise the opener is an ordinary line. One stray
+//!   ` ``` ` in a comment body can therefore neither swallow the entry's own
+//!   reply by pairing with a fence *inside* it, nor reach across an entry
+//!   boundary to pair with the next entry's context fence.
 //!
 //! `comments.json` — not this file — remains the authority on which comments
 //! exist, so the worst case here is a reply that fails to attach, never a
@@ -119,7 +123,9 @@ const BODY_INDENT: &str = "  ";
 /// and section order are `rv`'s, and only the human resolves anything — an
 /// agent that grades its own homework is how bad fixes land (spec §9).
 const PROTOCOL: &str = "> **For LLMs:** fix each open comment, then append a `**Reply:**` block directly\n\
-     > beneath it. Do not edit `<!-- rv: -->` markers, headings, or section order.\n\
+     > beneath it, with the `**Reply:**` marker at the start of the line — never\n\
+     > indented, never inside a list item, or the reply is not read.\n\
+     > Do not edit `<!-- rv: -->` markers, headings, or section order.\n\
      > Do not mark anything resolved — the human verifies in the TUI.\n";
 
 /// How many characters of a comment body are quoted in a collapsed entry's
@@ -165,9 +171,17 @@ const SECTIONS: [(&str, CommentState, Option<&str>); 4] = [
 ///
 /// Body text is never written at column 0 (see the module docs), so
 /// `parse_replies(&render(session, comments))` returns exactly the replies
-/// `comments` carried, with byte-identical bodies. Only leading and trailing
-/// *blank lines* of a stored body are normalized away, since the document
-/// uses a blank line as the separator before the next structural element.
+/// `comments` carried, in the order rendered, with byte-identical bodies —
+/// including bodies holding fenced code, markers, headings, or an unbalanced
+/// fence.
+///
+/// The claim holds for bodies that are already line-normalized, which is
+/// exactly what `parse_replies` itself produces. Two normalizations happen on
+/// the first pass through and are then stable: leading and trailing *blank
+/// lines* of a body are dropped (the document uses a blank line as the
+/// separator before the next structural element, so they are not
+/// recoverable), and `\r\n` line endings come back as `\n`, since the parser
+/// splits with `str::lines`.
 pub fn render(session: &Session, comments: &[Comment]) -> String {
     let mut out = String::new();
 
@@ -469,6 +483,28 @@ fn is_entry_boundary(line: &str) -> bool {
     is_entry_heading(line) || is_section_heading(line) || line.starts_with("<details")
 }
 
+/// Whether a fence may not span this line, because it opens a new region the
+/// fence cannot belong to: an entry boundary, or the `**Comment:**` /
+/// `**Reply:**` label that starts a body.
+///
+/// Both halves prevent a *loss*. Without the entry-boundary half, an
+/// unbalanced fence pairs with some later entry's context fence, skips the
+/// headings and markers in between, and carries a stale binding into the next
+/// entry. Without the body-label half, an unbalanced fence in a comment body
+/// pairs with the closing fence of its *own* entry's reply, swallowing the
+/// `**Reply:**` marker and losing that reply — a reviewer pasting a partial
+/// snippet into a comment is ordinary, and fenced code in replies is the
+/// common case.
+///
+/// Rendered documents keep every quoted and authored line off column 0, so
+/// none of this can fire on a fence [`render`] wrote. In a hand-edited
+/// document a fence whose *contents* hold a column-0 body label is read as
+/// text instead — truncation inside one entry, never a reply attached to the
+/// wrong comment.
+fn bounds_fence(line: &str) -> bool {
+    is_entry_boundary(line) || line.starts_with(COMMENT_MARKER) || line.starts_with(REPLY_MARKER)
+}
+
 /// `### <n>. …` — the shape [`render_expanded`] writes. A heading an LLM
 /// writes inside a reply (`### What I changed`) is deliberately not one.
 fn is_entry_heading(line: &str) -> bool {
@@ -527,14 +563,7 @@ fn fence_open(line: &str) -> Option<Fence> {
 fn balanced_fence(lines: &[&str], open: usize) -> Option<usize> {
     let fence = fence_open(lines[open])?;
     for (index, line) in lines.iter().enumerate().skip(open + 1) {
-        // No fence may span an entry boundary. Without this an unbalanced
-        // fence would pair with some *later* entry's context fence, skip the
-        // headings and markers in between, and carry a stale binding into
-        // the next entry — the compounding failure, since such a body
-        // re-renders and re-swallows on every cycle. Rendered documents keep
-        // all quoted and authored text off column 0, so this can only fire
-        // on a genuinely unbalanced fence.
-        if is_entry_boundary(line) {
+        if bounds_fence(line) {
             return None;
         }
         let trimmed = line.trim();

@@ -133,6 +133,16 @@ fn open_renders_expanded_with_anchor_and_protocol() {
         document.contains("append a `**Reply:**` block directly"),
         "protocol must ask for appended replies:\n{document}"
     );
+    // The parser only reads a marker at column 0, so the party expected to
+    // honor that has to be told (an indented reply is silently lost).
+    assert!(
+        document.contains("with the `**Reply:**` marker at the start of the line"),
+        "protocol must require the marker at column 0:\n{document}"
+    );
+    assert!(
+        document.contains("never\n> indented, never inside a list item"),
+        "protocol must spell out what breaks it:\n{document}"
+    );
     assert!(
         document.contains("Do not edit `<!-- rv: -->` markers, headings, or section order."),
         "protocol must forbid editing markers/headings/order:\n{document}"
@@ -666,25 +676,24 @@ fn an_unbalanced_fence_in_a_stored_reply_cannot_swallow_the_next_entry() {
     ];
 
     let document = render(&session(), &comments);
-    let replies = parse_replies(&document);
 
-    let bound_to_second: Vec<&(String, String)> =
-        replies.iter().filter(|(id, _)| id == "scnd").collect();
     assert_eq!(
-        bound_to_second,
-        vec![&("scnd".to_owned(), "a perfectly ordinary reply".to_owned())],
-        "the second entry's reply must stay its own:\n{document}"
-    );
-    assert!(
-        replies
-            .iter()
-            .all(|(id, body)| id != "frst" || !body.contains("a perfectly ordinary reply")),
-        "the unbalanced fence swallowed the next entry:\n{document}"
+        parse_replies(&document),
+        vec![
+            (
+                "frst".to_owned(),
+                "I pasted this and lost the closing fence:\n\n```rust\nfn oops() {".to_owned()
+            ),
+            ("scnd".to_owned(), "a perfectly ordinary reply".to_owned()),
+        ],
+        "an unbalanced fence must stay inside its own entry, both bodies intact:\n{document}"
     );
 }
 
 /// Tilde fences hide their contents exactly like backtick fences: an
-/// unrecognized fence would let quoted text be read as structure.
+/// unrecognized fence would let quoted text be read as structure — here a
+/// quoted anchor marker, which would otherwise rebind the parser to an id
+/// that does not exist.
 #[test]
 fn tilde_fences_hide_their_contents_like_backtick_fences() {
     let document = "\
@@ -692,7 +701,6 @@ fn tilde_fences_hide_their_contents_like_backtick_fences() {
 <!-- rv:anchor id=first change=z commit=c side=right line=1 hash=h -->
 
 ~~~markdown
-**Reply:** quoted inside a tilde fence
 <!-- rv:anchor id=dead -->
 ~~~
 
@@ -706,6 +714,84 @@ fn tilde_fences_hide_their_contents_like_backtick_fences() {
         vec![("first".to_owned(), "the real one".to_owned())],
         "a tilde fence must hide its contents"
     );
+}
+
+/// An unbalanced fence in a *comment* body must not pair with the closing
+/// fence of its own entry's reply — that swallows the `**Reply:**` marker and
+/// silently loses the reply. A reviewer pasting a partial snippet into a
+/// comment is ordinary, and a fenced reply is the common case.
+///
+/// The document below is `render`'s own output, so this is the round-trip
+/// closure property, not a hand-edit tolerance.
+#[test]
+fn an_unbalanced_fence_in_a_comment_cannot_swallow_its_own_reply() {
+    let mut partial = comment(
+        "7f3a",
+        FIRST_CHANGE,
+        "a.rs",
+        1,
+        CommentState::AwaitingVerification,
+    );
+    partial.body = "should be:\n```rust\nfn oops() {".to_owned();
+    let reply = "fixed:\n\n```rust\nfn ok() {}\n```";
+
+    let document = render(&session(), &[with_reply(partial, reply)]);
+
+    assert_eq!(
+        parse_replies(&document),
+        vec![("7f3a".to_owned(), reply.to_owned())],
+        "the comment's orphan fence swallowed the reply:\n{document}"
+    );
+}
+
+/// The scan for a closing partner can also reach the end of the document
+/// without meeting a bound — the last entry of the last section, where only
+/// `</details>` follows the body. It must come back empty-handed and leave
+/// the opener as text, not pair the fence with nothing and consume the tail.
+#[test]
+fn an_unbalanced_fence_at_the_end_of_the_document_is_read_as_text() {
+    let dangling = "here:\n\n```rust\nfn ok() {";
+    let last = with_reply(
+        comment("olds", FIRST_CHANGE, "a.rs", 1, CommentState::Outdated),
+        dangling,
+    );
+
+    let document = render(&session(), &[last]);
+
+    assert!(
+        document.trim_end().ends_with("</details>"),
+        "fixture must put the entry last in the document:\n{document}"
+    );
+    assert_eq!(
+        parse_replies(&document),
+        vec![("olds".to_owned(), dangling.to_owned())],
+        "a fence running to EOF must be read as text:\n{document}"
+    );
+}
+
+/// A reply whose body legitimately contains a balanced fence round-trips
+/// byte-identically, in every section — including inside a collapsed
+/// `<details>`, where `</details>` rather than a heading follows the body.
+#[test]
+fn a_fenced_reply_round_trips_byte_identically_in_every_section() {
+    let fenced = "the fix:\n\n```rust\nfn ok() {}\n```\n\nand a trailing paragraph";
+    let states = [
+        ("open", CommentState::Open),
+        ("wait", CommentState::AwaitingVerification),
+        ("done", CommentState::Resolved),
+        ("olds", CommentState::Outdated),
+    ];
+
+    for (id, state) in states {
+        let commented = with_reply(comment(id, FIRST_CHANGE, "a.rs", 1, state), fenced);
+        let document = render(&session(), &[commented]);
+
+        assert_eq!(
+            parse_replies(&document),
+            vec![(id.to_owned(), fenced.to_owned())],
+            "a fenced reply must survive {id}:\n{document}"
+        );
+    }
 }
 
 /// A reply that organizes itself with headings keeps them: truncating would
@@ -829,6 +915,61 @@ fn a_corrupt_anchor_id_drops_the_reply_rather_than_misbinding_it() {
         replies,
         vec![("good".to_owned(), "belongs to good".to_owned())]
     );
+}
+
+/// The closure claim on `render` stated exhaustively: for every body shape
+/// that has given this parser trouble — every marker in the grammar, every
+/// fence arrangement, indentation, the protocol block itself — a stored reply
+/// comes back byte-identical, in each section, whether or not the comment
+/// beside it is equally hostile.
+#[test]
+fn every_body_shape_round_trips_byte_identically() {
+    let shapes = [
+        "plain one-liner",
+        "two\n\nparagraphs",
+        "balanced fence:\n\n```rust\nfn ok() {}\n```",
+        "unbalanced opener:\n\n```rust\nfn oops() {",
+        "bare closer:\n\n```\n\nafter it",
+        "```rust\nfence on the very first line\n```",
+        "**Reply:** quoted at the start of a line",
+        "**Comment:** quoted at the start of a line",
+        "cites <!-- rv:anchor id=dead --> on its own line:\n<!-- rv:anchor id=dead -->",
+        "### 1. `a.rs:1`",
+        "## Open (1)",
+        "<details><summary>hand-written html</summary>\n\n</details>",
+        "</details>",
+        "  two spaces of its own\n    and four",
+        "tilde:\n\n~~~markdown\n**Reply:** hidden\n~~~",
+        "long fence:\n\n`````\nheld ``` inside\n`````",
+        "> **For LLMs:** fix each open comment, then append a `**Reply:**` block\n\
+         > directly beneath it. Do not mark anything resolved.",
+        "trailing hash #\n# leading hash\n#### deep heading",
+    ];
+    let states = [
+        CommentState::AwaitingVerification,
+        CommentState::Resolved,
+        CommentState::Outdated,
+    ];
+
+    for shape in shapes {
+        for state in states {
+            for hostile_comment in [false, true] {
+                let mut subject = comment("7f3a", FIRST_CHANGE, "a.rs", 1, state);
+                if hostile_comment {
+                    subject.body = shape.to_owned();
+                }
+                let subject = with_reply(subject, shape);
+
+                let document = render(&session(), &[subject]);
+
+                assert_eq!(
+                    parse_replies(&document),
+                    vec![("7f3a".to_owned(), shape.to_owned())],
+                    "closure broken for {shape:?} (hostile comment: {hostile_comment}):\n{document}"
+                );
+            }
+        }
+    }
 }
 
 /// The property the milestone rests on: render a document holding every
