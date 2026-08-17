@@ -72,29 +72,44 @@ positional slot.
 root. It is not read from your config, so in a repository with no remotes the
 default range is your entire history.
 
-Every command exits 0 on success and 1 on failure, printing the whole error
-chain as a sentence rather than a backtrace.
+Exit codes: **0** on success (including `--help` and `--version`), **1** when
+`rv` itself fails — an unreadable workspace, an unresolvable revision, an empty
+range, no terminal — and **2** for a command line clap rejects, such as an
+unknown flag. Failures print the whole error chain as a sentence rather than a
+backtrace.
 
 ### Example
+
+Real output from `rv` reviewing its own repository, with the middle of each list
+elided at the `…` markers:
 
 ```
 $ rv status
 revset  trunk()..@
 base    0000000000000000000000000000000000000000
-head    5deca3b318df5aa050f08ae19f65e4805c3f9975
+head    2b9795343e3de90321d23e92e13c8efb6a30e613
 
-changes (16)
-  uspywkpvwqtypzsqrwmptwpymlvvrtok 5deca3b318df5aa050f08ae19f65e4805c3f9975 (no description set)
-  mspsnktlqkkmpyyqunnolnwqnnuvwkuv c960123dbb78d6cec5c61e0406fe66ce0301efad fix(rv): widen comment ids
+changes (17)
+  ntoxqqukosxynuuymkrsllvymmsnsmxp 2b9795343e3de90321d23e92e13c8efb6a30e613 (no description set)
+  uspywkpvwqtypzsqrwmptwpymlvvrtok fbad2ee3477848ec4350606e4961374f8bd24bb5 docs(rv): README and milestone-1 dogfood verification
+  mspsnktlqkkmpyyqunnolnwqnnuvwkuv c960123dbb78d6cec5c61e0406fe66ce0301efad fix(rv): widen comment ids and display the anchored line number
   …
+  nowwnlnmvkwonnvtrspxrrxnprsupkvs 38c8c68bf0bd9f88aa93cacce4dbd9512a670df0 docs: rv design spec, milestone-1 implementation plan, and handoff
 
-files (27)
-  added     rv-core/src/anchor.rs
-  modified  rv-core/src/lib.rs
+files (28)
+  added     Cargo.lock
+  added     Cargo.toml
+  added     README.md
   …
+  added     rv/tests/cli.rs
 
-comments  1 open, 0 awaiting verification, 0 resolved, 0 outdated
+comments  0 open, 0 awaiting verification, 0 resolved, 0 outdated
 ```
+
+Every file reads `added` there only because this repository's whole history is
+one stack with no merge base — `trunk()` degrades to the root commit when there
+are no remotes. In a normal repository you will see `modified`, `removed` and
+`renamed` too.
 
 Change ids are shown the way `jj log` shows them (the reverse-hex `z`–`k`
 alphabet), so you can paste one straight back into a jj command.
@@ -269,14 +284,18 @@ stack. Known and deliberate gaps:
   since the last jj command are invisible to it — a file you just created will
   not appear in the review at all. Run any jj command (`jj status` will do) to
   snapshot, then run `rv`.
-- **A non-colocated repository is not protected.** The exclude mechanism is
-  `.git/info/exclude` and nothing else. In a repository created with
-  `git.colocate = false` there is no top-level `.git/`, so `rv` creates one
-  containing just `info/exclude` — a file jj never reads — and reports success.
-  `.review/` is then visible to jj and gets snapshotted into the change under
-  review. Colocation is jj's default, so this is an edge case, but `rv` does not
-  currently detect or warn about it. Check `jj status` after your first `rv` run
-  in a new repository.
+- **A workspace with no top-level `.git/` is not protected.** The exclude
+  mechanism is `.git/info/exclude` and nothing else, and `rv` creates that path
+  unconditionally rather than checking whether a git repository is really there.
+  So in any workspace root without a sibling `.git/`, `rv` invents one
+  containing a single `info/exclude` file that jj never reads, reports success,
+  and leaves `.review/` visible — where jj then snapshots it straight into the
+  change you are reviewing. This is not only the `git.colocate = false` case: it
+  covers repositories where colocation was turned off with
+  `jj git colocation disable`, and **every secondary workspace created by
+  `jj workspace add`**, which has its own `.jj/` and no `.git/` of its own.
+  `rv` does not currently detect or warn about any of them. After your first
+  `rv` run in a new workspace, check that `jj status` does not list `.review/`.
 - **Not a TTY, not a review.** A bare `rv` needs a terminal; piped or redirected
   it prints `could not start the terminal` and exits 1. Use `rv render` or
   `rv status` in scripts.
