@@ -166,9 +166,11 @@ fn open_renders_expanded_with_anchor_and_protocol() {
         ),
         "missing anchor marker:\n{document}"
     );
+    // The context block is indented with the rest of the quoted content, so
+    // nothing `rv` did not author itself sits at column 0.
     assert!(
-        document.contains("```rust\n        if let Some(hit) = idx.find(sym) {\n"),
-        "missing context fence:\n{document}"
+        document.contains("  ```rust\n          if let Some(hit) = idx.find(sym) {\n"),
+        "missing indented context fence:\n{document}"
     );
     assert!(
         document.contains("**Comment:** `unwrap()` panics for node-scoped comments"),
@@ -286,7 +288,8 @@ fn replies_parsed_by_id() {
 /// Hand edits and LLM mangling are tolerated, never fatal: unknown prose
 /// between entries is ignored, a reply written flush against its comment (no
 /// blank line, as an LLM is apt to do) still parses, and a stray heading level
-/// does not detach the reply from its anchor.
+/// is absorbed into the body rather than truncating it — only the heading
+/// shapes `render` itself emits end a reply.
 #[test]
 fn hand_edited_prose_does_not_break_parsing() {
     let document = "\
@@ -321,7 +324,8 @@ Some trailing prose nobody asked for.
         vec![
             (
                 "7f3a".to_owned(),
-                "fixed, flush against the comment\n\nSome trailing prose nobody asked for."
+                "fixed, flush against the comment\n\nSome trailing prose nobody asked for.\n\n\
+                 #### an extra heading level someone added"
                     .to_owned()
             ),
             ("2b81".to_owned(), "also fixed".to_owned()),
@@ -461,6 +465,297 @@ fn out_of_range_sentinel_hash_survives_the_marker() {
     );
 }
 
+/// Marker fields are read by name, so a marker an LLM reformatted — spaces
+/// squeezed out, doubled, or the fields reordered — still binds its reply.
+#[test]
+fn reordered_or_reformatted_markers_still_bind() {
+    let document = "\
+### 1. `a.rs:1`
+<!--rv:anchor id=squeezed change=z commit=c side=right line=1 hash=h-->
+
+**Reply:** no spaces around the marker
+
+### 2. `b.rs:2`
+<!-- rv:anchor  id=doubled  change=z  commit=c  side=right  line=2  hash=h -->
+
+**Reply:** doubled spaces
+
+### 3. `c.rs:3`
+<!-- rv:anchor change=z commit=c id=reordered side=right line=3 hash=h -->
+
+**Reply:** id moved out of first place
+";
+
+    let replies = parse_replies(document);
+
+    assert_eq!(
+        replies,
+        vec![
+            (
+                "squeezed".to_owned(),
+                "no spaces around the marker".to_owned()
+            ),
+            ("doubled".to_owned(), "doubled spaces".to_owned()),
+            (
+                "reordered".to_owned(),
+                "id moved out of first place".to_owned()
+            ),
+        ]
+    );
+}
+
+/// A marker that was deleted or mangled past recognition must cost its reply,
+/// not hand it to the entry above. Every entry heading clears the binding, so
+/// a reply can never attach across an entry boundary however broken the
+/// markers around it are.
+#[test]
+fn a_deleted_or_garbled_marker_drops_the_reply_instead_of_misbinding_it() {
+    let document = "\
+### 1. `a.rs:1`
+<!-- rv:anchor id=good change=z commit=c side=right line=1 hash=h -->
+
+**Comment:** first
+
+**Reply:** belongs to good
+
+### 2. `b.rs:2`
+
+**Comment:** its marker was deleted outright
+
+**Reply:** belongs to nobody
+
+### 3. `c.rs:3`
+  <!-- rv:anchor id=indented change=z commit=c side=right line=3 hash=h -->
+
+**Comment:** its marker was indented out of column 0
+
+**Reply:** also belongs to nobody
+
+### 4. `d.rs:4`
+<!-- rv:anchor change=z commit=c side=right line=4 hash=h -->
+
+**Comment:** its marker lost the id field
+
+**Reply:** likewise nobody
+";
+
+    let replies = parse_replies(document);
+
+    assert_eq!(
+        replies,
+        vec![("good".to_owned(), "belongs to good".to_owned())],
+        "only the entry with a readable marker may bind a reply"
+    );
+}
+
+/// A reviewer quoting the protocol inside a comment — `**Reply:**` as the
+/// second line of the body, which is exactly what happens when `rv` reviews
+/// this file — must not fabricate a reply against that comment's real id.
+#[test]
+fn a_comment_body_quoting_the_reply_marker_fabricates_no_reply() {
+    let mut quoting = comment("7f3a", FIRST_CHANGE, "a.rs", 1, CommentState::Open);
+    quoting.body = "the protocol block tells the model to write\n\
+                    **Reply:** not really a reply\n\
+                    beneath each comment."
+        .to_owned();
+
+    let document = render(&session(), &[quoting]);
+
+    assert_eq!(
+        parse_replies(&document),
+        Vec::new(),
+        "a quoted marker in a body must not fabricate a reply:\n{document}"
+    );
+}
+
+/// A body quoting an anchor marker must not rebind the parser to an id that
+/// does not exist — the real reply below it still binds to the real comment.
+#[test]
+fn a_comment_body_quoting_an_anchor_marker_does_not_rebind() {
+    let mut quoting = comment("7f3a", FIRST_CHANGE, "a.rs", 1, CommentState::Open);
+    quoting.body =
+        "this anchor looks wrong:\n<!-- rv:anchor id=dead -->\nshould it be dropped?".to_owned();
+    let quoting = with_reply(quoting, "no, it is fine");
+
+    let document = render(&session(), &[quoting]);
+    let replies = parse_replies(&document);
+
+    assert_eq!(
+        replies,
+        vec![("7f3a".to_owned(), "no, it is fine".to_owned())],
+        "a quoted marker must not rebind the parser:\n{document}"
+    );
+}
+
+/// One unbalanced fence must not swallow the rest of the document. Without a
+/// closing partner the opener is ordinary text, so every later anchor and
+/// reply still parses — otherwise a stray fence in one stored body would
+/// re-render and re-swallow the tail on every cycle.
+#[test]
+fn an_unbalanced_fence_does_not_swallow_later_replies() {
+    let document = "\
+### 1. `a.rs:1`
+<!-- rv:anchor id=first change=z commit=c side=right line=1 hash=h -->
+
+**Comment:** someone pasted a fence and never closed it
+
+```rust
+fn oops() {
+
+### 2. `b.rs:9`
+<!-- rv:anchor id=second change=z commit=c side=right line=9 hash=h -->
+
+**Comment:** second
+
+**Reply:** this must still parse
+";
+
+    assert_eq!(
+        parse_replies(document),
+        vec![("second".to_owned(), "this must still parse".to_owned())],
+        "an unbalanced fence must not eat the rest of the document"
+    );
+
+    // And with nothing but the end of the file after it, so the scan for a
+    // closing partner runs all the way to EOF and finds none.
+    let to_the_end = "\
+<!-- rv:anchor id=only change=z commit=c side=right line=1 hash=h -->
+
+**Comment:** the fence below is never closed
+
+```rust
+fn oops() {
+
+**Reply:** this must still parse
+";
+
+    assert_eq!(
+        parse_replies(to_the_end),
+        vec![("only".to_owned(), "this must still parse".to_owned())],
+        "a fence with no closing partner at all must be read as text"
+    );
+}
+
+/// The compounding case: a *stored* reply carrying an unbalanced fence
+/// re-renders on every cycle. It must not pair with the next entry's context
+/// fence and swallow the headings and markers in between, which would carry a
+/// stale binding into the following entry and misattribute its reply.
+#[test]
+fn an_unbalanced_fence_in_a_stored_reply_cannot_swallow_the_next_entry() {
+    let comments = [
+        with_reply(
+            comment(
+                "frst",
+                FIRST_CHANGE,
+                "a.rs",
+                1,
+                CommentState::AwaitingVerification,
+            ),
+            "I pasted this and lost the closing fence:\n\n```rust\nfn oops() {",
+        ),
+        with_reply(
+            comment(
+                "scnd",
+                FIRST_CHANGE,
+                "b.rs",
+                2,
+                CommentState::AwaitingVerification,
+            ),
+            "a perfectly ordinary reply",
+        ),
+    ];
+
+    let document = render(&session(), &comments);
+    let replies = parse_replies(&document);
+
+    let bound_to_second: Vec<&(String, String)> =
+        replies.iter().filter(|(id, _)| id == "scnd").collect();
+    assert_eq!(
+        bound_to_second,
+        vec![&("scnd".to_owned(), "a perfectly ordinary reply".to_owned())],
+        "the second entry's reply must stay its own:\n{document}"
+    );
+    assert!(
+        replies
+            .iter()
+            .all(|(id, body)| id != "frst" || !body.contains("a perfectly ordinary reply")),
+        "the unbalanced fence swallowed the next entry:\n{document}"
+    );
+}
+
+/// Tilde fences hide their contents exactly like backtick fences: an
+/// unrecognized fence would let quoted text be read as structure.
+#[test]
+fn tilde_fences_hide_their_contents_like_backtick_fences() {
+    let document = "\
+### 1. `a.rs:1`
+<!-- rv:anchor id=first change=z commit=c side=right line=1 hash=h -->
+
+~~~markdown
+**Reply:** quoted inside a tilde fence
+<!-- rv:anchor id=dead -->
+~~~
+
+**Reply:** the real one
+";
+
+    let replies = parse_replies(document);
+
+    assert_eq!(
+        replies,
+        vec![("first".to_owned(), "the real one".to_owned())],
+        "a tilde fence must hide its contents"
+    );
+}
+
+/// A reply that organizes itself with headings keeps them: truncating would
+/// lose work that goes nowhere, since the tail binds to nothing and the next
+/// render erases it. Only the heading shapes `render` emits end a body.
+#[test]
+fn a_reply_containing_a_heading_survives_whole() {
+    let structured = "### What I changed\n\n- narrowed the terminator\n\n# not a heading, a shell comment\n\n#### deeper still";
+
+    // Through the render path, where bodies are indented past column 0.
+    let commented = with_reply(
+        comment(
+            "7f3a",
+            FIRST_CHANGE,
+            "a.rs",
+            1,
+            CommentState::AwaitingVerification,
+        ),
+        structured,
+    );
+    let document = render(&session(), &[commented]);
+    assert_eq!(
+        parse_replies(&document),
+        vec![("7f3a".to_owned(), structured.to_owned())],
+        "a rendered reply with headings must round-trip whole:\n{document}"
+    );
+
+    // And hand-written at column 0, where an LLM would actually put them.
+    let hand_written = "\
+<!-- rv:anchor id=7f3a change=z commit=c side=right line=1 hash=h -->
+
+**Reply:** ### What I changed
+
+- narrowed the terminator
+
+# not a heading, a shell comment
+
+#### deeper still
+";
+    assert_eq!(
+        parse_replies(hand_written),
+        vec![(
+            "7f3a".to_owned(),
+            "### What I changed\n\n- narrowed the terminator\n\n\
+             # not a heading, a shell comment\n\n#### deeper still"
+                .to_owned()
+        )]
+    );
+}
+
 /// A collapsed entry's summary quotes the first line of the comment, elided
 /// at a word boundary and HTML-escaped so a body containing markup cannot
 /// break out of the `<summary>` element.
@@ -537,22 +832,39 @@ fn a_corrupt_anchor_id_drops_the_reply_rather_than_misbinding_it() {
 }
 
 /// The property the milestone rests on: render a document holding every
-/// lifecycle state, feed it straight back to the parser, and every reply comes
-/// back bound to the id it was rendered under — collapsed sections included.
+/// lifecycle state — with bodies shaped like the document's own grammar —
+/// feed it straight back to the parser, and every reply comes back bound to
+/// the id it was rendered under, byte-identical, collapsed sections included.
 #[test]
 fn render_then_parse_replies_round_trips_every_state() {
+    /// A comment body that quotes every marker the parser looks for.
+    const HOSTILE_BODY: &str = "the model keeps writing\n\
+        **Reply:** not really a reply\n\
+        and citing <!-- rv:anchor id=dead -->\n\
+        ## which is not a section either";
+    /// A reply that quotes them right back, with a fenced block for good
+    /// measure.
+    const HOSTILE_REPLY: &str = "### What I changed\n\n\
+        ```rust\n\
+        // **Comment:** and <!-- rv:anchor id=alsodead --> inside a fence\n\
+        fn fixed() {}\n\
+        ```\n\n\
+        ## Still part of the reply";
+
+    let mut open = comment("0pen", FIRST_CHANGE, "open.rs", 1, CommentState::Open);
+    open.body = HOSTILE_BODY.to_owned();
+    let mut awaiting = comment(
+        "wait",
+        FIRST_CHANGE,
+        "await.rs",
+        2,
+        CommentState::AwaitingVerification,
+    );
+    awaiting.body = HOSTILE_BODY.to_owned();
+
     let comments = [
-        comment("0pen", FIRST_CHANGE, "open.rs", 1, CommentState::Open),
-        with_reply(
-            comment(
-                "wait",
-                FIRST_CHANGE,
-                "await.rs",
-                2,
-                CommentState::AwaitingVerification,
-            ),
-            "single line reply",
-        ),
+        open,
+        with_reply(awaiting, HOSTILE_REPLY),
         with_reply(
             comment("done", SECOND_CHANGE, "done.rs", 3, CommentState::Resolved),
             "reply with\n\ntwo paragraphs",
@@ -569,10 +881,10 @@ fn render_then_parse_replies_round_trips_every_state() {
     assert_eq!(
         replies,
         vec![
-            ("wait".to_owned(), "single line reply".to_owned()),
+            ("wait".to_owned(), HOSTILE_REPLY.to_owned()),
             ("done".to_owned(), "reply with\n\ntwo paragraphs".to_owned()),
             ("olds".to_owned(), "reply on an outdated anchor".to_owned()),
         ],
-        "round trip lost or mis-bound a reply:\n{document}"
+        "round trip lost, fabricated or mis-bound a reply:\n{document}"
     );
 }

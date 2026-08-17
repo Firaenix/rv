@@ -9,39 +9,79 @@
 //! the parser deliberately extracts *only* replies and ignores everything
 //! else it meets.
 //!
+//! # Structure lives at column 0
+//!
+//! The document interpolates reviewer- and LLM-written prose, and quoted
+//! source from the repository under review, into a structure-sensitive
+//! grammar — so content must not be able to imitate structure. The
+//! separation is positional: **in a rendered document, every column-0 line is
+//! structure**, because [`render`] indents everything it did not author
+//! itself by [`BODY_INDENT`] — continuation lines of comment and reply
+//! bodies, and whole context fences.
+//!
+//! Two spaces is enough to leave column 0 and few enough that markdown
+//! renders the result identically (lazy paragraph continuation; a fenced
+//! block strips its opener's indent from each line). A reviewer quoting the
+//! protocol (`**Reply:** …` as the second line of a comment — exactly what
+//! happens when `rv` reviews this file) therefore cannot fabricate a reply,
+//! and a body or a quoted line reading `<!-- rv:anchor id=… -->` cannot
+//! rebind the parser to a comment that does not exist. [`parse_replies`]
+//! removes the indent again, so a rendered body parses back byte-identical.
+//!
 //! # Why the parser is forgiving
 //!
 //! The document is handed to a language model and to a human with an editor,
 //! and both will mangle it. Nothing either can write may cost a comment, so
-//! [`parse_replies`] has no error path at all: unknown prose is skipped, a
-//! reply that precedes every anchor marker is dropped rather than
-//! mis-attributed to a *later* anchor, a corrupt `id=` clears the binding
-//! instead of silently reusing the previous comment's id, and a body that
-//! runs into the next entry is truncated at the first structural line rather
-//! than swallowing it. `comments.json` — not this file — remains the
-//! authority on which comments exist, so the worst case here is a reply that
-//! fails to attach, never a comment that disappears.
+//! [`parse_replies`] has no error path at all. Its rules, in the order they
+//! matter:
+//!
+//! - **A reply binds only within its own entry.** Every entry boundary — a
+//!   `### <n>.` entry heading, a `## ` section heading, a `<details>` — clears
+//!   the binding. A marker that was deleted, indented, or garbled beyond
+//!   recognition therefore leaves the following reply bound to *nothing*, and
+//!   it is dropped rather than silently attributed to the entry above it.
+//! - **Marker fields are read by name, not position.** `<!--rv:anchor id=…`,
+//!   `<!-- rv:anchor  id=…` and a reordered `<!-- rv:anchor change=… id=… -->`
+//!   all read. A line that announces itself as `rv:anchor` but carries no
+//!   readable `id=` clears the binding, for the same reason as above.
+//! - **A reply above every marker is dropped**, never bound to a *later* id.
+//! - **An unbalanced fence is text, not a fence.** A fence with no closing
+//!   partner before EOF is treated as an ordinary line, so one stray
+//!   ` ``` ` in a hand-written body cannot swallow every later reply.
+//!
+//! `comments.json` — not this file — remains the authority on which comments
+//! exist, so the worst case here is a reply that fails to attach, never a
+//! comment that disappears.
+//!
+//! M2: nothing in this milestone consumes [`parse_replies`] (spec §14 puts
+//! reply consumption and state transitions in Milestone 2). When it does, M2
+//! needs two things this signature cannot express: a diagnostics channel
+//! alongside the replies (so a marker the parser had to give up on is
+//! reported rather than silently dropped), and an "Unattached replies"
+//! section that [`render`] preserves, so an LLM's work is not erased by the
+//! next render when it fails to bind.
 //!
 //! # The `**Reply:**` body rule
 //!
 //! A reply body is the text after the marker on its own line, plus every
-//! following line, up to (excluding) the first **structural** line: a
-//! markdown heading (`#…`), an HTML comment (`<!--`, which is how every
-//! `rv:anchor` marker starts), a `<details>`/`</details>`/`<summary>` tag, or
-//! another `**Comment:**`/`**Reply:**` marker. Blank lines *inside* the body
-//! are kept, so a multi-paragraph reply survives whole; leading and trailing
-//! blank lines are trimmed. A fenced code block opened inside the body is
-//! consumed through its closing fence, so `#[test]`, `# comment` or a quoted
-//! `**Reply:**` inside a snippet cannot truncate the reply.
+//! following line, up to (excluding) the first **structural** line — see
+//! [`is_structural`]: an entry or section heading, an HTML comment, a
+//! `<details>`/`</details>`/`<summary>` tag, or another
+//! `**Comment:**`/`**Reply:**` marker, each at column 0. Blank lines *inside*
+//! the body are kept, so a multi-paragraph reply survives whole; leading and
+//! trailing blank lines are trimmed. A balanced fenced block inside the body
+//! is consumed whole, so structural-looking lines inside a snippet cannot
+//! truncate the reply.
 //!
-//! Blank lines are not terminators because losing the tail of a reply is a
-//! real loss, while the cost of the alternative is cosmetic: stray prose a
-//! human leaves directly below a reply is absorbed into that reply's body.
+//! Only the heading levels [`render`] actually emits terminate a body: `## `
+//! and a numbered `### <n>.`. An LLM writing `### What I changed` or a
+//! `# shell comment` inside its reply keeps them, because truncating a reply
+//! loses work that goes nowhere — the tail would be attributed to nothing and
+//! erased by the next render.
 //!
-//! Fenced blocks are also skipped *outside* reply bodies, which is what lets
-//! `rv` review its own source: an entry's context fence can legitimately
-//! contain a line beginning `**Reply:**` or `<!-- rv:anchor id=`, and quoted
-//! content must never be read as document structure.
+//! Blank lines are not terminators for the same reason, and the cost of that
+//! choice is cosmetic: stray prose a human leaves directly below a reply is
+//! absorbed into that reply's body.
 
 use crate::model::Side;
 use crate::store::Comment;
@@ -52,9 +92,10 @@ use crate::store::Session;
 /// recognize a `v1` file it did not write.
 const VERSION_MARKER: &str = "<!-- rv:v1 -->";
 
-/// The opening of an anchor marker, up to and including its `id=`. Anything
-/// up to the next whitespace is the comment id.
-const ANCHOR_MARKER_PREFIX: &str = "<!-- rv:anchor id=";
+/// What a line must contain, on top of opening an HTML comment at column 0,
+/// to be an anchor marker. The `id=` field is then found by name, so
+/// reordered or reformatted fields still read.
+const ANCHOR_MARKER_TAG: &str = "rv:anchor";
 
 /// Lead-in of a rendered comment body, and a structural line for the parser.
 const COMMENT_MARKER: &str = "**Comment:**";
@@ -62,6 +103,15 @@ const COMMENT_MARKER: &str = "**Comment:**";
 /// Lead-in of a reply body: the only thing an LLM may add to the document,
 /// and the only thing [`parse_replies`] extracts.
 const REPLY_MARKER: &str = "**Reply:**";
+
+/// What [`render`] prefixes to every continuation line of a comment or reply
+/// body, and what [`parse_replies`] removes again.
+///
+/// Two spaces: enough to push body text off column 0 (where structure lives)
+/// and few enough that markdown treats the line as lazy paragraph
+/// continuation, an indented fence (up to three spaces is still a fence) or
+/// list content — never as an indented code block, which needs four.
+const BODY_INDENT: &str = "  ";
 
 /// The protocol block, addressed to the LLM that reads this file. It states
 /// the one permitted edit (append a reply) and the two prohibitions that keep
@@ -112,6 +162,12 @@ const SECTIONS: [(&str, CommentState, Option<&str>); 4] = [
 /// outcome. Entries are numbered `1..` across the whole document in render
 /// order; that number is presentational, and the `id=` in the anchor marker
 /// is the stable identity.
+///
+/// Body text is never written at column 0 (see the module docs), so
+/// `parse_replies(&render(session, comments))` returns exactly the replies
+/// `comments` carried, with byte-identical bodies. Only leading and trailing
+/// *blank lines* of a stored body are normalized away, since the document
+/// uses a blank line as the separator before the next structural element.
 pub fn render(session: &Session, comments: &[Comment]) -> String {
     let mut out = String::new();
 
@@ -165,7 +221,8 @@ pub fn render(session: &Session, comments: &[Comment]) -> String {
 }
 
 /// Extracts every `**Reply:**` block, paired with the id of the nearest
-/// preceding `<!-- rv:anchor id=… -->` marker, in document order.
+/// preceding `<!-- rv:anchor id=… -->` marker *within the same entry*, in
+/// document order.
 ///
 /// A comment with two reply blocks yields two pairs, both under its id and in
 /// the order written — this function reports what the document says and
@@ -180,37 +237,52 @@ pub fn parse_replies(document: &str) -> Vec<(String, String)> {
     while index < lines.len() {
         let line = lines[index];
 
-        // Quoted content is not structure: skip fenced blocks wholesale so a
-        // context fence containing a marker-like line cannot be read as one.
-        if let Some(fence) = fence_open(line) {
-            index = skip_fence(&lines, index, fence, None);
+        // Quoted content is not structure: skip balanced fenced blocks
+        // wholesale so a context fence containing a marker-like line cannot
+        // be read as one. An *unbalanced* fence is left to fall through as
+        // ordinary text rather than eating the rest of the document.
+        if let Some(closing) = balanced_fence(&lines, index) {
+            index = closing + 1;
             continue;
         }
 
-        if let Some(marker) = anchor_id(line) {
-            // An empty id means a corrupt marker: clear the binding rather
-            // than letting a following reply land on the previous comment.
-            current_id = (!marker.is_empty()).then_some(marker);
+        // An entry boundary ends the previous entry's binding, so a reply can
+        // never attach across it however mangled the markers in between are.
+        if is_entry_boundary(line) {
+            current_id = None;
             index += 1;
             continue;
         }
 
-        let Some(first) = line.trim_start().strip_prefix(REPLY_MARKER) else {
+        if let Some(id) = anchor_id(line) {
+            // A marker with no readable id is corrupt: clear the binding
+            // rather than letting a following reply land on the entry above.
+            current_id = (!id.is_empty()).then_some(id);
+            index += 1;
+            continue;
+        }
+
+        let Some(first) = line.strip_prefix(REPLY_MARKER) else {
             index += 1;
             continue;
         };
 
-        let mut body: Vec<&str> = vec![first.trim()];
+        // Exactly the single space `render` writes after the marker, so a
+        // body whose first line is itself indented round-trips unchanged.
+        let mut body: Vec<&str> = vec![first.strip_prefix(' ').unwrap_or(first)];
         index += 1;
         while index < lines.len() {
             let candidate = lines[index];
             if is_structural(candidate) {
                 break;
             }
-            match fence_open(candidate) {
-                Some(fence) => index = skip_fence(&lines, index, fence, Some(&mut body)),
+            match balanced_fence(&lines, index) {
+                Some(closing) => {
+                    body.extend(lines[index..=closing].iter().map(|line| dedent(line)));
+                    index = closing + 1;
+                }
                 None => {
-                    body.push(candidate);
+                    body.push(dedent(candidate));
                     index += 1;
                 }
             }
@@ -222,9 +294,9 @@ pub fn parse_replies(document: &str) -> Vec<(String, String)> {
             body.pop();
         }
 
-        // A reply above every anchor marker has nothing to bind to; dropping
-        // it is the only safe reading, since attaching it to a *later* id
-        // would put words in a comment the writer never looked at.
+        // A reply outside every entry has nothing to bind to; dropping it is
+        // the only safe reading, since attaching it to another id would put
+        // words in a comment the writer never looked at.
         if let Some(id) = current_id {
             replies.push((id.to_owned(), body.join("\n")));
         }
@@ -292,11 +364,22 @@ fn render_body(out: &mut String, comment: &Comment) {
             .max()
             .unwrap_or(0);
         let fence = "`".repeat((longest + 1).max(3));
-        out.push_str(&format!("\n{fence}{}\n", fence_language(&anchor.file)));
+        // The whole block — opener, quoted lines and closer — is indented by
+        // BODY_INDENT, for the same reason bodies are: nothing quoted may
+        // reach column 0. Markdown strips indentation equal to the opening
+        // fence's from each content line, so the code renders unchanged.
+        out.push_str(&format!(
+            "\n{BODY_INDENT}{fence}{}\n",
+            fence_language(&anchor.file)
+        ));
         for line in &anchor.context {
+            if !line.is_empty() {
+                out.push_str(BODY_INDENT);
+            }
             out.push_str(line);
             out.push('\n');
         }
+        out.push_str(BODY_INDENT);
         out.push_str(&fence);
         out.push('\n');
     }
@@ -307,16 +390,34 @@ fn render_body(out: &mut String, comment: &Comment) {
     }
 }
 
-/// Writes a `**Comment:**`/`**Reply:**` block as its own paragraph. An empty
-/// `text` renders the bare label rather than a label plus a trailing space.
+/// Writes a `**Comment:**`/`**Reply:**` block as its own paragraph.
+///
+/// The first line follows the label; every continuation line is prefixed with
+/// [`BODY_INDENT`] so that body text can never occupy column 0, where the
+/// parser looks for structure (see the module docs). Blank lines stay blank
+/// rather than becoming trailing whitespace, and an empty `text` renders the
+/// bare label rather than a label plus a trailing space.
 fn render_labeled(out: &mut String, label: &str, text: &str) {
     out.push('\n');
     out.push_str(label);
-    if !text.is_empty() {
-        out.push(' ');
-        out.push_str(text);
+    for (position, line) in text.lines().enumerate() {
+        if position > 0 {
+            out.push('\n');
+            if !line.is_empty() {
+                out.push_str(BODY_INDENT);
+            }
+        } else if !line.is_empty() {
+            out.push(' ');
+        }
+        out.push_str(line);
     }
     out.push('\n');
+}
+
+/// Removes the one [`BODY_INDENT`] [`render_labeled`] adds, and nothing more:
+/// a hand-written line that never had it is returned untouched.
+fn dedent(line: &str) -> &str {
+    line.strip_prefix(BODY_INDENT).unwrap_or(line)
 }
 
 /// Where `change_id` sits in the session's change order, or [`usize::MAX`] for
@@ -341,74 +442,113 @@ fn plural(count: usize) -> &'static str {
     if count == 1 { "" } else { "s" }
 }
 
-/// The comment id in an anchor marker on this line, if it carries one.
+/// The comment id carried by an anchor marker on this line, or `Some("")` if
+/// the line announces itself as one but has no readable `id=` (which clears
+/// the parser's binding). `None` means this is not a marker line at all.
 ///
-/// The marker is found anywhere in the line (it may be indented), and the id
-/// runs to the next whitespace — with a trailing `-->` stripped, so a marker
-/// written without a space before its terminator still reads.
+/// The marker must open an HTML comment at column 0 — indented or quoted text
+/// is content, not structure — but everything after that is read leniently:
+/// fields are matched **by name**, so `<!--rv:anchor id=7f3a-->` and a
+/// reordered `<!-- rv:anchor change=z id=7f3a -->` both read, and a trailing
+/// `-->` stuck to the value is stripped.
 fn anchor_id(line: &str) -> Option<&str> {
-    let start = line.find(ANCHOR_MARKER_PREFIX)? + ANCHOR_MARKER_PREFIX.len();
-    // `split`, not `split_whitespace`: an `id=` mangled empty must yield an
-    // empty id (which clears the binding), not skip ahead to the next field.
-    let id = line[start..]
-        .split(char::is_whitespace)
-        .next()
+    if !line.starts_with("<!--") || !line.contains(ANCHOR_MARKER_TAG) {
+        return None;
+    }
+    let id = line
+        .split_whitespace()
+        .find_map(|field| field.strip_prefix("id="))
+        .map(|id| id.strip_suffix("-->").unwrap_or(id))
         .unwrap_or("");
-    Some(id.strip_suffix("-->").unwrap_or(id))
+    Some(id)
+}
+
+/// Whether this line starts a new entry (or section), which clears the
+/// parser's current binding: no reply may ever attach across one.
+fn is_entry_boundary(line: &str) -> bool {
+    is_entry_heading(line) || is_section_heading(line) || line.starts_with("<details")
+}
+
+/// `### <n>. …` — the shape [`render_expanded`] writes. A heading an LLM
+/// writes inside a reply (`### What I changed`) is deliberately not one.
+fn is_entry_heading(line: &str) -> bool {
+    line.strip_prefix("### ")
+        .is_some_and(|rest| rest.starts_with(|first: char| first.is_ascii_digit()))
+}
+
+/// `## <title> (<n>)` — the shape [`render`] writes for a section.
+fn is_section_heading(line: &str) -> bool {
+    line.starts_with("## ")
 }
 
 /// Whether this line ends a reply body: see the body rule in the module docs.
-fn is_structural(line: &str) -> bool {
-    let trimmed = line.trim_start();
-    trimmed.starts_with('#')
-        || trimmed.starts_with("<!--")
-        || trimmed.starts_with("<details")
-        || trimmed.starts_with("</details")
-        || trimmed.starts_with("<summary")
-        || trimmed.starts_with(COMMENT_MARKER)
-        || trimmed.starts_with(REPLY_MARKER)
-}
-
-/// The width of the backtick fence this line opens, if it opens one.
-fn fence_open(line: &str) -> Option<usize> {
-    let width = line
-        .trim_start()
-        .chars()
-        .take_while(|character| *character == '`')
-        .count();
-    (width >= 3).then_some(width)
-}
-
-/// Advances past the fenced block opening at `index`, collecting its lines
-/// into `body` when one is given (a fence inside a reply is part of that
-/// reply; a fence anywhere else is quoted content to be ignored).
 ///
-/// An unterminated fence consumes the rest of the document — the only reading
-/// that cannot mistake quoted text for structure.
-fn skip_fence<'a>(
-    lines: &[&'a str],
-    index: usize,
-    fence: usize,
-    mut body: Option<&mut Vec<&'a str>>,
-) -> usize {
-    let mut index = index;
-    if let Some(body) = &mut body {
-        body.push(lines[index]);
+/// Every test is anchored at column 0. Body text is indented past it by
+/// [`render_labeled`], so a comment or reply quoting any of these markers
+/// cannot terminate — or fabricate — anything.
+fn is_structural(line: &str) -> bool {
+    line.starts_with("<!--")
+        || line.starts_with("<details")
+        || line.starts_with("</details")
+        || line.starts_with("<summary")
+        || line.starts_with(COMMENT_MARKER)
+        || line.starts_with(REPLY_MARKER)
+        || is_entry_heading(line)
+        || is_section_heading(line)
+}
+
+/// A fence marker character and the number of times it repeats.
+#[derive(Clone, Copy)]
+struct Fence {
+    marker: char,
+    width: usize,
+}
+
+/// The fence this line opens, if it opens one. Both markdown fence
+/// characters count: an unrecognized `~~~` fence would let its contents be
+/// read as structure, which is the same hazard as an unbalanced one.
+fn fence_open(line: &str) -> Option<Fence> {
+    let trimmed = line.trim_start();
+    let marker = trimmed.chars().next()?;
+    if marker != '`' && marker != '~' {
+        return None;
     }
-    index += 1;
-    while index < lines.len() {
-        let line = lines[index];
-        if let Some(body) = &mut body {
-            body.push(line);
+    let width = trimmed.chars().take_while(|char| *char == marker).count();
+    (width >= 3).then_some(Fence { marker, width })
+}
+
+/// The index of the line closing the fence opened at `open`, or `None` if the
+/// line opens no fence or nothing closes it before the end of the document.
+///
+/// Scanning ahead before committing is what keeps one unbalanced fence — in a
+/// hand-written comment or a truncated LLM reply — from swallowing every
+/// anchor and reply after it. With no closing partner the opener is simply
+/// ordinary text, and the document past it still parses.
+fn balanced_fence(lines: &[&str], open: usize) -> Option<usize> {
+    let fence = fence_open(lines[open])?;
+    for (index, line) in lines.iter().enumerate().skip(open + 1) {
+        // No fence may span an entry boundary. Without this an unbalanced
+        // fence would pair with some *later* entry's context fence, skip the
+        // headings and markers in between, and carry a stale binding into
+        // the next entry — the compounding failure, since such a body
+        // re-renders and re-swallows on every cycle. Rendered documents keep
+        // all quoted and authored text off column 0, so this can only fire
+        // on a genuinely unbalanced fence.
+        if is_entry_boundary(line) {
+            return None;
         }
-        index += 1;
-        let closes = fence_open(line).is_some_and(|width| width >= fence)
-            && line.trim().trim_start_matches('`').is_empty();
-        if closes {
-            break;
+        let trimmed = line.trim();
+        let width = trimmed
+            .chars()
+            .take_while(|char| *char == fence.marker)
+            .count();
+        // A closing fence is at least as long as its opener and holds
+        // nothing else — no info string.
+        if width >= fence.width && trimmed.chars().count() == width {
+            return Some(index);
         }
     }
-    index
+    None
 }
 
 /// The longest run of consecutive backticks anywhere in `line` — what a
