@@ -8,6 +8,7 @@ edition = "2024"
 rust-version = "1.89"
 
 [workspace.dependencies]
+anyhow = "1"
 blake3 = "1"
 clap = { version = "4", features = ["derive"] }
 futures = "0.3"
