@@ -91,3 +91,52 @@ fn snapshot_captures_context() {
 
     assert_eq!(context.len(), 11);
 }
+
+/// A blank line that moves to a different line number cannot be told apart
+/// by hash from any *other* blank line in the file — every all-whitespace
+/// line normalizes to `""` — so the `Moved` scan excludes blank candidates
+/// entirely. A moved blank-line anchor resolves `Outdated` rather than
+/// guessing which blank line it moved to.
+#[test]
+fn blank_line_anchor_moved_resolves_outdated() {
+    let text = "a\n\nb\n";
+    let anchor = create("f.txt", Side::Left, 2, text);
+
+    let edited = format!("x\n{text}");
+    let (line, confidence) = resolve(&anchor, &edited);
+
+    assert_eq!(line, None);
+    assert_eq!(confidence, Confidence::Outdated);
+}
+
+/// The blank-line exclusion applies only to the `Moved` scan: a blank line
+/// that has not moved still hashes the same at its original line number and
+/// resolves `Exact`, same as any other unchanged line.
+#[test]
+fn blank_line_anchor_unmoved_resolves_exact() {
+    let text = "a\n\nb\n";
+    let anchor = create("f.txt", Side::Left, 2, text);
+
+    let (line, confidence) = resolve(&anchor, text);
+
+    assert_eq!(line, Some(2));
+    assert_eq!(confidence, Confidence::Exact);
+}
+
+/// `create` past the end of the file records the `OUT_OF_RANGE_HASH`
+/// sentinel, which cannot equal any real line's hash — including a blank
+/// line's, which is exactly the value such an anchor would have collided
+/// with under the old "hash of an empty string" fallback. Resolving against
+/// text full of blank lines still gives up safely rather than fabricating a
+/// match.
+#[test]
+fn create_past_eof_resolves_outdated_against_blank_lines() {
+    let text = "a\nb\nc\n";
+    let anchor = create("f.txt", Side::Left, 10, text);
+
+    let other = "x\n\n\ny\n";
+    let (line, confidence) = resolve(&anchor, other);
+
+    assert_eq!(line, None);
+    assert_eq!(confidence, Confidence::Outdated);
+}

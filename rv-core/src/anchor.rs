@@ -52,28 +52,39 @@ pub fn snapshot_of(text: &str, line: u32) -> Vec<String> {
         .collect()
 }
 
+/// Sentinel `content_hash` for an out-of-range `line` passed to [`create`].
+/// Not valid hex, so it can never equal a real blake3 hex digest — [`resolve`]
+/// therefore never matches it against any line, needing no special case of
+/// its own to fail such an anchor safely to `Outdated` rather than fabricating
+/// a `Moved` match against an unrelated line (see [`create`]).
+const OUT_OF_RANGE_HASH: &str = "<rv:out-of-range>";
+
 /// Builds an anchor for 1-based `line` of `text` on the given `side`.
 ///
 /// If `line` is `0` or past the end of `text` — out of range for content
-/// that does not exist — the anchor is still built rather than panicking:
-/// `content_hash` becomes the hash of an empty line and `context` is empty.
-/// Such an anchor cannot land `Exact` or `Moved` against any real text (an
-/// empty line's hash only matches other empty lines), so it degrades to
-/// `Outdated` on the first [`resolve`] rather than the caller needing to
-/// handle a `Result` for a case that should not arise in practice — callers
-/// are expected to only anchor lines that exist.
+/// that does not exist — the anchor is still built rather than panicking,
+/// but `content_hash` is set to the [`OUT_OF_RANGE_HASH`] sentinel rather
+/// than the hash of an empty string: an empty-string hash is indistinguishable
+/// from any real blank line's hash, which would let such an anchor
+/// "resolve" `Moved` to some unrelated blank line instead of failing safely.
+/// The sentinel matches nothing, so [`resolve`] always lands `(None,
+/// Outdated)` for it. `context` is empty (`snapshot_of` returns `Vec::new()`
+/// for the same out-of-range condition).
 pub fn create(file: &str, side: Side, line: u32, text: &str) -> Anchor {
     let lines: Vec<&str> = text.lines().collect();
     let target = line
         .checked_sub(1)
         .and_then(|zero_based| lines.get(zero_based as usize))
-        .copied()
-        .unwrap_or("");
+        .copied();
+    let content_hash = match target {
+        Some(target) => content_hash(target),
+        None => OUT_OF_RANGE_HASH.to_owned(),
+    };
     Anchor {
         file: file.to_owned(),
         side,
         line,
-        content_hash: content_hash(target),
+        content_hash,
         context: snapshot_of(text, line),
     }
 }
@@ -82,14 +93,23 @@ pub fn create(file: &str, side: Side, line: u32, text: &str) -> Anchor {
 ///
 /// The cascade:
 /// 1. If the line still at `anchor.line` hashes the same, nothing moved:
-///    `(Some(anchor.line), Exact)`.
-/// 2. Otherwise every line of `text` is scanned for a hash match; the one
-///    nearest `anchor.line` (by absolute line-number distance) is taken as
-///    where the content moved to: `(Some(new_line), Moved)`. Ties — content
-///    duplicated equally far before and after the original line — favor the
-///    earlier line, since lines are scanned in increasing order and the
-///    first minimum found wins.
-/// 3. If no line matches at all, the anchor cannot be placed:
+///    `(Some(anchor.line), Exact)`. This applies even when that line is
+///    blank — an unmoved blank line still resolves `Exact`.
+/// 2. Otherwise every *non-blank* line of `text` (normalized content is not
+///    empty) is scanned for a hash match; the one nearest `anchor.line` (by
+///    absolute line-number distance) is taken as where the content moved
+///    to: `(Some(new_line), Moved)`. Ties — content duplicated equally far
+///    before and after the original line — favor the earlier line, since
+///    lines are scanned in increasing order and the first minimum found
+///    wins.
+///
+///    Blank lines are excluded from this step because every blank or
+///    whitespace-only line normalizes to the same `""` and therefore hashes
+///    identically: without this exclusion, a comment anchored on one blank
+///    line that moved would "resolve" `Moved` to some *other*, unrelated
+///    blank line in the file rather than failing safely. Excluding them
+///    means a moved blank-line anchor falls through to step 3 instead.
+/// 3. If no (non-blank) line matches at all, the anchor cannot be placed:
 ///    `(None, Outdated)`.
 ///
 /// `Weak` (a line-number-only fallback) is never produced here; it is later
@@ -110,6 +130,7 @@ pub fn resolve(anchor: &Anchor, text: &str) -> (Option<u32>, Confidence) {
     let nearest = lines
         .iter()
         .enumerate()
+        .filter(|(_, candidate)| !normalize(candidate).is_empty())
         .filter(|(_, candidate)| content_hash(candidate) == anchor.content_hash)
         .min_by_key(|(index, _)| {
             let candidate_line = *index as u32 + 1;
