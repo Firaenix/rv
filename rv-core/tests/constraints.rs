@@ -9,6 +9,17 @@
 //! these tests behave the same regardless of where `cargo test` is invoked
 //! from.
 //!
+//! The jj_lib and user-config checks strip `//` and `/* */` comments before
+//! matching (see [`strip_comments`]), so doc-comment prose that merely
+//! *names* a banned token cannot false-fail the build — and, the point that
+//! actually matters, an import alias like `use jj_lib as j;` still gets
+//! caught, because the word `jj_lib` still has to appear in code to name the
+//! crate at all. The manifest check (constraint 1) deliberately does NOT go
+//! through the stripper: `Cargo.toml`'s comment syntax is `#`, not `//`, and
+//! a whole-file scan is a feature there — it also catches a dependency
+//! under `[dev-dependencies]`, a target-specific table, or a package rename
+//! such as `term = { package = "ratatui" }`.
+//!
 //! This file lives under `tests/`, not `src/`, so the recursive scan of
 //! `src/` below never reads itself — the literal strings this file contains
 //! for its own assertions (e.g. `"ConfigSource::User"`) can't trigger a
@@ -79,6 +90,71 @@ fn matching_lines(path: &Path, content: &str, needle: &str) -> Vec<String> {
         .collect()
 }
 
+/// Blanks out Rust `//` line comments and `/* */` block comments, replacing
+/// comment bytes with spaces so line numbers (and column positions) in the
+/// output line up exactly with `source` — [`matching_lines`] can report
+/// accurate line numbers against the stripped text.
+///
+/// This is a line-oriented heuristic, not a Rust lexer, and its limits are
+/// deliberate rather than overlooked (a real lexer/AST check — e.g. via
+/// `syn` — is out of scope for this mechanical guard):
+/// - It does not understand string literals, so a string containing `//` or
+///   `/*` desyncs comment detection for the rest of that line (e.g. a URL
+///   like `"http://…"` in a string reads as the start of a line comment).
+/// - It does not support nested block comments.
+/// - A string literal whose *contents* happen to spell a banned token (e.g.
+///   `"jj_lib"` as a plain string, not an import) still trips the matchers
+///   below, because this stripper only removes comments, not strings.
+fn strip_comments(source: &str) -> String {
+    #[derive(Clone, Copy)]
+    enum State {
+        Code,
+        Line,
+        Block,
+    }
+
+    let mut out = String::with_capacity(source.len());
+    let mut state = State::Code;
+    let mut chars = source.chars().peekable();
+    while let Some(c) = chars.next() {
+        match state {
+            State::Code => {
+                if c == '/' && chars.peek() == Some(&'/') {
+                    chars.next();
+                    out.push_str("  ");
+                    state = State::Line;
+                } else if c == '/' && chars.peek() == Some(&'*') {
+                    chars.next();
+                    out.push_str("  ");
+                    state = State::Block;
+                } else {
+                    out.push(c);
+                }
+            }
+            State::Line => {
+                if c == '\n' {
+                    out.push('\n');
+                    state = State::Code;
+                } else {
+                    out.push(' ');
+                }
+            }
+            State::Block => {
+                if c == '*' && chars.peek() == Some(&'/') {
+                    chars.next();
+                    out.push_str("  ");
+                    state = State::Code;
+                } else if c == '\n' {
+                    out.push('\n');
+                } else {
+                    out.push(' ');
+                }
+            }
+        }
+    }
+    out
+}
+
 /// Guards the other three tests against passing vacuously. If path
 /// resolution ever breaks (wrong crate, cwd-relative paths, a rename that
 /// moves `src/`), this test fails loudly instead of leaving the constraint
@@ -130,6 +206,12 @@ fn guard_manifest_and_sources_were_found() {
 /// `tui-textarea`. This is the terminal-free boundary that makes the anchor
 /// logic testable without a TTY; those crates belong only to the `rv` binary
 /// crate's UI layer.
+///
+/// Scans the raw manifest text, not comment-stripped: `Cargo.toml` comments
+/// use `#`, not `//`/`/* */`, so [`strip_comments`] would not help here, and
+/// a whole-file scan is actually what we want — it also catches a dependency
+/// tucked under `[dev-dependencies]` or a target-specific table, and a
+/// package rename such as `term = { package = "ratatui" }`.
 #[test]
 fn rv_core_manifest_has_no_tui_dependencies() {
     let manifest = read_manifest();
@@ -153,13 +235,22 @@ fn rv_core_manifest_has_no_tui_dependencies() {
 /// `jj_lib`. Every other module takes plain Rust types, so a jj-lib version
 /// bump has a one-file blast radius.
 ///
-/// Matches the precise path-separator form `jj_lib::` rather than the bare
-/// word `jj_lib`, because `diff.rs` and `lib.rs` legitimately *mention*
-/// `jj_lib` in doc comments (e.g. "no `jj_lib` type crosses this boundary")
-/// without ever using the crate. Real usage — `use jj_lib::...`, fully
-/// qualified calls, trait bounds — always takes the form `jj_lib::` in Rust
-/// syntax, so this matcher catches every real import while staying silent
-/// on prose that merely names the crate.
+/// Comments are stripped before matching (see [`strip_comments`]), and the
+/// matcher looks for the bare word `jj_lib`, not the path form `jj_lib::`.
+/// Both halves matter:
+/// - Stripping comments means `diff.rs` and `lib.rs`, which legitimately
+///   *mention* `jj_lib` in doc comments (e.g. "no `jj_lib` type crosses
+///   this boundary"), no longer trip the matcher — that prose is gone
+///   before the scan runs.
+/// - Matching the bare word (rather than requiring `::`) closes an alias
+///   bypass: `use jj_lib as j;` followed by aliased `j::backend::CommitId`
+///   elsewhere never spells `jj_lib::`, but the `use jj_lib as j;` line
+///   itself still has to name `jj_lib` to declare the alias, so the bare
+///   word still catches it.
+///
+/// Remaining limit: a string literal containing the token `jj_lib` would
+/// still trip this (see [`strip_comments`]'s doc comment) — accepted, not
+/// worth a real Rust lexer for a mechanical guard test.
 #[test]
 fn only_vcs_module_mentions_jj_lib() {
     let src_root = manifest_dir().join("src");
@@ -173,14 +264,15 @@ fn only_vcs_module_mentions_jj_lib() {
         }
         let content = fs::read_to_string(path)
             .unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()));
-        violations.extend(matching_lines(path, &content, "jj_lib::"));
+        let code_only = strip_comments(&content);
+        violations.extend(matching_lines(path, &code_only, "jj_lib"));
     }
 
     assert!(
         violations.is_empty(),
         "jj_lib must be imported only by the vcs module (src/vcs.rs, or a future \
          src/vcs/ directory) so that a jj-lib version bump touches one file — \
-         found jj_lib:: usage outside vcs:\n{}",
+         found jj_lib usage outside vcs (comments stripped before matching):\n{}",
         violations.join("\n")
     );
 }
@@ -190,8 +282,23 @@ fn only_vcs_module_mentions_jj_lib() {
 /// `UserSettings` must be built entirely from config that `rv` supplies
 /// itself, never from `~/.config/jj/config.toml` or repo-local config.
 ///
+/// Comments are stripped before matching (see [`strip_comments`]), so an
+/// explanatory comment that happens to name one of the banned tokens cannot
+/// false-fail the build.
+///
 /// Deliberately does NOT match `ConfigSource::Default`, which `vcs.rs`
 /// legitimately uses to build rv's own synthetic config layer.
+///
+/// Bound (accepted, not a gap): this is a literal-token grep over `rv`'s own
+/// source. It cannot see a jj-lib-*internal* helper that reads user or repo
+/// config on its own without `rv`'s calling code ever spelling
+/// `config_path`, `ConfigSource::User`, or `ConfigSource::Repo`. The
+/// architectural backstop for that case lives in `vcs::settings()`, which
+/// builds `UserSettings` from `StackedConfig::with_defaults()` plus one
+/// in-memory layer that `rv` supplies itself; Task 1's review verified
+/// against jj-lib's own source that `with_defaults()` is pure and performs
+/// no disk access. This test enforces that nobody undoes that by writing
+/// new code with these tokens — it does not re-verify jj-lib's internals.
 #[test]
 fn no_source_reads_user_jj_config() {
     let files = source_files();
@@ -201,8 +308,9 @@ fn no_source_reads_user_jj_config() {
     for path in &files {
         let content = fs::read_to_string(path)
             .unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()));
+        let code_only = strip_comments(&content);
         for needle in banned {
-            violations.extend(matching_lines(path, &content, needle));
+            violations.extend(matching_lines(path, &code_only, needle));
         }
     }
 
@@ -210,7 +318,8 @@ fn no_source_reads_user_jj_config() {
         violations.is_empty(),
         "no source file may read the user's jj config (no config_path, no \
          ConfigSource::User, no ConfigSource::Repo) — rv must behave identically \
-         on a stock and a heavily customized jj install; found:\n{}",
+         on a stock and a heavily customized jj install; found (comments stripped \
+         before matching):\n{}",
         violations.join("\n")
     );
 }
