@@ -88,16 +88,24 @@ fn fallback() {
     assert_eq!(added[0].left, None);
 }
 
-/// A brand-new file (`old: None`) has nothing for difftastic to structurally
-/// align against — it reports `status: "created"` with no chunks — so this
-/// exercises the fallback path regardless of whether `difft` is installed.
+/// A brand-new file (`old: None`) is difftastic's `status: "created"`, which
+/// carries no `chunks` but does correctly detect the language — so, like
+/// `changed_line`, this needs a real `difft` on `PATH` to see the
+/// `Difftastic` label rather than a `similar` fallback. `all_removals` below
+/// is the mirror image on the delete side.
 #[test]
 fn all_additions() {
     let new = b"x\ny\n";
 
     let diff = compute(None, Some(new), "new.txt");
 
-    assert_eq!(diff.source, DiffSource::Similar, "{diff:?}");
+    assert_eq!(
+        diff.source,
+        DiffSource::Difftastic {
+            language: "Text".to_owned()
+        },
+        "{diff:?}"
+    );
     assert!(!diff.suppressed, "{diff:?}");
     assert_eq!(diff.lines.len(), 2, "{diff:?}");
     for line in &diff.lines {
@@ -108,4 +116,52 @@ fn all_additions() {
     assert_eq!(diff.lines[0].right, Some(1));
     assert_eq!(diff.lines[1].text, "y");
     assert_eq!(diff.lines[1].right, Some(2));
+}
+
+/// The mirror of `all_additions` on the delete side: a whole-file removal
+/// (`new: None`) is difftastic's `status: "deleted"`, also chunk-less but
+/// also a successfully parsed, language-detected response. Covers the
+/// `all_removed` path in `parse_difft_json`, which `all_additions` cannot.
+#[test]
+fn all_removals() {
+    let old = b"x\ny\n";
+
+    let diff = compute(Some(old), None, "old.txt");
+
+    assert_eq!(
+        diff.source,
+        DiffSource::Difftastic {
+            language: "Text".to_owned()
+        },
+        "{diff:?}"
+    );
+    assert!(!diff.suppressed, "{diff:?}");
+    assert_eq!(diff.lines.len(), 2, "{diff:?}");
+    for line in &diff.lines {
+        assert_eq!(line.kind, LineKind::Removed, "{diff:?}");
+        assert_eq!(line.right, None, "{diff:?}");
+    }
+    assert_eq!(diff.lines[0].text, "x");
+    assert_eq!(diff.lines[0].left, Some(1));
+    assert_eq!(diff.lines[1].text, "y");
+    assert_eq!(diff.lines[1].left, Some(2));
+}
+
+/// `all_additions`'s behavior when difftastic is bypassed: still two Added
+/// lines, just labeled `Similar` — confirms the fix only changes the label
+/// on a *successful* difft "created"/"deleted" parse, not the fallback
+/// itself. Hermetic: `use_difft: false` never spawns a process.
+#[test]
+fn all_additions_without_difft() {
+    let new = b"x\ny\n";
+
+    let diff = compute_with(None, Some(new), "new.txt", false);
+
+    assert_eq!(diff.source, DiffSource::Similar, "{diff:?}");
+    assert!(!diff.suppressed, "{diff:?}");
+    assert_eq!(diff.lines.len(), 2, "{diff:?}");
+    for line in &diff.lines {
+        assert_eq!(line.kind, LineKind::Added, "{diff:?}");
+        assert_eq!(line.left, None, "{diff:?}");
+    }
 }

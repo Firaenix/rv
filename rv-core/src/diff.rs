@@ -189,12 +189,24 @@ fn parse_difft_json(
         return Some((Vec::new(), source, true));
     }
 
-    // Statuses other than "changed"/"unchanged" (difftastic also has
-    // "created"/"deleted" for a whole-file add/remove) carry no chunks at
-    // all, so there is nothing to build a structural diff from. Requiring
-    // the key here, rather than defaulting to an empty Vec, is what sends
-    // those cases to the `similar` fallback instead of silently returning an
-    // empty diff for a file that did change.
+    // A whole-file add/remove: difftastic reports these as "created"/
+    // "deleted" rather than "changed", and — unlike "changed" — emits no
+    // `chunks` at all, even though it ran successfully and correctly
+    // identified the language. Building the all-Added/all-Removed lines
+    // directly from the text difftastic was given (rather than falling back
+    // to `similar`) keeps `source` truthful: difftastic did answer, so the
+    // diff it labels should say so.
+    if status == "created" {
+        return Some((all_added(&decode(new.unwrap_or(&[]))), source, false));
+    }
+    if status == "deleted" {
+        return Some((all_removed(&decode(old.unwrap_or(&[]))), source, false));
+    }
+
+    // Any other status (in practice, "changed") carries `chunks`; requiring
+    // the key here, rather than defaulting to an empty Vec, is what sends a
+    // genuinely unexpected shape to the `similar` fallback instead of
+    // silently returning an empty diff for a file that did change.
     let chunks = json.get("chunks")?.as_array()?;
 
     let old_text = decode(old.unwrap_or(&[]));
@@ -262,6 +274,34 @@ fn line_ref(side: &Value, lines: &[&str]) -> Option<(u32, String)> {
     let text = (*lines.get(index)?).to_owned();
     let one_based = u32::try_from(index).ok()?.checked_add(1)?;
     Some((one_based, text))
+}
+
+/// Every line of `text` as an `Added` line, `right`-numbered from 1 — the
+/// shape difftastic's "created" status implies but does not spell out itself.
+fn all_added(text: &str) -> Vec<DiffLine> {
+    text.lines()
+        .enumerate()
+        .map(|(index, line)| DiffLine {
+            kind: LineKind::Added,
+            left: None,
+            right: index_to_line(Some(index)),
+            text: line.to_owned(),
+        })
+        .collect()
+}
+
+/// Every line of `text` as a `Removed` line, `left`-numbered from 1 — the
+/// shape difftastic's "deleted" status implies but does not spell out itself.
+fn all_removed(text: &str) -> Vec<DiffLine> {
+    text.lines()
+        .enumerate()
+        .map(|(index, line)| DiffLine {
+            kind: LineKind::Removed,
+            left: index_to_line(Some(index)),
+            right: None,
+            text: line.to_owned(),
+        })
+        .collect()
 }
 
 /// The fallback line diff, used when difftastic is skipped, fails to run, or
