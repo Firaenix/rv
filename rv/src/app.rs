@@ -49,10 +49,20 @@ use crate::session;
 use crate::session::Review;
 use crate::ui;
 
-/// How many hex characters of the digest make up a comment id. Four is short
-/// enough to read out of a marker in the markdown and long enough that a
-/// review-sized set of comments does not collide.
-const ID_CHARS: usize = 4;
+/// How many hex characters of the digest make up a comment id.
+///
+/// Eight, not the four the plan and spec §10 write, because a collision here
+/// is not a cosmetic clash: [`rv_core::store::Store::append_comment`] upserts
+/// by id, so two *different* comments sharing a prefix mean the second save
+/// silently replaces the first in `comments.json` and overwrites its snapshot
+/// — under a "comment saved" status line. Four hex characters is a 65,536-value
+/// space, which by the birthday bound is a ~2% chance of losing a comment at 50
+/// of them and ~7% at 100: reachable on one real review. Spec §10's guarantee
+/// that nothing loses a comment, and Task 5's write-through durability, outrank
+/// the literal width. Eight still reads out of a marker at a glance, and
+/// `markdown::parse_replies` binds whatever id the marker carries, so nothing
+/// else changes.
+const ID_CHARS: usize = 8;
 
 /// The status line shown before the reviewer has done anything.
 const HELP: &str = "j/k line  [/] file  c comment  q quit";
@@ -350,12 +360,7 @@ impl App {
             return Ok(Err("the review covers no change to comment on".to_owned()));
         };
 
-        // A removed line only exists on the base side; everything else —
-        // added and context alike — is commented against the head.
-        let side = match line.kind {
-            LineKind::Removed => Side::Left,
-            LineKind::Added | LineKind::Context => Side::Right,
-        };
+        let side = anchored_side(line.kind);
         let session = &self.review.session;
         let (commit, path, number) = match side {
             Side::Left => (
@@ -390,6 +395,20 @@ impl App {
             state: CommentState::Open,
             reply: None,
         }))
+    }
+}
+
+/// Which side of the diff a comment on a line of this kind belongs to: a
+/// removed line only exists on the base side, and everything else — added and
+/// context alike — is commented against the head.
+///
+/// Public because [`crate::ui`] labels each line with the number on the side
+/// this returns. A pane that showed one number while the anchor stored another
+/// would be lying to the reviewer about what they just commented on.
+pub fn anchored_side(kind: LineKind) -> Side {
+    match kind {
+        LineKind::Removed => Side::Left,
+        LineKind::Added | LineKind::Context => Side::Right,
     }
 }
 

@@ -23,6 +23,11 @@ use rv::app::App;
 use rv::app::Mode;
 use rv::session;
 use rv::ui;
+use rv_core::anchor;
+use rv_core::diff::DiffLine;
+use rv_core::diff::LineKind;
+use rv_core::model::ChangeKind;
+use rv_core::model::Side;
 use rv_core::store::CommentState;
 use rv_core::store::Store;
 use tempfile::TempDir;
@@ -30,6 +35,15 @@ use tempfile::TempDir;
 /// The file every fixture reviews. Two indented lines so that `j` has
 /// somewhere to go and the diff pane has something recognizable to render.
 const SOURCE: &str = "fn a() {\n    let x = 1;\n}\n";
+
+/// The base side of [`Fixture::renamed`]'s review: `a.rs`, before the rename.
+const BASE_SIDE: &str = "fn a() {\n    let x = 1;\n    let y = 2;\n    let z = 3;\n}\n";
+
+/// The head side of [`Fixture::renamed`]'s review: `b.rs`, one line rewritten
+/// and one line added *above* it, so that the changed line sits at a different
+/// number on each side (2 on the left, 3 on the right). A comment on its
+/// removed half must anchor to the left number, never the right.
+const HEAD_SIDE: &str = "// header\nfn a() {\n    let x = 42;\n    let y = 2;\n    let z = 3;\n}\n";
 
 struct Fixture {
     tempdir: TempDir,
@@ -45,6 +59,28 @@ impl Fixture {
         fixture.jj(&["git", "init", "--colocate"]);
         fixture.write("a.rs", SOURCE);
         fixture.jj(&["describe", "-m", "first change"]);
+        fixture.jj(&["new"]);
+        fixture
+    }
+
+    /// Creates a workspace whose second change renames `a.rs` to `b.rs` and
+    /// rewrites a line of it.
+    ///
+    /// Reviewed from `@--` (see [`Fixture::app_from`]) rather than the default
+    /// `trunk()`, which degrades to the root commit here and would make every
+    /// file a plain addition with no base side at all.
+    fn renamed() -> Self {
+        let fixture = Self {
+            tempdir: tempfile::tempdir().expect("create temp dir"),
+        };
+        fixture.jj(&["git", "init", "--colocate"]);
+        fixture.write("a.rs", BASE_SIDE);
+        fixture.jj(&["describe", "-m", "first change"]);
+        fixture.jj(&["new"]);
+
+        fs::remove_file(fixture.root().join("a.rs")).expect("remove a.rs");
+        fixture.write("b.rs", HEAD_SIDE);
+        fixture.jj(&["describe", "-m", "rename and edit"]);
         fixture.jj(&["new"]);
         fixture
     }
@@ -87,6 +123,12 @@ impl Fixture {
         App::new(review).expect("open the reviewer")
     }
 
+    /// The reviewer, opened over `base..@` of this workspace.
+    fn app_from(&self, base: &str) -> App {
+        let review = session::build(self.root(), Some(base), None).expect("build the review");
+        App::new(review).expect("open the reviewer")
+    }
+
     /// A handle on `.review/` that shares nothing with the app's own.
     fn store(&self) -> Store {
         Store::open(self.root()).expect("open the store")
@@ -103,6 +145,31 @@ fn type_text(app: &mut App, text: &str) {
     for character in text.chars() {
         app.on_key(KeyCode::Char(character)).expect("type");
     }
+}
+
+/// Moves the highlight down to the first diff line `wanted` accepts, the way a
+/// reviewer would, and returns it.
+fn select_line(app: &mut App, wanted: impl Fn(&DiffLine) -> bool) -> DiffLine {
+    let diff = app.selected_diff().expect("the selected file has a diff");
+    let index = diff
+        .lines
+        .iter()
+        .position(&wanted)
+        .unwrap_or_else(|| panic!("no diff line matched: {:?}", diff.lines));
+    for _ in 0..index {
+        app.on_key(KeyCode::Char('j')).expect("move down a line");
+    }
+    assert_eq!(app.line_index(), index);
+    app.selected_diff().expect("a diff").lines[index].clone()
+}
+
+/// One frame of the reviewer, as a 100x24 `TestBackend` renders it.
+fn render(app: &App) -> String {
+    let mut terminal = Terminal::new(TestBackend::new(100, 24)).expect("build a test terminal");
+    terminal
+        .draw(|frame| ui::draw(frame, app))
+        .expect("draw a frame");
+    terminal.backend().to_string()
 }
 
 /// Presses `c`, types `body`, and presses Enter — one whole comment.
@@ -152,15 +219,14 @@ fn typing_a_comment_persists_against_selected_line() {
     let workspace = Fixture::new();
     let mut app = workspace.app();
 
-    app.on_key(KeyCode::Char('j')).expect("move down a line");
+    // `a.rs` is added whole, so its diff is its three lines in order and the
+    // second of them is line 2 of the head-side file.
+    let line = select_line(&mut app, |line| line.text.contains("let x = 1;"));
+    assert_eq!(line.right, Some(2), "{line:?}");
     write_comment(&mut app, "needs a doc");
 
     assert_eq!(app.mode(), Mode::Browse);
-    assert!(
-        app.status().starts_with("comment saved at a.rs:"),
-        "unexpected status line: {}",
-        app.status()
-    );
+    assert_eq!(app.status(), "comment saved at a.rs:2");
 
     let comments = workspace.store().comments().expect("read comments.json");
     assert_eq!(comments.len(), 1, "{comments:?}");
@@ -169,7 +235,8 @@ fn typing_a_comment_persists_against_selected_line() {
     assert_eq!(comment.state, CommentState::Open);
     assert_eq!(comment.reply, None);
     assert_eq!(comment.anchor.file, "a.rs");
-    assert!(comment.anchor.line > 0, "{:?}", comment.anchor);
+    assert_eq!(comment.anchor.side, Side::Right);
+    assert_eq!(comment.anchor.line, 2);
 
     // The markdown export is rewritten alongside the store, so the reviewer
     // never has to run `rv render` to hand the file to an LLM.
@@ -177,6 +244,59 @@ fn typing_a_comment_persists_against_selected_line() {
         workspace.markdown().contains("**Comment:** needs a doc"),
         "the rewritten markdown is missing the comment:\n{}",
         workspace.markdown()
+    );
+}
+
+#[test]
+fn commenting_on_a_removed_line_anchors_to_the_base_side() {
+    let workspace = Fixture::renamed();
+    let mut app = workspace.app_from("@--");
+
+    let file = app.selected_file().expect("a file is selected");
+    assert_eq!(file.path, "b.rs");
+    assert_eq!(file.kind, ChangeKind::Renamed, "{file:?}");
+    assert_eq!(file.source_path.as_deref(), Some("a.rs"), "{file:?}");
+
+    // The removed half of the rewritten line: line 2 of the base-side file,
+    // which difftastic pairs with line 3 of the head-side one.
+    let line = select_line(&mut app, |line| {
+        line.kind == LineKind::Removed && line.text.contains("let x = 1;")
+    });
+    // difftastic aligns the pair, so this line carries *both* numbers. The
+    // pane must label it by the side it would be anchored on.
+    assert_eq!(line.left, Some(2), "{line:?}");
+    assert_eq!(line.right, Some(3), "{line:?}");
+    let frame = render(&app);
+    assert!(
+        frame.contains("    2 -    let x = 1;"),
+        "the pane does not label the removed line by its base-side number:\n{frame}"
+    );
+    assert!(
+        !frame.contains("    3 -"),
+        "the pane labels a removed line by its head-side number:\n{frame}"
+    );
+
+    write_comment(&mut app, "why was this rewritten?");
+
+    // The status names the base-side path and the base-side number, both of
+    // which differ from the head-side ones the file is otherwise known by.
+    assert_eq!(app.status(), "comment saved at a.rs:2");
+
+    let comments = workspace.store().comments().expect("read comments.json");
+    assert_eq!(comments.len(), 1, "{comments:?}");
+    let anchor = &comments[0].anchor;
+    assert_eq!(anchor.side, Side::Left);
+    assert_eq!(anchor.file, "a.rs");
+    assert_eq!(anchor.line, 2);
+
+    // The hash and the snapshot come from the *base* blob, read at the base
+    // commit under the base-side path: reading the head side instead would
+    // hash `let x = 42;` and quote a file that opens with `// header`.
+    assert_eq!(anchor.content_hash, anchor::content_hash("    let x = 1;"));
+    assert_eq!(
+        anchor.context,
+        BASE_SIDE.lines().collect::<Vec<_>>(),
+        "the snapshot is not the base-side file",
     );
 }
 
@@ -257,11 +377,7 @@ fn frame_renders_file_list_and_diff() {
     let workspace = Fixture::new();
     let app = workspace.app();
 
-    let mut terminal = Terminal::new(TestBackend::new(100, 24)).expect("build a test terminal");
-    terminal
-        .draw(|frame| ui::draw(frame, &app))
-        .expect("draw a frame");
-    let rendered = terminal.backend().to_string();
+    let rendered = render(&app);
 
     assert!(rendered.contains("a.rs"), "{rendered}");
     assert!(rendered.contains("let x = 1;"), "{rendered}");

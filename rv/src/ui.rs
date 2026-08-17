@@ -36,10 +36,12 @@ use ratatui::widgets::List;
 use ratatui::widgets::ListItem;
 use ratatui::widgets::ListState;
 use ratatui::widgets::Paragraph;
+use rv_core::diff::DiffLine;
 use rv_core::diff::DiffSource;
 use rv_core::diff::FileDiff;
 use rv_core::diff::LineKind;
 use rv_core::model::ChangeKind;
+use rv_core::model::Side;
 
 use crate::app::App;
 use crate::app::Mode;
@@ -151,7 +153,7 @@ fn body<'a>(app: &App, diff: &'a FileDiff, height: usize) -> Text<'a> {
                 LineKind::Removed => ('-', Color::Red),
                 LineKind::Context => (' ', Color::Gray),
             };
-            let number = match line.right.or(line.left) {
+            let number = match line_number(line) {
                 Some(number) => format!("{number:>5}"),
                 None => " ".repeat(5),
             };
@@ -163,6 +165,25 @@ fn body<'a>(app: &App, diff: &'a FileDiff, height: usize) -> Text<'a> {
         })
         .collect();
     Text::from(lines)
+}
+
+/// The line number to label a diff line with: the one on the side a comment
+/// there would anchor to — `left` for a removed line, `right` otherwise.
+///
+/// Not `right.or(left)`: difftastic aligns a changed line with its counterpart
+/// and gives the pair *both* numbers, so labelling a removed line by its
+/// head-side number showed one number while [`App`] stored the base-side one,
+/// and the status line then reported a third thing. The pane now says what the
+/// anchor says.
+///
+/// The fallback to the other side is orientation only, for a line with no
+/// number of its own: such a line cannot be commented on at all — the app
+/// refuses rather than anchoring it somewhere approximate.
+fn line_number(line: &DiffLine) -> Option<u32> {
+    match crate::app::anchored_side(line.kind) {
+        Side::Left => line.left.or(line.right),
+        Side::Right => line.right.or(line.left),
+    }
 }
 
 /// The half-open range of diff lines to draw: `height` of them, centered on
