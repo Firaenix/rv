@@ -25,6 +25,9 @@
 //! nothing looks a snapshot up except by an id already found in
 //! `comments.json`), but never the reverse: a comment recorded in
 //! `comments.json` whose snapshot was never written.
+//! [`Store::remove_comment`] runs the same ordering backwards — entry out of
+//! `comments.json` first, snapshot file deleted second — to preserve that
+//! same one-sided invariant while tearing a comment down.
 //!
 //! On-disk formats are chosen to be readable by a human poking around
 //! `.review/`, not just by `rv` itself: `comments.json` is pretty-printed,
@@ -256,6 +259,43 @@ impl Store {
         write_atomic(&snapshot_path, snapshot.as_bytes())?;
 
         write_atomic(&self.comments_path(), serialized.as_bytes())
+    }
+
+    /// Removes the comment with `id`, returning whether one was there.
+    ///
+    /// `comments.json` is rewritten *before* `.review/snapshots/<id>` is
+    /// deleted, which is [`Store::append_comment`]'s ordering read backwards
+    /// and holds the same invariant for the same reason: at every instant
+    /// during the delete, every comment `comments.json` claims exists still
+    /// has its snapshot on disk. A crash between the two steps strands an
+    /// orphaned snapshot, which is inert — nothing looks a snapshot up except
+    /// by an id already found in `comments.json` — rather than leaving a live
+    /// comment whose snapshot has been deleted out from under it.
+    ///
+    /// An unknown id is not an error, so deleting is idempotent: the retry
+    /// after an interrupted delete finds the entry already gone, reports
+    /// `false`, and succeeds.
+    pub fn remove_comment(&self, id: &str) -> Result<bool, Error> {
+        let mut comments = self.comments()?;
+        let before = comments.len();
+        comments.retain(|existing| existing.id != id);
+        if comments.len() == before {
+            return Ok(false);
+        }
+
+        let serialized =
+            serde_json::to_string_pretty(&comments).map_err(Error::SerializeComments)?;
+        write_atomic(&self.comments_path(), serialized.as_bytes())?;
+
+        let snapshot_path = self.snapshots_dir().join(id);
+        match fs::remove_file(&snapshot_path) {
+            Ok(()) => Ok(true),
+            Err(source) if source.kind() == ErrorKind::NotFound => Ok(true),
+            Err(source) => Err(Error::Io {
+                path: snapshot_path,
+                source,
+            }),
+        }
     }
 
     /// Overwrites `REVIEW-FEEDBACK.md` with `document`.

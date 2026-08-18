@@ -247,6 +247,87 @@ fn append_comment_shrinking_body_leaves_no_residual_bytes() {
     assert_eq!(on_disk, expected);
 }
 
+/// Deleting a comment takes both of the files that comment owns with it: its
+/// entry in `comments.json` and its `snapshots/<id>` file. The removal is
+/// write-through like every other store write, so a freshly opened `Store`
+/// over the same root sees the shortened list; and it is surgical, so the
+/// other comment keeps both its entry and its snapshot.
+#[test]
+fn removing_a_comment_drops_it_and_its_snapshot() {
+    let repo = repo_root();
+    let store = Store::open(repo.path()).expect("open store");
+    store
+        .append_comment(&sample_comment("c1"))
+        .expect("append c1");
+    store
+        .append_comment(&sample_comment("c2"))
+        .expect("append c2");
+
+    let removed = store.remove_comment("c1").expect("remove c1");
+
+    assert!(removed, "remove_comment reports it removed something");
+    let left = Store::open(repo.path())
+        .expect("reopen store")
+        .comments()
+        .expect("read comments");
+    assert_eq!(
+        left.iter().map(|c| c.id.as_str()).collect::<Vec<_>>(),
+        ["c2"],
+        "only the other comment survives, and a fresh Store sees it"
+    );
+    assert!(
+        !repo.path().join(".review/snapshots/c1").exists(),
+        "the removed comment's snapshot is gone"
+    );
+    assert!(
+        repo.path().join(".review/snapshots/c2").exists(),
+        "the surviving comment keeps its snapshot"
+    );
+}
+
+/// Deleting an id that is not there is a no-op, not a failure. The reviewer
+/// can only reach delete through a comment they can see, but a retry after an
+/// interrupted delete re-issues an id that is already gone, and that retry
+/// must succeed rather than surface an error over work already done.
+#[test]
+fn removing_an_unknown_id_is_not_an_error() {
+    let repo = repo_root();
+    let store = Store::open(repo.path()).expect("open store");
+    store
+        .append_comment(&sample_comment("c1"))
+        .expect("append c1");
+
+    let removed = store.remove_comment("nosuchid").expect("remove unknown id");
+
+    assert!(!removed, "nothing was removed");
+    assert_eq!(
+        store.comments().expect("read comments").len(),
+        1,
+        "nothing was lost"
+    );
+}
+
+/// Removal writes `comments.json` through the same temp-file-plus-rename
+/// helper as every other store write, so on the happy path it must leave no
+/// temp file behind in `.review/` — and the snapshot it deletes must leave
+/// nothing behind in `.review/snapshots/` either.
+#[test]
+fn remove_comment_leaves_no_stray_temp_files() {
+    let repo = repo_root();
+    let store = Store::open(repo.path()).expect("open store");
+    store
+        .append_comment(&sample_comment("c1"))
+        .expect("append c1");
+    store
+        .append_comment(&sample_comment("c2"))
+        .expect("append c2");
+
+    store.remove_comment("c1").expect("remove c1");
+
+    assert_no_stray_temp_files(&repo.path().join(".review"));
+    assert_no_stray_temp_files(&repo.path().join(".review/snapshots"));
+}
+
 /// A directory listing helper for [`append_comment_leaves_no_stray_temp_files`]:
 /// none of `write_atomic`'s temp files (recognizable by the module's
 /// `.rv-store-` prefix) should remain in `dir`.
