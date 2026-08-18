@@ -5,7 +5,10 @@
 //! because how one reviewer likes their file list is not something another
 //! reviewer, or an LLM reading the export, should inherit.
 
+use anyhow::Result;
+
 use super::App;
+use crate::tree;
 use super::Focus;
 use super::SidebarTab;
 use super::status::VIEW_KEYS_ARE_FOR_THE_FILE_LIST;
@@ -17,7 +20,7 @@ impl App {
     /// Says nothing in the status line: it is navigation, the pane's own title
     /// reports which tab is up, and a key that overwrote the help text to
     /// announce itself would cost the reviewer the keymap they read off it.
-    pub(super) fn switch_tab(&mut self) {
+    pub(super) fn switch_tab(&mut self) -> Result<()> {
         self.sidebar_tab = match self.sidebar_tab {
             SidebarTab::Files => SidebarTab::Commits,
             SidebarTab::Commits => SidebarTab::Comments,
@@ -25,13 +28,22 @@ impl App {
         };
         // The two node tabs share one cursor — they are never both on screen —
         // so it has to be clamped onto whichever list just appeared.
-        self.sidebar_row = self
-            .sidebar_row
-            .min(self.nodes().len().saturating_sub(1));
+        self.sidebar_row = self.sidebar_row.min(self.nodes().len().saturating_sub(1));
+        // And the row it lands on has to be *selected*, not merely highlighted.
+        // Without this the commits tab opened with a file row under the cursor
+        // and the previous tab's diff still on screen — the sidebar naming one
+        // thing and the pane showing another, which is the one state this
+        // interface must never be in.
+        if let Some(tree::NodeKind::File { index }) =
+            self.nodes().get(self.sidebar_row).map(|node| node.kind.clone())
+        {
+            self.select_node_file(index)?;
+        }
         // A parked view is a row of *the list that was showing*; the other tab
         // is a different list of a different length.
         self.sidebar_scroll = None;
         self.clamp_browser();
+        Ok(())
     }
 
     /// Keeps the browser's cursor on the list after the list has changed under

@@ -199,6 +199,13 @@ pub struct App {
     /// Set to skip difftastic for every file in this review — see
     /// [`App::with_fallback_diffs`].
     force_fallback: bool,
+    /// Which commits-view row is selected, and that row's own diff.
+    ///
+    /// Keyed by the row's pair number rather than by file, because two changes
+    /// touching one file are two rows with two diffs — which is the whole reason
+    /// the view exists.
+    commit_pair: Option<usize>,
+    commit_diffs: HashMap<usize, FileDiff>,
     /// The symbols in scope, and which scope they were indexed for.
     ///
     /// Two fields rather than an `Option<(Scope, Index)>` because the index is
@@ -299,6 +306,8 @@ impl App {
             buffer: String::new(),
             status: HELP.to_owned(),
             force_fallback,
+            commit_pair: None,
+            commit_diffs: HashMap::new(),
             symbol_index: crate::index::Index::default(),
             indexed_scope: None,
             sidebar_hidden: false,

@@ -133,7 +133,7 @@ impl App {
         let blob = self
             .review
             .repo
-            .read_blob(target.commit, target.path)
+            .read_blob(&target.commit, target.path)
             .with_context(|| format!("could not read {} to anchor the comment", target.path))?;
         let text = blob.map(|bytes| String::from_utf8_lossy(&bytes).into_owned());
         let anchor = anchor::create(

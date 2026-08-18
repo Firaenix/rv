@@ -28,7 +28,7 @@ pub(super) struct AnchorTarget<'a> {
     pub(super) side: Side,
     pub(super) path: &'a str,
     pub(super) number: u32,
-    pub(super) commit: &'a str,
+    pub(super) commit: String,
 }
 
 impl App {
@@ -40,15 +40,17 @@ impl App {
     /// some other line's.
     pub(super) fn anchor_target(&self, line: &DiffLine) -> Option<AnchorTarget<'_>> {
         let file = self.selected_file()?;
-        let session = &self.review.session;
+        // The pair the text on screen was read from, which in the commits view is
+        // the selected change's rather than the review's.
+        let (base, head) = self.shown_endpoints();
         let side = anchored_side(line.kind);
         let (path, number, commit) = match side {
             Side::Left => (
                 file.source_path.as_deref().unwrap_or(&file.path),
                 line.left,
-                session.base_commit.as_str(),
+                base,
             ),
-            Side::Right => (file.path.as_str(), line.right, session.head_commit.as_str()),
+            Side::Right => (file.path.as_str(), line.right, head),
         };
         Some(AnchorTarget {
             side,

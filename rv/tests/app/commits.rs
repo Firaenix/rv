@@ -381,3 +381,107 @@ fn the_other_tabs_name_no_change() {
         "the comments tab named one"
     );
 }
+
+/// The point of the whole view: a file row under a change shows **that change's**
+/// diff of the file, not the branch's.
+///
+/// `a.rs` gains one line in the first change and one more in the second. The
+/// file list shows both additions, because that is what the branch did; the row
+/// under the second change shows one, because that is what the change did. A view
+/// that showed the branch's diff under a change row would be labelling one thing
+/// as another — and a comment written on it would be anchored to a revision its
+/// quoted text does not come from.
+#[test]
+fn a_file_row_shows_the_diff_of_the_change_it_sits_under() {
+    let workspace = Fixture::new();
+    workspace.write("grow.rs", "fn one() {}\n");
+    workspace.jj(&["describe", "-m", "the first line"]);
+    workspace.jj(&["new"]);
+    workspace.write("grow.rs", "fn one() {}\nfn two() {}\n");
+    workspace.jj(&["describe", "-m", "the second line"]);
+    workspace.jj(&["new"]);
+
+    let mut app = workspace.app();
+    // The branch's own diff of the file: both lines are new.
+    let branch = app
+        .files()
+        .iter()
+        .position(|file| file.path == "grow.rs")
+        .expect("grow.rs is in the review");
+    while app.file_index() != branch {
+        app.on_key(KeyCode::Char(']')).expect("next file");
+    }
+    let whole = app.selected_diff().expect("a diff").lines.len();
+    assert_eq!(whole, 2, "the branch's diff is not both lines: {whole}");
+
+    // And the second change's, which is one of them.
+    to_commits(&mut app);
+    app.on_key(KeyCode::Left).expect("focus the sidebar");
+    let mut found = false;
+    for _ in 0..app.nodes().len() {
+        if app
+            .nodes()
+            .get(app.sidebar_row())
+            .is_some_and(|node| node.label == "grow.rs")
+            && app
+                .change_under_cursor()
+                .is_some_and(|(_, _, subject)| subject == "the second line")
+        {
+            found = true;
+            break;
+        }
+        app.on_key(KeyCode::Down).expect("next row");
+    }
+    assert!(found, "no grow.rs row under the second change");
+
+    let scoped = app.selected_diff().expect("a diff").lines.len();
+    assert_eq!(
+        scoped, 1,
+        "the change's row shows the branch's diff rather than its own: {scoped} lines"
+    );
+}
+
+/// And a comment written there is anchored between that change's own commits, so
+/// the text it quotes can be read back from the revision it names.
+#[test]
+fn a_comment_written_under_a_change_is_anchored_to_that_change() {
+    let workspace = Fixture::new();
+    workspace.write("grow.rs", "fn one() {}\n");
+    workspace.jj(&["describe", "-m", "the first line"]);
+    workspace.jj(&["new"]);
+    workspace.write("grow.rs", "fn one() {}\nfn two() {}\n");
+    workspace.jj(&["describe", "-m", "the second line"]);
+    workspace.jj(&["new"]);
+
+    let mut app = workspace.app();
+    to_commits(&mut app);
+    app.on_key(KeyCode::Left).expect("focus the sidebar");
+    while !app
+        .nodes()
+        .get(app.sidebar_row())
+        .is_some_and(|node| node.label == "grow.rs")
+    {
+        app.on_key(KeyCode::Down).expect("next row");
+    }
+    let change = app
+        .change_under_cursor()
+        .expect("a change under the cursor")
+        .1;
+
+    app.on_key(KeyCode::Right).expect("onto the diff");
+    write_comment(&mut app, "about this change's line");
+
+    let stored = workspace.store().comments().expect("read the store");
+    let comment = stored.last().expect("a saved comment");
+    assert!(
+        comment.commit_id.starts_with(&change),
+        "the comment is anchored to {:?} rather than to the change on screen ({change})",
+        comment.commit_id
+    );
+    // And the anchor's stored context is the text that revision holds, which is
+    // what makes it verifiable at all.
+    assert!(
+        !comment.anchor.context.is_empty(),
+        "the anchor quotes nothing"
+    );
+}

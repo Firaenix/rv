@@ -196,7 +196,12 @@ impl App {
     ///
     /// A side the commit has no plain file at caches nothing, so
     /// [`App::highlights`] answers `None` and the renderer draws it plain.
-    fn cache_highlights(&mut self, commit: String, path: String, blob: Option<&[u8]>) {
+    pub(super) fn cache_highlights(
+        &mut self,
+        commit: String,
+        path: String,
+        blob: Option<&[u8]>,
+    ) {
         let Some(bytes) = blob else {
             return;
         };

@@ -173,7 +173,7 @@ everywhere.
 | `/` | Find a symbol by name: type, `Enter` jumps to the best match, `Esc` cancels |
 | `]` | Next file, from whichever pane the cursor is in |
 | `[` | Previous file, likewise |
-| `Tab` | Cycle the sidebar through **Files**, **Commits** and **Comments** |
+| `Tab` | Cycle the sidebar through **Files**, **Commits** and **Comments**. A file row under a change shows *that change's* diff of it |
 | `Enter` | Fold a directory or change in the sidebar; from the diff, step into the selected line's comment stack — or, from the Comments tab, jump to the code that comment is about |
 | `Space` | Fold the directory or change under the cursor, same as `Enter` |
 | `Esc` | Leave the comment stack |

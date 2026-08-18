@@ -113,7 +113,7 @@ impl App {
             Command::Export => self.export()?,
             Command::Fold => self.toggle_collapse(),
             // Focus-free, like `[` and `]`.
-            Command::SwitchTab => self.switch_tab(),
+            Command::SwitchTab => self.switch_tab()?,
             Command::Enter => self.on_enter()?,
             Command::Escape => self.leave_stack(),
             Command::Narrower => self.split = self.split.nudged(-NUDGE),

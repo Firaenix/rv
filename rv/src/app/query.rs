@@ -34,6 +34,24 @@ impl App {
 
     /// The selected file's diff, once it has been loaded.
     pub fn selected_diff(&self) -> Option<&FileDiff> {
+        // The commits view shows the change's own diff of the file, not the
+        // branch's — see `select_commit_file`. Everything downstream of here
+        // reads one diff and does not care which, which is what keeps the row
+        // plan, the cursor and the renderer from needing two code paths.
+        //
+        // **Only where the pair names the selected file.** A pair outlives the
+        // tab it was chosen in: walking through the commits tab on the way to
+        // the comment browser sets one, and coming back later would otherwise
+        // pair that stale diff with whatever file is selected now — one file's
+        // lines under another file's name, which a property caught in one
+        // keystroke.
+        if self.sidebar_tab == SidebarTab::Commits
+            && let Some(pair) = self.commit_pair
+            && let Some(diff) = self.commit_diffs.get(&pair)
+            && self.commit_path(pair) == self.selected_file().map(|file| file.path.as_str())
+        {
+            return Some(diff);
+        }
         self.diffs.get(self.file_index).and_then(Option::as_ref)
     }
 
