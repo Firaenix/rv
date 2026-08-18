@@ -80,6 +80,16 @@ impl App {
         &self.review.session.changes
     }
 
+    /// How many symbols the last-built index holds.
+    ///
+    /// Read off the cache rather than building one: the renderer takes `&App`
+    /// and indexing is not a thing to do per frame. The picker builds it on `/`,
+    /// which is the only key that needs the number.
+    #[must_use]
+    pub fn symbols_in_scope(&self) -> usize {
+        self.symbol_index.len()
+    }
+
     /// Whether the reviewer has put the sidebar away.
     #[must_use]
     pub fn sidebar_hidden(&self) -> bool {

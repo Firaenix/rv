@@ -168,6 +168,9 @@ everywhere.
 | `↑` (`k`) | The previous one |
 | `←` (`h`) | Focus the pane to the left: the diff hands over to the sidebar, a comment stack to the diff |
 | `→` (`l`) | Focus the diff from the sidebar |
+| `n` | Jump to the next symbol in scope — every changed file, or one change's files from the Commits tab |
+| `N` | The previous one |
+| `/` | Find a symbol by name: type, `Enter` jumps to the best match, `Esc` cancels |
 | `]` | Next file, from whichever pane the cursor is in |
 | `[` | Previous file, likewise |
 | `Tab` | Cycle the sidebar through **Files**, **Commits** and **Comments** |

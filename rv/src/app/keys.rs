@@ -51,6 +51,7 @@ impl App {
             Mode::Browse => self.on_key_browse(key),
             Mode::Comment => self.on_key_comment(key),
             Mode::ConfirmDelete { .. } => self.on_key_confirm_delete(key),
+            Mode::Pick => self.on_key_pick(key),
         }
     }
 
@@ -102,6 +103,9 @@ impl App {
             // costs a trip through the sidebar.
             Command::NextFile => self.select_file(self.file_index.saturating_add(1))?,
             Command::PreviousFile => self.select_file(self.file_index.saturating_sub(1))?,
+            Command::NextSymbol => self.next_symbol()?,
+            Command::PreviousSymbol => self.previous_symbol()?,
+            Command::Pick => self.begin_pick(),
             Command::Comment => self.begin_comment(),
             Command::Delete => self.begin_delete(),
             Command::Resolve => self.resolve_comment()?,

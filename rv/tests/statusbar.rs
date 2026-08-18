@@ -65,6 +65,7 @@ fn sample_view() -> View<'static> {
             removed: 3,
         }),
         scope: "trunk()..@",
+        change: "ytskpxpw close the alias bypass".to_owned(),
         open_comments: 4,
         status: "saved comment at app.rs:42",
     }
@@ -200,12 +201,15 @@ fn the_mode_segment_changes_with_the_mode() {
 }
 
 #[test]
-fn the_bar_carries_its_six_segments_in_reading_order() {
+fn the_bar_carries_its_segments_in_reading_order() {
     assert_eq!(
         roles(&sample_segments()),
         [
             Role::Mode,
             Role::Position,
+            // Narrower than the review and wider than one file, and read
+            // together with the scope beside it.
+            Role::Change,
             Role::Scope,
             Role::Comments,
             Role::Status,
@@ -271,7 +275,7 @@ fn a_status_message_displaces_nothing() {
     // The defect this module exists to fix: a status used to replace the whole
     // bar, so the first thing a reviewer did evicted the keymap hint for the
     // rest of the session.
-    let text = line_text(&render(&sample_segments(), 100, false));
+    let text = line_text(&render(&sample_segments(), 130, false));
     assert!(
         text.contains("saved comment at app.rs:42"),
         "the status is on the bar: {text}"
@@ -302,7 +306,9 @@ fn an_empty_status_leaves_no_segment_behind() {
 
 #[test]
 fn the_status_is_the_first_thing_dropped_when_the_bar_is_short() {
-    let text = line_text(&render(&sample_segments(), 80, false));
+    // Wide enough for every segment but the status, which is what makes this
+    // about the ranking rather than about arithmetic: at 130 the whole bar fits.
+    let text = line_text(&render(&sample_segments(), 108, false));
     assert!(
         !text.contains("saved comment"),
         "the status goes first — it will be untrue in eight seconds anyway: {text}"
@@ -310,6 +316,10 @@ fn the_status_is_the_first_thing_dropped_when_the_bar_is_short() {
     assert!(
         text.contains("trunk()..@"),
         "the scope is still there: {text}"
+    );
+    assert!(
+        text.contains("ytskpxpw"),
+        "and so is the change the cursor is in: {text}"
     );
 }
 

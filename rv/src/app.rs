@@ -39,6 +39,7 @@ mod settle;
 mod sidebar;
 mod stack;
 mod status;
+mod symbols;
 
 pub use alerts::Alert;
 pub use anchor::anchored_side;
@@ -49,6 +50,8 @@ pub use mode::Action;
 pub use mode::Focus;
 pub use mode::Mode;
 pub use mode::SidebarTab;
+
+use comment::in_range;
 
 use std::cell::Cell;
 use std::collections::HashMap;
@@ -196,6 +199,13 @@ pub struct App {
     /// Set to skip difftastic for every file in this review — see
     /// [`App::with_fallback_diffs`].
     force_fallback: bool,
+    /// The symbols in scope, and which scope they were indexed for.
+    ///
+    /// Two fields rather than an `Option<(Scope, Index)>` because the index is
+    /// handed out by reference and the scope is compared by value on every
+    /// press of `n`.
+    symbol_index: crate::index::Index,
+    indexed_scope: Option<symbols::Scope>,
     /// Whether the reviewer has put the sidebar away with `z`.
     ///
     /// What they asked for, not what they get: a terminal narrow enough hides
@@ -236,10 +246,13 @@ impl App {
         let diffs = vec![None; review.files.len()];
         // Read before the first diff is computed: a reviewer who quit halfway
         // through yesterday opens on the notes they already made.
-        let comments = review
-            .store
-            .comments()
-            .context("could not read the saved comments")?;
+        let comments = in_range(
+            &review,
+            review
+                .store
+                .comments()
+                .context("could not read the saved comments")?,
+        );
         let cursor_rows = vec![0; review.files.len()];
         // A comment that is no longer open starts folded: still exactly where
         // the reviewer left it, without competing for the screen with the ones
@@ -286,6 +299,8 @@ impl App {
             buffer: String::new(),
             status: HELP.to_owned(),
             force_fallback,
+            symbol_index: crate::index::Index::default(),
+            indexed_scope: None,
             sidebar_hidden: false,
             commits: commits::Commits::default(),
         };

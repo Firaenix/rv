@@ -189,6 +189,14 @@ pub struct Node {
     pub stat: Stat,
 }
 
+/// How many characters of an id a row shows.
+///
+/// Eight, which is what `jj log` shows and what a reviewer copying an id out of
+/// the screen expects to be able to paste. A change id is thirty-two characters
+/// and a commit hash forty: printed whole, either one fills the sidebar and
+/// leaves no room for the description, which is what the row is *for*.
+pub const ID_SHORT: usize = 8;
+
 /// The three things a sidebar row can be.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum NodeKind {
@@ -196,6 +204,21 @@ pub enum NodeKind {
     Commit {
         /// The change's id, which is also the key it folds under.
         change_id: String,
+        /// The first [`ID_SHORT`] characters of the change id, and of the commit
+        /// hash: what the row actually prints.
+        short_change: String,
+        /// See `short_change`.
+        short_commit: String,
+        /// How many leading characters pick this change out of the review.
+        ///
+        /// jj highlights the shortest prefix that names a revision uniquely, so
+        /// that the highlighted part is exactly what you can type to select it.
+        /// This is the same measure taken over the changes *in this review*,
+        /// which is the set the sidebar is listing — the only set this module
+        /// knows about, and the one a reviewer is choosing between.
+        unique: usize,
+        /// The change's subject, or a stand-in where it has none.
+        subject: String,
         /// Whether its files are hidden.
         collapsed: bool,
     },
@@ -237,6 +260,9 @@ pub enum NodeKind {
 pub struct Group<'a> {
     /// The change's id, and the key its row folds under.
     pub change_id: &'a str,
+    /// The commit the change currently is, which is what a reader pastes into
+    /// `git show`.
+    pub commit_id: &'a str,
     /// Its description. Only the first line reaches the row.
     pub description: &'a str,
     /// The files it touched, in the order they should be listed.
@@ -316,6 +342,10 @@ pub fn build_grouped(
     }
     order(&mut stack, sort, |(_, _, total)| *total);
 
+    // Measured over every change the review lists, which is the set the reviewer
+    // is choosing between — see `NodeKind::Commit::unique`.
+    let ids: Vec<&str> = groups.iter().map(|group| group.change_id).collect();
+
     let mut nodes = Vec::new();
     for (group, base, total) in stack {
         let folded = collapsed.contains(group.change_id);
@@ -324,6 +354,10 @@ pub fn build_grouped(
             depth: 0,
             kind: NodeKind::Commit {
                 change_id: group.change_id.to_owned(),
+                short_change: short(group.change_id),
+                short_commit: short(group.commit_id),
+                unique: unique_prefix(group.change_id, &ids),
+                subject: subject_of(group),
                 collapsed: folded,
             },
             stat: total,
@@ -363,13 +397,46 @@ pub fn build_grouped(
 /// description — a change's row is one row, and jj descriptions are written
 /// with that convention already.
 fn commit_label(group: &Group<'_>) -> String {
+    format!(
+        "{} {} {}",
+        short(group.change_id),
+        short(group.commit_id),
+        subject_of(group)
+    )
+}
+
+/// A change's subject: the first line of its description, or a stand-in.
+fn subject_of(group: &Group<'_>) -> String {
     let subject = group.description.lines().next().unwrap_or_default().trim();
-    let subject = if subject.is_empty() {
-        NO_DESCRIPTION
+    if subject.is_empty() {
+        NO_DESCRIPTION.to_owned()
     } else {
-        subject
-    };
-    format!("{} {subject}", group.change_id)
+        subject.to_owned()
+    }
+}
+
+/// The first [`ID_SHORT`] characters of an id, or all of it where it is shorter.
+fn short(id: &str) -> String {
+    id.chars().take(ID_SHORT).collect()
+}
+
+/// How many leading characters of `id` no other id in `all` shares.
+///
+/// At least one, so a lone change still shows a highlighted character: the
+/// highlight means "this is what you type", and typing nothing selects nothing.
+/// Never more than [`ID_SHORT`] — a prefix longer than the row prints could not
+/// be highlighted on screen anyway, and two ids agreeing that far are not going
+/// to be told apart by this row.
+fn unique_prefix(id: &str, all: &[&str]) -> usize {
+    let others: Vec<&&str> = all.iter().filter(|other| **other != id).collect();
+    (1..=ID_SHORT)
+        .find(|length| {
+            let prefix: String = id.chars().take(*length).collect();
+            !others
+                .iter()
+                .any(|other| other.starts_with(prefix.as_str()))
+        })
+        .unwrap_or(ID_SHORT)
 }
 
 /// A file's row, labelled with `label`.

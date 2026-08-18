@@ -47,6 +47,7 @@ fn distinct_comments_are_never_lost_to_each_other() {
         app.borrow().files()
     );
 
+    let collision: Option<(usize, usize)>;
     // The pair whose two halves share a number is what makes this property a
     // test of the id's side-awareness rather than of its path-awareness.
     {
@@ -64,6 +65,17 @@ fn distinct_comments_are_never_lost_to_each_other() {
             "same.rs is not a same-position rewrite any more, so the collision this \
              property is about is unreachable: {same:?}"
         );
+        // The two rows the deliberate case below comments on. Recorded here,
+        // where the lines are already in hand, rather than hard-coded: a fixture
+        // edit must move this with it.
+        collision = Some((
+            same.iter()
+                .position(|line| line.kind == LineKind::Removed && line.left == line.right)
+                .expect("a removed half"),
+            same.iter()
+                .position(|line| line.kind == LineKind::Added && line.left == line.right)
+                .expect("an added half"),
+        ));
         select_path(app, "alpha.rs");
         assert_difftastic(app);
         let alpha = lines(app);
@@ -84,7 +96,7 @@ fn distinct_comments_are_never_lost_to_each_other() {
     ];
     let write = (0usize..count, 0usize..4, body);
     let seen = Coverage::new(&["two comments distinguished only by their side"]);
-    run_cases(32, prop::collection::vec(write, 1..9), |writes| {
+    let check = |writes: Vec<(usize, usize, String)>| -> Result<(), TestCaseError> {
         fixture.clear_comments();
         let app = &mut *app.borrow_mut();
 
@@ -172,7 +184,36 @@ fn distinct_comments_are_never_lost_to_each_other() {
         ids.dedup();
         prop_assert_eq!(ids.len(), total, "two stored comments share an id");
         Ok(())
-    });
+    };
+
+    // **Driven, not sampled.** The shape this property exists for — one body on
+    // both halves of one same-position rewrite — turned up in only two thirds of
+    // runs at 32 cases, so the coverage receipt below failed at random while the
+    // product was fine. A guard that fires on the sampler rather than on the
+    // code is worse than no guard: it trains a reader to re-run the suite.
+    //
+    // The lower row is commented first. A comment box is inserted *under* its
+    // line, so commenting the upper one first would shift the lower row out from
+    // under the `j` count that was meant to reach it.
+    let (removed_row, added_row) = collision.expect("the setup block records the pair");
+    let same_file = app
+        .borrow()
+        .files()
+        .iter()
+        .position(|file| file.path == "same.rs")
+        .expect("same.rs is in the review");
+    let (lower, upper) = if removed_row > added_row {
+        (removed_row, added_row)
+    } else {
+        (added_row, removed_row)
+    };
+    check(vec![
+        (same_file, lower, "a".to_owned()),
+        (same_file, upper, "a".to_owned()),
+    ])
+    .expect("the same-position pair is savable");
+
+    run_cases(32, prop::collection::vec(write, 1..9), check);
     seen.assert_all();
 }
 

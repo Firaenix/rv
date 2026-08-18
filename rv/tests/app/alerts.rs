@@ -172,24 +172,26 @@ fn several_alerts_share_the_panel_and_none_is_lost() {
     );
 }
 
-/// A jump to a comment whose file has left the range is an alert, not only a
-/// status: nothing moved, and a line in the bar is the easiest thing on screen
-/// to miss.
+/// A comment whose file is still in range but whose *line* has gone from the
+/// diff is an alert, not only a status: nothing moved, and a line in the bar is
+/// the easiest thing on screen to miss.
+///
+/// This used to be built from a comment whose whole file had left the range.
+/// Those are no longer listed at all — see
+/// `a_comment_outside_the_range_is_not_listed` — so the stale anchor this
+/// exercises is the one a reviewer can still reach: the file is here, the line
+/// is not.
 #[test]
-fn a_jump_to_a_file_that_left_the_range_raises_an_alert() {
-    let workspace = Fixture::new();
-    let mut app = workspace.app();
-    write_comment(&mut app, "a finding");
-
-    // A range whose only change touches no file at all, so the comment above is
-    // anchored outside it.
-    let mut later = workspace.app_from("@-");
-    assert!(
-        later.files().is_empty(),
-        "the later range still holds the commented file: {:?}",
+fn a_jump_to_a_line_that_left_the_diff_raises_an_alert() {
+    let workspace = stale_anchor();
+    let mut later = workspace.app_from("@--");
+    assert_eq!(
+        later.files().len(),
+        1,
+        "the later range does not hold the commented file: {:?}",
         later.files()
     );
-    assert_eq!(later.comments().len(), 1);
+    assert_eq!(later.comments().len(), 1, "the comment is not in range");
     assert!(later.alerts().is_empty(), "{:?}", later.alerts().len());
 
     later.on_key(KeyCode::Left).expect("the sidebar");
@@ -197,7 +199,7 @@ fn a_jump_to_a_file_that_left_the_range_raises_an_alert() {
     later.on_key(KeyCode::Enter).expect("jump");
 
     assert!(
-        later.status().contains("not in this review's range"),
+        later.status().contains("not in this diff any more"),
         "the bar says nothing about it: {:?}",
         later.status()
     );
@@ -213,6 +215,22 @@ fn a_jump_to_a_file_that_left_the_range_raises_an_alert() {
     );
 }
 
+/// A workspace whose stored comment is anchored to a line the later range's diff
+/// does not carry, with the file itself still in range.
+fn stale_anchor() -> Fixture {
+    let workspace = Fixture::stale_line();
+    {
+        let mut app = workspace.app();
+        // Down to a line the second change will not touch.
+        for _ in 0..3 {
+            app.on_key(KeyCode::Char('j')).expect("next line");
+        }
+        write_comment(&mut app, "a finding");
+    }
+    workspace.rewrite_first_line();
+    workspace
+}
+
 /// The same failure twice is one toast.
 ///
 /// A panel reading `x · x` says nothing the first `x` did not, and a reviewer
@@ -220,10 +238,8 @@ fn a_jump_to_a_file_that_left_the_range_raises_an_alert() {
 /// once already.
 #[test]
 fn the_same_failure_twice_is_one_toast() {
-    let workspace = Fixture::new();
-    let mut app = workspace.app();
-    write_comment(&mut app, "a finding");
-    let mut later = workspace.app_from("@-");
+    let workspace = stale_anchor();
+    let mut later = workspace.app_from("@--");
 
     later.on_key(KeyCode::Left).expect("the sidebar");
     to_comments(&mut later);
@@ -255,10 +271,8 @@ fn the_same_failure_twice_is_one_toast() {
 /// applied by whoever has it.
 #[test]
 fn an_alert_raised_before_the_clock_is_known_is_stamped_by_the_first_pass() {
-    let workspace = Fixture::new();
-    let mut app = workspace.app();
-    write_comment(&mut app, "a finding");
-    let mut later = workspace.app_from("@-");
+    let workspace = stale_anchor();
+    let mut later = workspace.app_from("@--");
 
     later.on_key(KeyCode::Left).expect("the sidebar");
     to_comments(&mut later);

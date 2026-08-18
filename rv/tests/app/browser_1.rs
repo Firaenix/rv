@@ -177,28 +177,50 @@ fn a_jump_lands_on_the_line_the_comment_is_anchored_to() {
     assert_eq!(app.comments_for_line(app.line_index()).len(), 1);
 }
 
-/// A comment whose file has left the review's range is reported, not papered
-/// over — and the reviewer is left exactly where they were.
+/// A comment whose file is not in the review's range is **not listed**.
+///
+/// `.review/` outlives any one range, so a comment written last week against a
+/// wider revset can be anchored to a file this range does not touch. It used to
+/// appear in the browser and answer `Enter` with an alert, which is a row that
+/// exists only to refuse — a reviewer counting their open comments was counting
+/// jumps they could not make.
+///
+/// The comment is not deleted: the store keeps it, the export still carries it,
+/// and a wider range shows it again. It is only absent from the list of things
+/// this review can take you to.
 #[test]
-fn a_jump_to_a_file_outside_the_review_says_so() {
+fn a_comment_outside_the_range_is_not_listed() {
     let workspace = Fixture::new();
     let mut app = workspace.app();
-    write_comment(&mut app, "on a file that moved away");
+    write_comment(&mut app, "on a file in the range");
     store_variant(&workspace, "deadbee1", "gone.rs", 1);
 
-    let mut reopened = workspace.app();
-    let was = (reopened.file_index(), reopened.line_index());
-    jump_to_row(&mut reopened, 1);
+    let reopened = workspace.app();
 
-    assert!(
-        reopened.status().contains("gone.rs") && reopened.status().contains("range"),
-        "the jump did not say why it went nowhere: {:?}",
-        reopened.status()
-    );
     assert_eq!(
-        (reopened.file_index(), reopened.line_index()),
-        was,
-        "a jump that could not be made moved the reviewer anyway"
+        reopened.comments().len(),
+        1,
+        "the browser lists a comment the range cannot reach: {:?}",
+        reopened
+            .comments()
+            .iter()
+            .map(|comment| comment.anchor.file.as_str())
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        reopened
+            .comments()
+            .iter()
+            .all(|comment| comment.anchor.file != "gone.rs"),
+        "the out-of-range comment is still listed"
+    );
+    // Still on disk, which is the half that must not change: hiding a row is not
+    // deleting a comment.
+    let stored = workspace.store().comments().expect("read the store");
+    assert_eq!(stored.len(), 2, "filtering the list deleted a comment");
+    assert!(
+        stored.iter().any(|comment| comment.anchor.file == "gone.rs"),
+        "the out-of-range comment left the store"
     );
     drop(app);
 }

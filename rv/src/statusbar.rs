@@ -85,6 +85,8 @@ pub enum Role {
     /// The selected file, how far through the list it is, and the shape of its
     /// change.
     Position,
+    /// The change the sidebar cursor is in.
+    Change,
     /// The revset under review.
     Scope,
     /// How many comments are open.
@@ -107,10 +109,14 @@ impl Role {
         match self {
             Role::Status => 0,
             Role::Scope => 1,
-            Role::Position => 2,
-            Role::Comments => 3,
-            Role::Mode => 4,
-            Role::Hint => 5,
+            // Above the scope and below the position: a reviewer who has walked
+            // into a change wants to know which one, and the revset is the same
+            // sentence it was when they opened the review.
+            Role::Change => 2,
+            Role::Position => 3,
+            Role::Comments => 4,
+            Role::Mode => 5,
+            Role::Hint => 6,
         }
     }
 
@@ -135,6 +141,9 @@ impl Role {
         match self {
             Role::Mode => neutral(0.22),
             Role::Position | Role::Hint => neutral(0.56),
+            // Between the position and the scope, because that is what it is
+            // between: narrower than the review, wider than one file.
+            Role::Change => neutral(0.63),
             Role::Scope | Role::Status => neutral(0.70),
             Role::Comments => gradient::oklab_mix(gradient::COMMENT, gradient::INK_DARK, 0.30),
         }
@@ -167,7 +176,7 @@ pub struct Segment {
 /// segment naming the *context* the cursor is in (`FILES`, `DIFF`, `COMMENT`,
 /// `CONFIRM`, …), which is a richer thing than the typing mode and does not
 /// exist yet. A `&str` is what both can produce.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct View<'a> {
     /// What the next keystroke does, already spelled the way the bar shows it.
     pub mode: &'a str,
@@ -181,6 +190,9 @@ pub struct View<'a> {
     pub stat: Option<Stat>,
     /// The revset under review, as the reviewer asked for it.
     pub scope: &'a str,
+    /// The change the sidebar cursor is in, already spelled for the bar, or
+    /// empty where the cursor is not in one.
+    pub change: String,
     /// How many comments are open.
     pub open_comments: usize,
     /// The last thing that happened, or empty once it has expired.
@@ -219,6 +231,9 @@ pub fn segments(view: &View<'_>) -> Vec<Segment> {
             .unwrap_or_default();
         push(Role::Position, format!("{file}{counter}{shape}"));
     }
+    // Before the scope: the change the cursor is in is the narrower and more
+    // immediate fact, and the two are read together.
+    push(Role::Change, view.change.clone());
     push(Role::Scope, view.scope.to_owned());
     push(Role::Comments, format!("{} open", view.open_comments));
     push(Role::Status, view.status.to_owned());

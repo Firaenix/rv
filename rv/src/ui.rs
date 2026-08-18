@@ -87,6 +87,14 @@ use crate::layout::Layout;
 use crate::layout::Split;
 use crate::layout::layout;
 
+/// Rows the symbol picker takes along the bottom: its two borders, the query
+/// being typed, and the matches under it.
+///
+/// Six rather than the comment box's three: a picker that showed one match is a
+/// picker you cannot choose from, and five candidates is what fits without
+/// taking a whole small terminal.
+const PICKER_ROWS: u16 = 8;
+
 /// Rows the comment box needs: its two borders and the line being typed.
 const COMMENT_ROWS: u16 = 3;
 
@@ -179,7 +187,9 @@ fn chrome(app: &App, toast: bool) -> Chrome {
         bar_rows: match app.mode() {
             // A confirmation is a question in the status line, not a box to
             // type in, so it takes the same single row browsing does.
+            // The picker is a query in the status line and a list above it.
             Mode::Browse | Mode::ConfirmDelete { .. } => 1,
+            Mode::Pick => PICKER_ROWS,
             Mode::Comment => COMMENT_ROWS,
         },
         help_open: app.help_open(),

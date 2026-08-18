@@ -5,6 +5,9 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::widgets::Block;
 use ratatui::widgets::BorderType;
+use ratatui::style::Modifier;
+use ratatui::style::Style;
+use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
 use rv_core::store::CommentState;
 
@@ -58,6 +61,45 @@ pub(super) fn draw_bar(frame: &mut Frame, app: &App, area: Rect) {
                 area,
             )
         }
+        // The query on the first row and the matches under it, best first, so
+        // the one `Enter` would take is the one nearest what was typed.
+        Mode::Pick => {
+            let width = usize::from(area.width.saturating_sub(BORDER_ROWS));
+            let rows = usize::from(area.height.saturating_sub(BORDER_ROWS)).saturating_sub(1);
+            let mut lines = vec![Line::from(format!("/{}", tail(app.buffer(), width)))];
+            let matches = app.matches();
+            lines.extend(matches.iter().take(rows).enumerate().map(|(rank, entry)| {
+                let text = format!(
+                    "{} {}  {}:{}",
+                    // The one `Enter` takes, marked: a list whose first row is
+                    // the choice has to say which row that is.
+                    if rank == 0 { "▸" } else { " " },
+                    entry.symbol.name,
+                    entry.path,
+                    entry.symbol.line
+                );
+                let style = if rank == 0 {
+                    Style::default().add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().add_modifier(Modifier::DIM)
+                };
+                Line::styled(clip(&text, width), style)
+            }));
+            if matches.is_empty() {
+                lines.push(Line::styled(
+                    "no symbol matches",
+                    Style::default().add_modifier(Modifier::DIM),
+                ));
+            }
+            frame.render_widget(
+                Paragraph::new(lines).block(
+                    Block::bordered()
+                        .border_type(BorderType::Rounded)
+                        .title(format!("Find a symbol ({} in scope)", app.symbols_in_scope())),
+                ),
+                area,
+            )
+        }
     }
 }
 
@@ -80,6 +122,12 @@ fn status_view(app: &App) -> statusbar::View<'_> {
         file_count: app.files().len(),
         stat: app.selected_file().map(|_| app.stat(app.file_index())),
         scope: &app.session().revset,
+        // `id subject`, which is the same shape the row shows, so the bar and
+        // the sidebar name a change the same way.
+        change: app
+            .change_under_cursor()
+            .map(|(change, _, subject)| format!("{change} {subject}"))
+            .unwrap_or_default(),
         open_comments: app
             .comments()
             .iter()

@@ -91,6 +91,27 @@ pub const BINDINGS: &[Binding] = &[
         command: Command::Back,
     },
     Binding {
+        keys: "n",
+        group: Group::Move,
+        what: "next symbol",
+        codes: &[KeyCode::Char('n')],
+        command: Command::NextSymbol,
+    },
+    Binding {
+        keys: "N",
+        group: Group::Move,
+        what: "previous symbol",
+        codes: &[KeyCode::Char('N')],
+        command: Command::PreviousSymbol,
+    },
+    Binding {
+        keys: "/",
+        group: Group::Move,
+        what: "find a symbol",
+        codes: &[KeyCode::Char('/')],
+        command: Command::Pick,
+    },
+    Binding {
         keys: "]",
         group: Group::Move,
         what: "next file",
@@ -249,6 +270,9 @@ pub(super) enum Command {
     Back,
     NextFile,
     PreviousFile,
+    NextSymbol,
+    PreviousSymbol,
+    Pick,
     FocusLeft,
     FocusRight,
     SwitchTab,
@@ -291,6 +315,12 @@ impl App {
             Command::Forward => self.can_move_forward(),
             Command::Back => self.can_move_back(),
             Command::NextFile => self.file_index + 1 < self.review.files.len(),
+            // Asked of the cache rather than of a fresh index: the popup is
+            // drawn from `&self` and indexing is not a thing to do per frame. An
+            // unbuilt index reports live, and the key says so itself.
+            Command::NextSymbol | Command::PreviousSymbol | Command::Pick => {
+                self.indexed_scope.is_none() || !self.symbol_index.is_empty()
+            }
             Command::PreviousFile => self.file_index > 0,
             Command::FocusLeft => self.focus != Focus::Sidebar,
             Command::FocusRight => self.focus == Focus::Sidebar,

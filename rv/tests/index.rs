@@ -751,3 +751,57 @@ proptest! {
         prop_assert_eq!(walk, entries);
     }
 }
+
+/// The rule this module's headline claims, in the one shape that can catch a
+/// model getting it wrong: the walk follows the **caller's scope order**, not
+/// the file numbers.
+///
+/// Every other test hands over a scope whose numbers ascend with position, so a
+/// rank derived from `Scoped::file` produces exactly the right answer and a
+/// mutant that does so survives. It was measured surviving all twenty-seven of
+/// them. This scope numbers its files *descending*, which is what a churn-sorted
+/// review looks like — the biggest file first, whatever its position in
+/// `App::files()` — and there the two orders disagree.
+///
+/// The consequence of getting it wrong is not a cosmetic reordering: `n` reaches
+/// a file, finds no rank for the number it holds, and stops halfway through a
+/// review that still has symbols in it.
+#[test]
+fn the_walk_follows_the_scope_order_not_the_file_numbers() {
+    let first = "fn early() {}\n";
+    let second = "fn later() {}\n";
+    // File 9 comes first in scope and file 2 second: the caller's order is the
+    // walk's order, and it is not the numeric one.
+    let scope = vec![
+        added(9, "first.rs", first),
+        added(2, "second.rs", second),
+    ];
+    let index = Index::of(&scope);
+
+    assert_eq!(
+        names(&index),
+        vec!["early", "later"],
+        "the entries came back in file-number order rather than scope order"
+    );
+
+    // And the cursor walks them the same way: from the first file in scope to
+    // the second, never stalling because 2 < 9.
+    let early = entry_named(&index, "early");
+    let (file, line) = cursor(early);
+    let next = index
+        .next_after(file, line)
+        .expect("a symbol after the first one");
+    assert_eq!(
+        next.symbol.name, "later",
+        "stepping from the first file in scope did not reach the second"
+    );
+
+    // Backwards too, which is where a rank taken from the file number strands
+    // the reviewer: from file 2 there is a previous entry only if 9 ranks first.
+    let later = entry_named(&index, "later");
+    let (file, line) = cursor(later);
+    let previous = index
+        .previous_before(file, line)
+        .expect("a symbol before the second one");
+    assert_eq!(previous.symbol.name, "early");
+}

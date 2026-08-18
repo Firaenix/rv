@@ -186,6 +186,32 @@ impl Fixture {
         fixture
     }
 
+    /// Five lines of `a.rs`, then a second change that rewrites only the first
+    /// of them.
+    ///
+    /// Reviewed from `@-`, the range holds `a.rs` — so a comment on it is in
+    /// range — but its diff carries only line 1, so a comment anchored to line 4
+    /// cannot be jumped to. That is the stale-anchor alert with the file-left-the-
+    /// range case filtered out from under it.
+    pub fn stale_line() -> Self {
+        let fixture = Self::empty();
+        fixture.write("a.rs", "fn a() {\n    let w = 1;\n    let x = 2;\n    let y = 3;\n}\n");
+        fixture.jj(&["describe", "-m", "first change"]);
+        fixture.jj(&["new"]);
+        fixture
+    }
+
+    /// Rewrites `a.rs`'s first line and closes the change, so the range from
+    /// `@-` holds the file with a diff that does not carry line 4.
+    pub fn rewrite_first_line(&self) {
+        self.write(
+            "a.rs",
+            "fn renamed_a() {\n    let w = 1;\n    let x = 2;\n    let y = 3;\n}\n",
+        );
+        self.jj(&["describe", "-m", "second change"]);
+        self.jj(&["new"]);
+    }
+
     /// One file that is a single line of `length` characters.
     pub fn with_long_line(length: usize) -> Self {
         let fixture = Self::empty();

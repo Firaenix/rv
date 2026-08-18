@@ -1,6 +1,7 @@
 //! The commits tab: which change touched which file.
 
 use crossterm::event::KeyCode;
+use ratatui::style::Modifier;
 use rv::app::SidebarTab;
 use rv::tree::NodeKind;
 
@@ -215,5 +216,168 @@ fn the_pane_names_itself() {
     assert!(
         text.contains(&format!("Commits ({})", app.changes().len())),
         "the pane does not say it is listing changes:\n{text}"
+    );
+}
+
+/// The row shows eight characters of each id, not thirty-two of one.
+///
+/// A full change id is thirty-two characters and fills the sidebar, which is
+/// what it did: the row read `wzlmltkwvqsonsomoklrz…` and the description — the
+/// thing the row is *for* — never appeared at all.
+#[test]
+fn a_commit_row_shows_short_ids_and_its_description() {
+    let workspace = two_changes();
+    let mut app = workspace.app();
+    to_commits(&mut app);
+
+    let change = app
+        .changes()
+        .iter()
+        .find(|change| change.description.starts_with("a second change"))
+        .expect("the described change");
+    let short_change: String = change.change_id.chars().take(8).collect();
+    let short_commit: String = change.commit_id.chars().take(8).collect();
+
+    let row = app
+        .commit_nodes()
+        .into_iter()
+        .find(|node| node.label.contains("a second change"))
+        .expect("a row for the change");
+
+    assert!(
+        row.label.contains(&short_change),
+        "the row does not carry the change id: {:?}",
+        row.label
+    );
+    assert!(
+        row.label.contains(&short_commit),
+        "the row does not carry the commit hash: {:?}",
+        row.label
+    );
+    assert!(
+        !row.label.contains(&change.change_id),
+        "the row still prints the whole change id: {:?}",
+        row.label
+    );
+    assert!(
+        row.label.contains("a second change"),
+        "the description is missing: {:?}",
+        row.label
+    );
+}
+
+/// The characters you can select a change by are the bright ones, exactly as
+/// `jj log` draws them — so a reviewer knows what to type without counting.
+#[test]
+fn the_prefix_you_select_by_is_highlighted_and_the_rest_is_dim() {
+    let workspace = two_changes();
+    let mut app = workspace.app();
+    to_commits(&mut app);
+
+    let change = app
+        .changes()
+        .iter()
+        .find(|change| change.description.starts_with("a second change"))
+        .expect("the described change")
+        .clone();
+    let short: String = change.change_id.chars().take(8).collect();
+    let frame = frame_at(&app, 100, 24);
+    let row = sidebar_row_for(&frame, &short);
+
+    // The whole eight-character id as the needle, so the column it starts at is
+    // not in doubt — a one-character probe finds its first match anywhere on the
+    // row, including inside the fold mark.
+    // A *character* offset, not a byte one: the fold mark is three bytes and one
+    // column, so a byte index is three columns wrong before the id even starts.
+    let text = rows_of(&frame)[usize::from(row)].clone();
+    let start = text
+        .char_indices()
+        .position(|(byte, _)| text[byte..].starts_with(&short))
+        .expect("the id is on the row");
+    let at = |offset: usize| {
+        frame[(u16::try_from(start + offset).expect("a small column"), row)].style()
+    };
+
+    let first = at(0);
+    assert!(
+        first.add_modifier.contains(Modifier::BOLD),
+        "the first character of the id is not the one you select by: {first:?}"
+    );
+    let last = at(7);
+    assert!(
+        last.add_modifier.contains(Modifier::DIM),
+        "the rest of the id is not dimmed: {last:?}"
+    );
+}
+
+/// Two changes never share a highlighted prefix: the highlight is a claim that
+/// typing those characters picks *this* change out.
+#[test]
+fn the_highlighted_prefix_tells_the_changes_apart() {
+    let workspace = two_changes();
+    let mut app = workspace.app();
+    to_commits(&mut app);
+
+    let mut prefixes = Vec::new();
+    for node in app.commit_nodes() {
+        if let rv::tree::NodeKind::Commit {
+            change_id, unique, ..
+        } = &node.kind
+        {
+            assert!(*unique >= 1, "a change is selectable by nothing at all");
+            prefixes.push(change_id.chars().take(*unique).collect::<String>());
+        }
+    }
+
+    for (at, prefix) in prefixes.iter().enumerate() {
+        for (other_at, other) in prefixes.iter().enumerate() {
+            if at != other_at {
+                assert!(
+                    !other.starts_with(prefix.as_str()),
+                    "{prefix:?} does not pick one change out: it also starts {other:?}"
+                );
+            }
+        }
+    }
+}
+
+/// Standing on a change — or inside its files — says which change it is, so a
+/// reviewer who has scrolled its row off the top still knows what they are
+/// reading.
+#[test]
+fn the_bar_names_the_change_the_cursor_is_in() {
+    let workspace = two_changes();
+    let mut app = workspace.app();
+    to_commits(&mut app);
+    app.on_key(KeyCode::Left).expect("focus the sidebar");
+    down_to_a_file(&mut app);
+
+    let (change, _, subject) = app
+        .change_under_cursor()
+        .expect("the cursor is inside a change");
+    let bar = last_row(&frame_at(&app, 140, 24));
+    assert!(
+        bar.contains(&change),
+        "the bar does not name the change: {bar:?}"
+    );
+    assert!(
+        bar.contains(&subject) || subject.is_empty(),
+        "the bar does not carry its description: {bar:?}"
+    );
+}
+
+/// And says nothing about a change from the tabs that are not listing them: a
+/// bar that claimed a change while the file list was showing would be naming
+/// something the reviewer cannot see.
+#[test]
+fn the_other_tabs_name_no_change() {
+    let workspace = two_changes();
+    let mut app = workspace.app();
+
+    assert!(app.change_under_cursor().is_none(), "the files tab named one");
+    to_comments(&mut app);
+    assert!(
+        app.change_under_cursor().is_none(),
+        "the comments tab named one"
     );
 }

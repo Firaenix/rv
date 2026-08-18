@@ -160,6 +160,7 @@ fn bag(nodes: &[Node]) -> Vec<String> {
                 NodeKind::Commit {
                     change_id,
                     collapsed,
+                    ..
                 } => format!("commit {change_id} {collapsed}"),
                 NodeKind::Dir { key, collapsed } => format!("dir {key} {collapsed}"),
                 NodeKind::File { index } => format!("file {index}"),
@@ -421,11 +422,13 @@ fn a_commit_holds_its_files_the_way_a_directory_holds_its_own() {
     let groups = [
         Group {
             change_id: "ytskpxpw",
+            commit_id: "cytskpxpw",
             description: "close the alias bypass",
             paths: &["rv-core/tests/constraints.rs"],
         },
         Group {
             change_id: "zmomvwzm",
+            commit_id: "czmomvwzm",
             description: "enforce the constraints",
             paths: &["rv-core/src/store.rs", "rv-core/tests/store.rs"],
         },
@@ -456,13 +459,14 @@ fn a_commit_holds_its_files_the_way_a_directory_holds_its_own() {
 fn a_commit_row_reads_as_the_change_it_is() {
     let groups = [Group {
         change_id: "ytskpxpw",
+        commit_id: "cytskpxpw",
         description: "close the alias bypass\n\nthe second line is not the subject",
         paths: &["a.rs"],
     }];
     let nodes = grouped_shape(&groups, &nothing(), false);
 
     assert_eq!(
-        nodes[0].label, "ytskpxpw close the alias bypass",
+        nodes[0].label, "ytskpxpw cytskpxp close the alias bypass",
         "the change and its subject, on one row"
     );
 }
@@ -471,11 +475,12 @@ fn a_commit_row_reads_as_the_change_it_is() {
 fn a_change_nobody_described_still_says_which_change_it_is() {
     let groups = [Group {
         change_id: "ytskpxpw",
+        commit_id: "cytskpxpw",
         description: "",
         paths: &["a.rs"],
     }];
     let nodes = grouped_shape(&groups, &nothing(), false);
-    assert_eq!(nodes[0].label, "ytskpxpw (no description set)");
+    assert_eq!(nodes[0].label, "ytskpxpw cytskpxp (no description set)");
 }
 
 #[test]
@@ -483,11 +488,13 @@ fn collapsing_a_commit_hides_its_files_and_leaves_its_siblings_alone() {
     let groups = [
         Group {
             change_id: "aaaa",
+            commit_id: "caaaa",
             description: "first",
             paths: &["a.rs"],
         },
         Group {
             change_id: "bbbb",
+            commit_id: "cbbbb",
             description: "second",
             paths: &["b.rs"],
         },
@@ -496,7 +503,7 @@ fn collapsing_a_commit_hides_its_files_and_leaves_its_siblings_alone() {
 
     assert!(
         nodes.iter().any(
-            |node| matches!(&node.kind, NodeKind::Commit { change_id, collapsed } if change_id == "aaaa" && *collapsed)
+            |node| matches!(&node.kind, NodeKind::Commit { change_id, collapsed, .. } if change_id == "aaaa" && *collapsed)
         ),
         "the commit row remains, and says it is folded"
     );
@@ -515,11 +522,13 @@ fn a_file_touched_by_two_commits_appears_under_each() {
     let groups = [
         Group {
             change_id: "aaaa",
+            commit_id: "caaaa",
             description: "first",
             paths: &["shared.rs"],
         },
         Group {
             change_id: "bbbb",
+            commit_id: "cbbbb",
             description: "second",
             paths: &["shared.rs"],
         },
@@ -546,11 +555,13 @@ fn the_same_directory_under_two_changes_folds_independently() {
     let groups = [
         Group {
             change_id: "aaaa",
+            commit_id: "caaaa",
             description: "first",
             paths: &["src/a.rs"],
         },
         Group {
             change_id: "bbbb",
+            commit_id: "cbbbb",
             description: "second",
             paths: &["src/b.rs"],
         },
@@ -580,11 +591,13 @@ fn a_commits_view_reads_as_changes_holding_files() {
     let groups = [
         Group {
             change_id: "ytskpxpw",
+            commit_id: "cytskpxpw",
             description: "close the alias bypass",
             paths: &["rv-core/tests/constraints.rs"],
         },
         Group {
             change_id: "zmomvwzm",
+            commit_id: "czmomvwzm",
             description: "enforce the constraints",
             paths: &["rv-core/src/store.rs", "rv-core/tests/store.rs"],
         },
@@ -593,10 +606,10 @@ fn a_commits_view_reads_as_changes_holding_files() {
     assert_eq!(
         sketch(&grouped_shape(&groups, &nothing(), true)),
         "\
-v ytskpxpw close the alias bypass
+v ytskpxpw cytskpxp close the alias bypass
   v rv-core/tests
       constraints.rs
-v zmomvwzm enforce the constraints
+v zmomvwzm czmomvwz enforce the constraints
   v rv-core
     v src
         store.rs
@@ -607,9 +620,9 @@ v zmomvwzm enforce the constraints
     assert_eq!(
         sketch(&grouped_shape(&groups, &nothing(), false)),
         "\
-v ytskpxpw close the alias bypass
+v ytskpxpw cytskpxp close the alias bypass
     rv-core/tests/constraints.rs
-v zmomvwzm enforce the constraints
+v zmomvwzm czmomvwz enforce the constraints
     rv-core/src/store.rs
     rv-core/tests/store.rs",
         "the same rows, flat"
@@ -620,6 +633,7 @@ v zmomvwzm enforce the constraints
 fn a_change_with_no_files_is_still_a_row() {
     let groups = [Group {
         change_id: "aaaa",
+        commit_id: "caaaa",
         description: "an empty change",
         paths: &[],
     }];
@@ -687,11 +701,13 @@ fn a_commit_row_totals_the_files_it_touched() {
     let groups = [
         Group {
             change_id: "aaaa",
+            commit_id: "caaaa",
             description: "first",
             paths: &["a.rs", "b.rs"],
         },
         Group {
             change_id: "bbbb",
+            commit_id: "cbbbb",
             description: "second",
             paths: &["c.rs"],
         },
@@ -704,7 +720,7 @@ fn a_commit_row_totals_the_files_it_touched() {
         stat(15, 3),
         "a change is the sum of its files"
     );
-    assert_eq!(row(&nodes, "bbbb second").stat, stat(3, 3));
+    assert_eq!(row(&nodes, "bbbb cbbbb second").stat, stat(3, 3));
 }
 
 #[test]
@@ -799,11 +815,13 @@ fn natural_is_the_order_the_thing_already_has() {
     let groups = [
         Group {
             change_id: "aaaa",
+            commit_id: "caaaa",
             description: "first",
             paths: &["a.rs"],
         },
         Group {
             change_id: "bbbb",
+            commit_id: "cbbbb",
             description: "second",
             paths: &["b.rs"],
         },
@@ -817,7 +835,7 @@ fn natural_is_the_order_the_thing_already_has() {
     );
     assert_eq!(
         labels(&nodes),
-        ["aaaa first", "a.rs", "bbbb second", "b.rs"],
+        ["aaaa caaaa first", "a.rs", "bbbb cbbbb second", "b.rs"],
         "stack order, untouched by the weights"
     );
 }
@@ -990,6 +1008,7 @@ fn a_tie_keeps_the_order_it_already_had_at_review_scale() {
         .iter()
         .map(|id| Group {
             change_id: id,
+            commit_id: id,
             description: "a change",
             paths: &one,
         })
@@ -1000,7 +1019,12 @@ fn a_tie_keeps_the_order_it_already_had_at_review_scale() {
         .filter(|node| node.depth == 0)
         .map(|node| node.label.trim_end_matches(" a change"))
         .collect();
-    let stacked: Vec<&str> = tied_order().into_iter().map(|n| ids[n].as_str()).collect();
+    // Both ids, because the row prints both: this fixture's change and commit
+    // ids are the same string, which is what makes the doubling visible here.
+    let stacked: Vec<String> = tied_order()
+        .into_iter()
+        .map(|n| format!("{0} {0}", ids[n]))
+        .collect();
     assert_eq!(
         stack, stacked,
         "and a stack of changes does not shuffle either"
@@ -1012,11 +1036,13 @@ fn commits_sort_by_what_they_weigh_and_keep_their_files() {
     let groups = [
         Group {
             change_id: "aaaa",
+            commit_id: "caaaa",
             description: "a tweak",
             paths: &["tweak.rs"],
         },
         Group {
             change_id: "bbbb",
+            commit_id: "cbbbb",
             description: "the big one",
             paths: &["big.rs", "also.rs"],
         },
@@ -1027,10 +1053,10 @@ fn commits_sort_by_what_they_weigh_and_keep_their_files() {
     assert_eq!(
         labels(&nodes),
         [
-            "bbbb the big one",
+            "bbbb cbbbb the big one",
             "big.rs",
             "also.rs",
-            "aaaa a tweak",
+            "aaaa caaaa a tweak",
             "tweak.rs"
         ],
         "a change is a directory here too: it sorts by its aggregate and takes its files with it"
@@ -1049,11 +1075,13 @@ fn files_sort_inside_a_change_in_the_commits_tree() {
     let groups = [
         Group {
             change_id: "aaaa",
+            commit_id: "caaaa",
             description: "a tweak",
             paths: &["src/a_small.rs", "src/z_huge.rs", "top.rs"],
         },
         Group {
             change_id: "bbbb",
+            commit_id: "cbbbb",
             description: "the big one",
             paths: &["lib/one.rs", "lib/two.rs"],
         },
@@ -1071,12 +1099,12 @@ fn files_sort_inside_a_change_in_the_commits_tree() {
             &stats
         )),
         "\
-v aaaa a tweak
+v aaaa caaaa a tweak
   v src
       a_small.rs
       z_huge.rs
     top.rs
-v bbbb the big one
+v bbbb cbbbb the big one
   v lib
       one.rs
       two.rs",
@@ -1087,11 +1115,11 @@ v bbbb the big one
     assert_eq!(
         sketch(&nodes),
         "\
-v bbbb the big one
+v bbbb cbbbb the big one
   v lib
       two.rs
       one.rs
-v aaaa a tweak
+v aaaa caaaa a tweak
   v src
       z_huge.rs
       a_small.rs
@@ -1114,11 +1142,13 @@ fn sorting_the_commits_view_does_not_renumber_the_files() {
     let groups = [
         Group {
             change_id: "aaaa",
+            commit_id: "caaaa",
             description: "a tweak",
             paths: &["tweak.rs"],
         },
         Group {
             change_id: "bbbb",
+            commit_id: "cbbbb",
             description: "the big one",
             paths: &["big.rs"],
         },
@@ -1128,7 +1158,7 @@ fn sorting_the_commits_view_does_not_renumber_the_files() {
 
     assert_eq!(
         labels(&nodes)[0],
-        "bbbb the big one",
+        "bbbb cbbbb the big one",
         "the rows did move, which is what makes the rest of this test worth asserting"
     );
     let big = row(&nodes, "big.rs");
@@ -1203,6 +1233,7 @@ fn grouped<'a>(paths: &'a [Vec<&'a str>]) -> Vec<Group<'a>> {
         .enumerate()
         .map(|(at, paths)| Group {
             change_id: ["aaaa", "bbbb", "cccc", "dddd"][at],
+            commit_id: ["caaaa", "cbbbb", "ccccc", "cdddd"][at],
             description: "a change",
             paths,
         })

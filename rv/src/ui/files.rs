@@ -20,6 +20,7 @@
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
+use ratatui::style::Modifier;
 use ratatui::style::Style;
 use ratatui::text::Line;
 use ratatui::text::Span;
@@ -115,7 +116,15 @@ fn draw_nodes(
         .zip(&heads)
         .zip(&counted)
         .map(|((node, head), counts)| {
-            ListItem::new(file_row(node, head, counts, counts_width, bar, width))
+            ListItem::new(file_row(
+                node,
+                head,
+                lead_of(app, node),
+                counts,
+                counts_width,
+                bar,
+                width,
+            ))
         })
         .collect();
     let list = List::new(items)
@@ -148,6 +157,7 @@ fn shape(app: &App) -> String {
 fn file_row(
     node: &Node,
     head: &str,
+    lead: usize,
     counts: &(String, String),
     counts_width: usize,
     bar: usize,
@@ -162,10 +172,8 @@ fn file_row(
     }
 
     let name = clip(head, names);
-    let mut spans = vec![
-        Span::raw(name.clone()),
-        Span::raw(" ".repeat(names + 1 - name.chars().count())),
-    ];
+    let mut spans = name_spans(node, &name, lead);
+    spans.push(Span::raw(" ".repeat(names + 1 - name.chars().count())));
 
     let (added, removed) = counts;
     if added.is_empty() {
@@ -200,6 +208,78 @@ fn head(app: &App, node: &Node) -> String {
         "  ".repeat(node.depth),
         row_mark(app, node),
         node.label
+    )
+}
+
+/// How many columns of a row come before its label: the indent, and the fold
+/// mark that says whether the row is open.
+fn lead_of(app: &App, node: &Node) -> usize {
+    node.depth * 2 + row_mark(app, node).chars().count()
+}
+
+/// A row's name, as one span for a file or a directory and several for a change.
+///
+/// A change row prints two ids and a subject, and the leading characters of each
+/// id are the ones you can type to select it — so those characters are bright and
+/// the rest of the id is dim, exactly as `jj log` draws them. Anything else makes
+/// a reviewer count characters to find out what to paste.
+///
+/// `name` is already clipped, so this splits what survived rather than the
+/// original: a row narrow enough to lose half an id highlights half of it and
+/// nothing beyond the edge. `lead` is how many columns the indent and the fold
+/// mark take, and it is passed in rather than measured back out of `name` — a
+/// clipped row is shorter than the text it was made from, so subtracting the
+/// parts from the whole put the ids three columns off on every row that did not
+/// fit.
+fn name_spans(node: &Node, name: &str, lead: usize) -> Vec<Span<'static>> {
+    let NodeKind::Commit {
+        short_change,
+        short_commit,
+        unique,
+        ..
+    } = &node.kind
+    else {
+        return vec![Span::raw(name.to_owned())];
+    };
+
+    // Where the ids sit in the drawn row: the indent and the fold mark come
+    // first, and `head` built the row as `<indent><mark><change> <commit> <subject>`.
+    let mut spans = vec![Span::raw(name.chars().take(lead).collect::<String>())];
+    let mut at = lead;
+    for id in [short_change, short_commit] {
+        let (bright, dim) = split_at_char(name, at, *unique, id.chars().count());
+        if !bright.is_empty() {
+            spans.push(Span::styled(
+                bright,
+                Style::default()
+                    .fg(colour(gradient::FOCUS))
+                    .add_modifier(Modifier::BOLD),
+            ));
+        }
+        if !dim.is_empty() {
+            spans.push(Span::styled(
+                dim,
+                Style::default().add_modifier(Modifier::DIM),
+            ));
+        }
+        at += id.chars().count();
+        // The space between the ids, and after the second one, the subject.
+        let rest: String = name.chars().skip(at).take(1).collect();
+        spans.push(Span::raw(rest));
+        at += 1;
+    }
+    spans.push(Span::raw(name.chars().skip(at).collect::<String>()));
+    spans
+}
+
+/// The `unique` bright characters of the id starting at `at`, and however much
+/// of the rest of it survived the clip.
+fn split_at_char(name: &str, at: usize, unique: usize, length: usize) -> (String, String) {
+    let id: Vec<char> = name.chars().skip(at).take(length).collect();
+    let cut = unique.min(id.len());
+    (
+        id[..cut].iter().collect(),
+        id[cut..].iter().collect(),
     )
 }
 

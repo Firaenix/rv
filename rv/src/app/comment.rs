@@ -15,6 +15,7 @@ use rv_core::store::CommentState;
 
 use super::Action;
 use super::App;
+use crate::session::Review;
 use super::Mode;
 use super::anchor::comment_id;
 use crate::session;
@@ -166,14 +167,45 @@ impl App {
     /// what this process believes it stored: the store is the authority, and
     /// its upsert may have replaced an entry rather than added one.
     pub(super) fn reload_comments(&mut self) -> Result<()> {
-        self.comments = self
-            .review
-            .store
-            .comments()
-            .context("could not re-read the saved comments")?;
+        self.comments = in_range(
+            &self.review,
+            self.review
+                .store
+                .comments()
+                .context("could not re-read the saved comments")?,
+        );
         // The browser indexes this vector, so it is clamped where the vector is
         // written.
         self.clamp_browser();
         Ok(())
     }
+}
+
+/// The comments this review can show: the ones anchored to a file it covers.
+///
+/// `.review/` outlives any one range. A comment written against `trunk()..@`
+/// last week may be anchored to a file the range open now does not touch, and
+/// listing it offers the reviewer a jump that cannot land — which is exactly
+/// what it used to do: the browser showed the row and `Enter` answered with an
+/// alert saying the file had left the range.
+///
+/// Filtered once, where the store is read, rather than in the browser: the count
+/// in the bar, the rows in the sidebar and the boxes in the diff then all
+/// describe the same set of comments. **The store keeps every one of them** —
+/// nothing is deleted and the export still carries them — so a comment hidden
+/// by a narrow range comes back with a wider one.
+///
+/// Either side's path matches, because a comment on a removed line is filed
+/// under the base-side path, which for a rename is not the path the file is
+/// listed under.
+pub(super) fn in_range(review: &Review, comments: Vec<Comment>) -> Vec<Comment> {
+    comments
+        .into_iter()
+        .filter(|comment| {
+            review.files.iter().any(|file| {
+                file.path == comment.anchor.file
+                    || file.source_path.as_deref() == Some(comment.anchor.file.as_str())
+            })
+        })
+        .collect()
 }

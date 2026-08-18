@@ -37,6 +37,13 @@ pub(super) struct CommitIndex {
     stats: Vec<Stat>,
 }
 
+impl CommitIndex {
+    /// One change's files, or nothing for a change that is not in the stack.
+    pub(super) fn files_of(&self, change: usize) -> &[FileChange] {
+        self.files.get(change).map_or(&[], Vec::as_slice)
+    }
+}
+
 impl App {
     /// The commits index, built on first use.
     pub(super) fn commit_index(&self) -> &CommitIndex {
@@ -106,6 +113,7 @@ impl App {
             .zip(&paths)
             .map(|(change, paths)| tree::Group {
                 change_id: &change.change_id,
+                commit_id: &change.commit_id,
                 description: &change.description,
                 paths,
             })
@@ -173,6 +181,45 @@ impl App {
             self.select_file(index)?;
         }
         Ok(())
+    }
+
+    /// The paths one change touched, in the order the repository lists them.
+    #[must_use]
+    pub fn commit_change_paths(&self, change: usize) -> Vec<String> {
+        self.commit_index()
+            .files_of(change)
+            .iter()
+            .map(|file| file.path.clone())
+            .collect()
+    }
+
+    /// The change the sidebar cursor is on or inside, as
+    /// `(short change id, short commit id, subject)`.
+    ///
+    /// `None` anywhere but the Commits tab. A file row answers with the change
+    /// that holds it, which is what "or inside" means: a reviewer reading a file
+    /// under a change is reading that change, and the row above them has scrolled
+    /// off as often as not.
+    #[must_use]
+    pub fn change_under_cursor(&self) -> Option<(String, String, String)> {
+        if self.sidebar_tab() != SidebarTab::Commits {
+            return None;
+        }
+        let nodes = self.nodes();
+        let row = self.sidebar_row().min(nodes.len().saturating_sub(1));
+        nodes[..=row].iter().rev().find_map(|node| match &node.kind {
+            tree::NodeKind::Commit {
+                short_change,
+                short_commit,
+                subject,
+                ..
+            } => Some((
+                short_change.clone(),
+                short_commit.clone(),
+                subject.clone(),
+            )),
+            _ => None,
+        })
     }
 
     /// Which change the commits view's `file`th row belongs to.

@@ -18,6 +18,12 @@ pub enum Mode {
     /// deletes, anything else cancels — so it cannot become a state the
     /// reviewer is stuck in.
     ConfirmDelete { id: String, label: String },
+    /// Typing a name to jump to a symbol by.
+    ///
+    /// The query lives in the same buffer a comment is typed into: there is one
+    /// place text arrives in this reviewer, and two would be two places to get
+    /// the backspace and the escape right.
+    Pick,
 }
 
 /// What the left column is listing.
