@@ -31,12 +31,18 @@
 //! inputs and therefore a property rather than three examples.
 
 use std::ffi::OsStr;
+use std::process::Command;
 
 use proptest::prelude::*;
+use ratatui::buffer::{Buffer, Cell};
+use ratatui::layout::Rect;
 use ratatui::text::Line;
+use ratatui::widgets::Widget;
 use rstest::rstest;
 use rv::gradient::Stat;
-use rv::statusbar::{HINT, Role, Segment, View, ascii_from, ascii_from_env, render, segments};
+use rv::statusbar::{
+    HINT, RV_ASCII, Role, Segment, View, ascii_from, ascii_from_env, render, segments,
+};
 
 /// The right-pointing powerline separator, `U+E0B0`. In the Private Use Area,
 /// so a font without the patch shows tofu — which is the whole reason
@@ -75,10 +81,60 @@ fn line_text(line: &Line<'_>) -> String {
         .collect()
 }
 
-/// Measured the way ratatui measures it when it paints — one call, so a test
-/// and the renderer cannot disagree about what a column is.
+/// What `Line::width()` claims. **Not** what ratatui paints — see [`painted`].
 fn line_width(line: &Line<'_>) -> usize {
     line.width()
+}
+
+/// A cell the bar cannot possibly draw, so an untouched column is obvious. The
+/// bar paints every cell with an explicit foreground and background, and
+/// ratatui blanks the hidden half of a wide grapheme to a plain space, so
+/// nothing it draws can be mistaken for this.
+const UNPAINTED: Cell = Cell::new("\u{2588}");
+
+/// How much room is left to the right of the bar when it is painted, so that a
+/// bar which is too *long* is as visible as one which is too short.
+const PROBE: u16 = 8;
+
+/// The columns ratatui actually paints, which is not what [`line_width`] says.
+///
+/// `Line::width()` measures with `unicode-width`, which gives a C0 control one
+/// column; the renderer walks graphemes and drops every one that holds a
+/// control character, so it gives that same control none. A bar proved exact
+/// against `Line::width()` can therefore still leave its last column unpainted
+/// and let the pane underneath show through. This paints the line into a buffer
+/// wider than the bar and reports `(the unbroken run of columns from the
+/// left-hand end, every column painted anywhere)` — equal unless the bar left a
+/// hole in itself, and both equal to the requested width unless it came up
+/// short or ran over.
+fn painted(line: &Line<'_>, width: u16) -> (usize, usize) {
+    let area = Rect::new(0, 0, width.saturating_add(PROBE), 1);
+    let mut buffer = Buffer::filled(area, UNPAINTED);
+    line.render(area, &mut buffer);
+    let cells = buffer.content();
+    let run = cells
+        .iter()
+        .position(|cell| *cell == UNPAINTED)
+        .unwrap_or(cells.len());
+    let total = cells.iter().filter(|cell| **cell != UNPAINTED).count();
+    (run, total)
+}
+
+/// The bar as the terminal receives it: the symbol in every cell of the row
+/// ratatui painted, so "at the right-hand end" can be asked of columns rather
+/// than of a concatenation of spans.
+fn painted_text(line: &Line<'_>, width: u16) -> String {
+    let area = Rect::new(0, 0, width, 1);
+    let mut buffer = Buffer::filled(area, Cell::EMPTY);
+    line.render(area, &mut buffer);
+    buffer.content().iter().map(Cell::symbol).collect()
+}
+
+/// The characters of `text` a terminal can actually show. ratatui refuses to
+/// paint a grapheme holding a control character, so this is what a segment
+/// contributes to the bar however it was spelled.
+fn printable(text: &str) -> String {
+    text.chars().filter(|c| !c.is_control()).collect()
 }
 
 fn roles(segments: &[Segment]) -> Vec<Role> {
@@ -281,6 +337,32 @@ fn the_hint_is_the_last_segment_standing() {
 }
 
 #[rstest]
+#[case::glyphs(false)]
+#[case::ascii(true)]
+fn the_hint_is_drawn_at_the_right_hand_end(#[case] ascii: bool) {
+    // Not merely present. The hint is the one segment that is right-aligned,
+    // and a reviewer looks for `? help` in the corner the way they look for a
+    // clock there. A hint that had drifted into the left-hand run would satisfy
+    // every "is it on the bar" assertion and still be in the wrong place, with
+    // the bar's empty middle trailing off the right-hand end after it.
+    let painted = painted_text(&render(&sample_segments(), 100, ascii), 100);
+    assert!(
+        painted.ends_with(&format!(" {HINT} ")),
+        "the last columns of the row are the hint: {painted}"
+    );
+    assert!(
+        painted.starts_with(" BROWSE "),
+        "and the first are the mode, at the other end: {painted}"
+    );
+    let block = format!(" {HINT} ");
+    let middle = painted[..painted.len() - block.len()].trim_end_matches(ARROW_LEFT);
+    assert!(
+        middle.ends_with(' '),
+        "with the bar's empty middle between them, not another segment: {painted}"
+    );
+}
+
+#[rstest]
 #[case(0)]
 #[case(1)]
 #[case(7)]
@@ -368,6 +450,63 @@ fn rv_ascii_is_a_switch_you_set_rather_than_a_value_you_parse(
     assert_eq!(ascii_from(value.map(OsStr::new)), expected);
 }
 
+/// Tells a re-executed copy of this test binary which half of the environment
+/// check it is running, and stops it re-executing itself again.
+const CHILD: &str = "RV_STATUSBAR_ENV_CHILD";
+
+#[test]
+fn the_switch_is_the_variable_the_spec_names() {
+    // The *name* is half the contract, and it is the half no in-process test
+    // can see. `ascii_from_env` reading `RV_ASCI` would agree with
+    // `ascii_from(var_os("RV_ASCI"))` perfectly, satisfy every test below, and
+    // leave every reviewer's `RV_ASCII=1` doing nothing at all. Only a process
+    // that has the variable actually set can tell the two spellings apart, and
+    // setting one in a threaded test binary is undefined behaviour in Rust
+    // 2024 — so the check runs in a child of this process, which is given the
+    // name as a literal rather than through the constant it is meant to pin.
+    assert_eq!(
+        RV_ASCII, "RV_ASCII",
+        "the name the spec, the README and the reviewer all use"
+    );
+
+    if let Some(marker) = std::env::var_os(CHILD) {
+        assert_eq!(
+            ascii_from_env(),
+            marker == *OsStr::new("set"),
+            "the child sees the switch its parent set"
+        );
+        return;
+    }
+
+    for marker in ["set", "unset"] {
+        let mut child = Command::new(std::env::current_exe().expect("this test binary"));
+        child
+            .args([
+                "--exact",
+                "--test-threads=1",
+                "the_switch_is_the_variable_the_spec_names",
+            ])
+            .env(CHILD, marker);
+        if marker == "set" {
+            child.env("RV_ASCII", "1");
+        } else {
+            child.env_remove("RV_ASCII");
+        }
+
+        let output = child.output().expect("re-run this test binary");
+        let log = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success(),
+            "with RV_ASCII {marker} the child failed:\n{log}{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            log.contains("1 passed"),
+            "the child ran the check rather than filtering it away:\n{log}"
+        );
+    }
+}
+
 #[test]
 fn the_environment_is_read_through_the_same_function() {
     // `ascii_from_env` is meant to be called once at startup and the answer
@@ -416,6 +555,40 @@ fn the_bar_fills_its_width_exactly_and_never_overflows(#[case] width: u16) {
     );
 }
 
+#[rstest]
+#[case::nul("\u{0}")]
+#[case::escape("\u{1b}")]
+#[case::carriage_return_line_feed("\r\n")]
+#[case::delete("\u{7f}")]
+#[case::c1("\u{9b}")]
+fn a_control_character_costs_the_bar_no_column(#[case] smuggled: &str) {
+    // The case the width property could not reach until its alphabet grew, kept
+    // here by name as well: a repository can hand rv a path with an escape in
+    // it, `unicode-width` charges a column for it and ratatui paints none, so a
+    // bar that trusted the first measurement would be short by exactly the
+    // number of controls in it. Every column of the row is painted, and the
+    // control never reaches the terminal.
+    let bar = segments(&View {
+        file: Some(&format!("src/{smuggled}app.rs")),
+        status: &format!("saved{smuggled} comment"),
+        ..sample_view()
+    });
+    for width in [24u16, 60, 100] {
+        for ascii in [false, true] {
+            let rendered = render(&bar, width, ascii);
+            assert_eq!(
+                painted(&rendered, width),
+                (usize::from(width), usize::from(width)),
+                "at width {width} (ascii {ascii}) the bar is not the width it was asked for"
+            );
+            assert!(
+                !painted_text(&rendered, width).chars().any(char::is_control),
+                "and nothing a file name smuggled in reached the terminal"
+            );
+        }
+    }
+}
+
 fn any_role() -> impl Strategy<Value = Role> {
     prop_oneof![
         Just(Role::Mode),
@@ -427,15 +600,25 @@ fn any_role() -> impl Strategy<Value = Role> {
     ]
 }
 
-/// Printable ASCII, a few CJK ideographs and a few emoji — one column, two
-/// columns, and a surrogate pair's worth of bytes — so the width arithmetic is
-/// exercised over text that is not one column per `char`. The Private Use Area
-/// is deliberately excluded: the powerline glyphs live there and a segment that
-/// contained one would make the `RV_ASCII` property meaningless.
+/// Printable ASCII, a few CJK ideographs, a few emoji **and the control
+/// characters** — one column, two columns, a surrogate pair's worth of bytes,
+/// and the case where the two measurements disagree.
+///
+/// The controls are the point. A segment's text is a file path, a revset or a
+/// status line built from one, and a repository can hand rv a path with a
+/// `\x1b` in it. `unicode-width` gives every character below `U+00A1` one
+/// column, controls included, so `Line::width()` counts them; ratatui's
+/// renderer drops every grapheme holding a control and paints none. Without
+/// them in the alphabet the width property cannot reach the one case where
+/// measuring and painting come to different answers.
+///
+/// The Private Use Area is still deliberately excluded: the powerline glyphs
+/// live there and a segment that contained one would make the `RV_ASCII`
+/// property meaningless.
 fn any_segment() -> impl Strategy<Value = Segment> {
     (
         any_role(),
-        "[ -~\\x{4e00}-\\x{4e05}\\x{1f600}-\\x{1f602}]{0,24}",
+        "[ -~\\x{0}-\\x{1f}\\x{7f}-\\x{9f}\\x{4e00}-\\x{4e05}\\x{1f600}-\\x{1f602}]{0,24}",
     )
         .prop_map(|(role, text)| Segment { text, role })
 }
@@ -443,6 +626,16 @@ fn any_segment() -> impl Strategy<Value = Segment> {
 proptest! {
     /// The property. One column too many and ratatui drops the overflow
     /// silently; one column too few and the row beneath shows through the gap.
+    ///
+    /// Asserted against the columns ratatui *paints*, not against
+    /// `Line::width()`. The two are not the same function: `Line::width()` asks
+    /// `unicode-width`, which gives every character below `U+00A1` one column
+    /// — a `\x1b` smuggled in by a file path included — while the renderer
+    /// walks graphemes and refuses to draw any that holds a control. A bar
+    /// measured by the first and drawn by the second comes up one column short
+    /// per control character, and `Line::width()` reports it as perfect. Both
+    /// are checked, because the claimed width is what ratatui compares against
+    /// the `Rect` before deciding whether to truncate.
     #[test]
     fn the_bar_is_exactly_the_width_it_was_asked_for(
         segments in prop::collection::vec(any_segment(), 0..8),
@@ -450,7 +643,10 @@ proptest! {
         ascii in any::<bool>(),
     ) {
         let rendered = render(&segments, width, ascii);
-        prop_assert_eq!(line_width(&rendered), usize::from(width));
+        let (run, total) = painted(&rendered, width);
+        prop_assert_eq!(run, usize::from(width), "painted columns, from the left");
+        prop_assert_eq!(total, usize::from(width), "and nothing painted beyond them");
+        prop_assert_eq!(line_width(&rendered), usize::from(width), "and it says so too");
     }
 
     #[test]
@@ -469,6 +665,12 @@ proptest! {
     /// every one of its characters or not printed at all — the alternative is a
     /// bar that says `deleted comment at ap`, which is a claim about a file
     /// that does not exist.
+    ///
+    /// "Every one of its characters" means every one the terminal can show:
+    /// ratatui will not paint a control character whatever the bar does with
+    /// it, so a segment's contribution is [`printable`] of its text. Dropping a
+    /// character nothing could draw is not truncation; dropping one that could
+    /// be drawn is what this forbids.
     #[test]
     fn a_surviving_segment_keeps_all_of_its_characters(
         segments in prop::collection::vec(any_segment(), 0..8),
@@ -480,7 +682,7 @@ proptest! {
             let content = span.content.as_ref();
             let padding = content.chars().all(|c| c == ' ' || SEPARATORS.contains(&c));
             prop_assert!(
-                padding || segments.iter().any(|segment| content == format!(" {} ", segment.text)),
+                padding || segments.iter().any(|segment| content == format!(" {} ", printable(&segment.text))),
                 "`{}` is not a whole segment: {:?}", content, rendered,
             );
         }

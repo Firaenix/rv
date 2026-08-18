@@ -112,6 +112,22 @@ const PLAIN_TEXT: &str = "just some prose\nand a second line\n";
 /// *all* comment would prove nothing about the captures around it.
 const COMMENTED: &str = "// a note about a\nfn a() -> u32 {\n    let x = 1;\n    x\n}\n";
 
+/// How many lines [`Fixture::mixed`]'s `added.rs` is: a file that is nothing
+/// but additions, so its row sits at the green end of the gradient with no
+/// seam on it at all.
+const ADDED_LINES: u32 = 40;
+
+/// The same for `removed.rs`, which exists at the base and is gone by the head.
+const REMOVED_LINES: u32 = 25;
+
+/// `count` distinct lines, each naming `prefix`, so a fixture's size is a
+/// number this file states rather than one a reader counts off a literal.
+fn numbered(prefix: &str, count: u32) -> String {
+    (0..count)
+        .map(|line| format!("{prefix} line {line}\n"))
+        .collect()
+}
+
 struct Fixture {
     tempdir: TempDir,
 }
@@ -173,6 +189,68 @@ impl Fixture {
 
         fixture.write("rewrite.rs", REWRITE_HEAD);
         fixture.jj(&["describe", "-m", "rewrite a line in place"]);
+        fixture.jj(&["new"]);
+        fixture
+    }
+
+    /// Creates a workspace whose second change is nothing but additions in one
+    /// file and nothing but removals in another — the two ends of the change
+    /// gradient, in one review.
+    ///
+    /// Reviewed from `@--` (see [`Fixture::app_from`]): from the default
+    /// `trunk()` there is no base side at all, so nothing would ever be
+    /// removed.
+    fn mixed() -> Self {
+        let fixture = Self {
+            tempdir: tempfile::tempdir().expect("create temp dir"),
+        };
+        fixture.jj(&["git", "init", "--colocate"]);
+        fixture.write("removed.rs", &numbered("gone", REMOVED_LINES));
+        fixture.jj(&["describe", "-m", "first change"]);
+        fixture.jj(&["new"]);
+
+        fs::remove_file(fixture.root().join("removed.rs")).expect("remove removed.rs");
+        fixture.write("added.rs", &numbered("new", ADDED_LINES));
+        fixture.jj(&["describe", "-m", "one file each way"]);
+        fixture.jj(&["new"]);
+        fixture
+    }
+
+    /// Creates a workspace whose second change renames a file and changes
+    /// **nothing** inside it.
+    ///
+    /// Distinct from [`Fixture::renamed`], which rewrites a line as it moves:
+    /// a review of that file has a shape, and this one deliberately has none.
+    fn pure_rename() -> Self {
+        let fixture = Self {
+            tempdir: tempfile::tempdir().expect("create temp dir"),
+        };
+        fixture.jj(&["git", "init", "--colocate"]);
+        fixture.write("a.rs", SOURCE);
+        fixture.jj(&["describe", "-m", "first change"]);
+        fixture.jj(&["new"]);
+
+        fs::remove_file(fixture.root().join("a.rs")).expect("remove a.rs");
+        fixture.write("b.rs", SOURCE);
+        fixture.jj(&["describe", "-m", "rename and nothing else"]);
+        fixture.jj(&["new"]);
+        fixture
+    }
+
+    /// Creates a workspace whose one change adds four files at three depths,
+    /// with a chain of single-child directories over two of them and a
+    /// different size on every one — so a tree has something to fold, an order
+    /// has something to reorder, and the two can be told apart on screen.
+    fn nested() -> Self {
+        let fixture = Self {
+            tempdir: tempfile::tempdir().expect("create temp dir"),
+        };
+        fixture.jj(&["git", "init", "--colocate"]);
+        fixture.write("docs/specs/a.md", &numbered("a", 10));
+        fixture.write("docs/specs/b.md", &numbered("b", 5));
+        fixture.write("src/lib.rs", &numbered("lib", 30));
+        fixture.write("top.rs", &numbered("top", 50));
+        fixture.jj(&["describe", "-m", "a change with directories in it"]);
         fixture.jj(&["new"]);
         fixture
     }
@@ -341,20 +419,6 @@ fn last_row(buffer: &Buffer) -> String {
     rows_of(buffer).pop().expect("a frame has rows")
 }
 
-/// Where `needle` first appears in the frame, scanning rows top to bottom.
-fn find_char(buffer: &Buffer, needle: char) -> Option<(u16, u16)> {
-    let wanted = needle.to_string();
-    (0..buffer.area.height)
-        .flat_map(|y| (0..buffer.area.width).map(move |x| (x, y)))
-        .find(|(x, y)| buffer[(*x, *y)].symbol() == wanted)
-}
-
-/// Whether the first cell holding `needle` is drawn in blue — the colour this
-/// reviewer reserves for comments.
-fn styled_blue(buffer: &Buffer, needle: char) -> bool {
-    find_char(buffer, needle).is_some_and(|(x, y)| buffer[(x, y)].style().fg == Some(Color::Blue))
-}
-
 /// The row `needle` first appears on, as an index into [`rows_of`].
 fn row_holding(buffer: &Buffer, needle: &str) -> usize {
     rows_of(buffer)
@@ -423,6 +487,131 @@ fn workspace_tree(root: &Path) -> Vec<(String, SystemTime, Vec<u8>)> {
     }
     files.sort();
     files
+}
+
+/// A rectangle's interior: the pane inside its own borders.
+///
+/// The panes' corners are rounded, so a `╭` at the edge of the frame is a
+/// *pane* and a `╭` inside one is a comment box. Everything below that asks
+/// about a box therefore asks inside this, not across the whole buffer.
+fn inner(area: Rect) -> Rect {
+    Rect::new(
+        area.x + 1,
+        area.y + 1,
+        area.width.saturating_sub(2),
+        area.height.saturating_sub(2),
+    )
+}
+
+/// One frame row, cut to the columns of `area`.
+fn row_in(buffer: &Buffer, area: Rect, y: u16) -> String {
+    (area.x..area.right())
+        .map(|x| buffer[(x, y)].symbol())
+        .collect()
+}
+
+/// The text inside `area`, one row per line.
+fn text_in(buffer: &Buffer, area: Rect) -> String {
+    (area.y..area.bottom())
+        .map(|y| row_in(buffer, area, y))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Where `needle` first appears inside `area`, scanning rows top to bottom.
+fn find_char_in(buffer: &Buffer, area: Rect, needle: char) -> Option<(u16, u16)> {
+    let wanted = needle.to_string();
+    (area.y..area.bottom())
+        .flat_map(|y| (area.x..area.right()).map(move |x| (x, y)))
+        .find(|(x, y)| buffer[(*x, *y)].symbol() == wanted)
+}
+
+/// Whether the first cell of `needle` inside `area` is drawn in blue — the
+/// colour this reviewer reserves for comments.
+fn styled_blue_in(buffer: &Buffer, area: Rect, needle: char) -> bool {
+    find_char_in(buffer, area, needle)
+        .is_some_and(|(x, y)| buffer[(x, y)].style().fg == Some(Color::Blue))
+}
+
+/// The diff pane's interior at a 100x24 terminal, which is what almost every
+/// test here renders at.
+fn box_area() -> Rect {
+    inner(areas(100, 24, Split::default()).diff)
+}
+
+/// One of [`rv::gradient`]'s colours, as `ui` sends it to the terminal.
+fn colour(gradient::Rgb(red, green, blue): gradient::Rgb) -> Color {
+    Color::Rgb(red, green, blue)
+}
+
+/// The file list's own rows, with the pane's borders taken off — so nothing the
+/// diff pane draws can be mistaken for a file row.
+fn sidebar_rows(buffer: &Buffer, width: u16, height: u16, split: Split) -> Vec<String> {
+    let area = inner(areas(width, height, split).sidebar);
+    (area.y..area.bottom())
+        .map(|y| {
+            (area.x..area.right())
+                .map(|x| buffer[(x, y)].symbol())
+                .collect()
+        })
+        .collect()
+}
+
+/// The same, as one string.
+fn sidebar_text(buffer: &Buffer, width: u16, height: u16, split: Split) -> String {
+    sidebar_rows(buffer, width, height, split).join("\n")
+}
+
+/// The rows of the file list that have anything on them, in order.
+fn sidebar_filled(buffer: &Buffer, width: u16, height: u16, split: Split) -> Vec<String> {
+    sidebar_rows(buffer, width, height, split)
+        .into_iter()
+        .filter(|row| !row.trim().is_empty())
+        .collect()
+}
+
+/// The frame row the file list draws `needle` on.
+fn sidebar_row_for(buffer: &Buffer, needle: &str) -> u16 {
+    let area = inner(areas(100, 24, Split::default()).sidebar);
+    (area.y..area.bottom())
+        .find(|y| {
+            (area.x..area.right())
+                .map(|x| buffer[(x, *y)].symbol())
+                .collect::<String>()
+                .contains(needle)
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "{needle:?} is not in the file list:\n{}",
+                sidebar_text(buffer, 100, 24, Split::default())
+            )
+        })
+}
+
+/// What the file list says along its bottom border: its shape and its order.
+fn sidebar_shape(buffer: &Buffer) -> String {
+    let area = areas(100, 24, Split::default()).sidebar;
+    (area.x..area.right())
+        .map(|x| buffer[(x, area.bottom() - 1)].symbol())
+        .collect()
+}
+
+/// The background of one cell, or `None` where it is left on the terminal's own
+/// ground.
+fn bg_of(buffer: &Buffer, x: u16, y: u16) -> Option<Color> {
+    match buffer[(x, y)].style().bg {
+        None | Some(Color::Reset) => None,
+        colour => colour,
+    }
+}
+
+/// Every background the file list painted, row by row and cell by cell.
+fn sidebar_backgrounds(buffer: &Buffer) -> Vec<Option<Color>> {
+    let area = inner(areas(100, 24, Split::default()).sidebar);
+    (area.y..area.bottom())
+        .flat_map(|y| (area.x..area.right()).map(move |x| (x, y)))
+        .map(|(x, y)| bg_of(buffer, x, y))
+        .collect()
 }
 
 /// Presses `c`, types `body`, and presses Enter — one whole comment.
@@ -1849,16 +2038,19 @@ fn a_comment_renders_as_a_blue_bordered_box_under_its_line() {
         text.contains("needs a doc"),
         "the body is on screen:\n{text}"
     );
+    // Asked inside the diff pane: the panes' own corners are rounded too, so a
+    // `╭` at the edge of the frame is a frame rather than a box.
+    let inside = text_in(&buffer, box_area());
     assert!(
-        text.contains('╭') && text.contains('╰'),
+        inside.contains('╭') && inside.contains('╰'),
         "the box has borders:\n{text}"
     );
     assert!(
-        styled_blue(&buffer, '╭'),
+        styled_blue_in(&buffer, box_area(), '╭'),
         "the border is blue, which is the requirement:\n{text}"
     );
     assert!(
-        styled_blue(&buffer, '╰'),
+        styled_blue_in(&buffer, box_area(), '╰'),
         "and so is its other end:\n{text}"
     );
 
@@ -1888,7 +2080,7 @@ fn a_comment_box_is_indented_to_the_diff_gutter() {
     write_comment(&mut app, "needs a doc");
 
     let buffer = frame_at(&app, 100, 24);
-    let (corner_x, _) = find_char(&buffer, '╭').expect("a box top is on screen");
+    let (corner_x, _) = find_char_in(&buffer, box_area(), '╭').expect("a box top is on screen");
     // Counted in characters, not bytes: the panes' own borders are multi-byte,
     // so a byte offset is not a column.
     let sigil_row = rows_of(&buffer)[row_holding(&buffer, "+fn a() {")].clone();
@@ -2099,7 +2291,7 @@ fn the_selected_box_in_the_stack_is_brighter_and_bold() {
     write_comment(&mut app, "second finding");
 
     let browsing = frame_at(&app, 100, 24);
-    let first_corner = find_char(&browsing, '╭').expect("a box top");
+    let first_corner = find_char_in(&browsing, box_area(), '╭').expect("a box top");
     assert_eq!(
         browsing[first_corner].style().fg,
         Some(Color::Blue),
@@ -2146,8 +2338,9 @@ fn a_collapsed_box_is_a_single_row() {
 
     let buffer = frame_at(&app, 100, 24);
     let text = buffer_text(&buffer);
+    let inside = text_in(&buffer, box_area());
     assert!(
-        !text.contains('╭') && !text.contains('╰'),
+        !inside.contains('╭') && !inside.contains('╰'),
         "a folded comment still draws a box:\n{text}"
     );
     let rows = rows_of(&buffer);
@@ -2287,7 +2480,12 @@ fn a_long_diff_line_is_marked_rather_than_silently_clipped() {
     // ...and the marker sits against the pane's own right-hand border, so what
     // it reports is the edge of the pane rather than something dropped out of
     // the middle of the line.
-    let row = rows_of(&buffer)[row_holding(&buffer, "xxx")].clone();
+    //
+    // Cut to the diff pane's own columns: the file list clips its rows with the
+    // same marker, and at sixty columns it is clipping `long.rs` too — so the
+    // first `…` on this frame row belongs to the other pane.
+    let y = u16::try_from(row_holding(&buffer, "xxx")).expect("a small row");
+    let row = row_in(&buffer, areas(60, 24, Split::default()).diff, y);
     let after: String = row.chars().skip_while(|c| *c != '…').skip(1).collect();
     assert_eq!(
         after, "│",
@@ -2754,26 +2952,38 @@ fn the_browsed_row_is_highlighted_when_the_sidebar_has_focus() {
     assert!(reversed(&app), "the focused browser has no selection");
 }
 
-/// The status line is content too: a terminal too narrow for it says so rather
-/// than dropping the end of a sentence about a deletion.
+/// The bar drops whole segments rather than cutting one in half, at every
+/// width, and the pointer to the keymap is the last thing standing.
+///
+/// This replaces a test that asserted the opposite — that a status line too
+/// long for the terminal ends in `…`. That was true when `app.status()` *was*
+/// the bar, and it was the defect: half of `deleted comment at app.rs:42` is a
+/// claim about a file that does not exist, and a status that owned the whole
+/// row could evict the one in-app pointer to the keys. The bar is segments now
+/// (see `rv::statusbar`), so a segment either fits or is dropped whole, and the
+/// hint outlives every one of them.
 #[test]
-fn a_status_line_too_long_for_the_terminal_is_marked() {
+fn the_bar_drops_a_segment_whole_rather_than_cutting_a_word() {
     let workspace = Fixture::new();
-    let app = workspace.app();
+    let mut app = workspace.app();
+    write_comment(&mut app, "a finding");
 
-    // The help text is 68 columns, which a 40-column terminal cannot show.
-    // The bar is the *last* row of the frame — see `rv::layout`.
-    let narrow = last_row(&frame_at(&app, 40, 24));
-    assert!(
-        narrow.ends_with('…'),
-        "the status line was cut silently: {narrow:?}"
-    );
-
-    let wide = last_row(&frame_at(&app, 100, 24));
-    assert!(
-        !wide.contains('…') && wide.contains("q quit"),
-        "a status line with room to spare was marked anyway: {wide:?}"
-    );
+    for width in [16u16, 24, 40, 60, 80, 100, 120] {
+        let frame = frame_at(&app, width, 24);
+        let bar = last_row(&frame);
+        assert!(
+            !bar.contains('…'),
+            "the bar cut a segment in half at {width} columns: {bar:?}"
+        );
+        assert!(
+            bar.contains("? help"),
+            "the pointer to the keymap went first at {width} columns: {bar:?}"
+        );
+        assert!(
+            (0..width).all(|x| bg_of(&frame, x, 23).is_some()),
+            "the bar left part of the row bare at {width} columns: {bar:?}"
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -3161,6 +3371,8 @@ fn q_closes_the_help_rather_than_quitting() {
 #[case(KeyCode::Char(']'))]
 #[case(KeyCode::Char('s'))]
 #[case(KeyCode::Char('>'))]
+#[case(KeyCode::Char('t'))]
+#[case(KeyCode::Char('o'))]
 fn keys_are_inert_while_the_help_is_open(#[case] key: KeyCode) {
     let workspace = Fixture::new();
     let mut app = workspace.app();
@@ -3176,6 +3388,8 @@ fn keys_are_inert_while_the_help_is_open(#[case] key: KeyCode) {
         app.sidebar_tab(),
         app.split().ratio(),
         app.collapsed().len(),
+        app.tree_view(),
+        app.sort(),
     );
 
     app.on_key(key).expect("key");
@@ -3189,6 +3403,8 @@ fn keys_are_inert_while_the_help_is_open(#[case] key: KeyCode) {
             app.sidebar_tab(),
             app.split().ratio(),
             app.collapsed().len(),
+            app.tree_view(),
+            app.sort(),
         ),
         state,
         "{key:?} did something while the help was open"
@@ -4006,4 +4222,607 @@ fn folding_a_box_the_cursor_is_inside_keeps_the_cursor_on_its_line() {
         Some(app.cursor_row()),
         "the cursor did not land on the folded line's own row"
     );
+}
+
+// ---------------------------------------------------------------------------
+// The file list as a tinted, counted tree
+// ---------------------------------------------------------------------------
+
+/// `t` flips the file list between whole paths and a directory tree, and the
+/// pane says which it is showing.
+///
+/// A chain of single-child directories is one row: `docs/specs` and not `docs`
+/// over `specs`. A 29-file review has perhaps 40 rows to spend, and a tree that
+/// spent half of them on punctuation would be worse than the list it replaced.
+#[test]
+fn t_toggles_the_sidebar_between_a_list_and_a_tree() {
+    let workspace = Fixture::nested();
+    let mut app = workspace.app();
+
+    let list = sidebar_text(&frame_at(&app, 100, 24), 100, 24, Split::default());
+    assert!(
+        list.contains("docs/specs/a.md"),
+        "the flat list names whole paths:\n{list}"
+    );
+    assert!(
+        sidebar_shape(&frame_at(&app, 100, 24)).contains("list"),
+        "the pane does not say it is a list: {:?}",
+        sidebar_shape(&frame_at(&app, 100, 24))
+    );
+
+    app.on_key(KeyCode::Char('t')).expect("t");
+    let tree = sidebar_text(&frame_at(&app, 100, 24), 100, 24, Split::default());
+    assert_ne!(list, tree, "the sidebar did not change shape");
+    assert!(
+        tree.contains("docs/specs"),
+        "the single-child chain is one row:\n{tree}"
+    );
+    assert!(
+        !tree.contains("docs/specs/a.md"),
+        "a file under it is still named by its whole path:\n{tree}"
+    );
+    assert!(
+        tree.contains("a.md") && tree.contains("b.md") && tree.contains("top.rs"),
+        "the tree lost a file the flat list had:\n{tree}"
+    );
+    assert!(
+        sidebar_shape(&frame_at(&app, 100, 24)).contains("tree"),
+        "the pane does not say it is a tree: {:?}",
+        sidebar_shape(&frame_at(&app, 100, 24))
+    );
+
+    app.on_key(KeyCode::Char('t')).expect("t again");
+    assert_eq!(
+        sidebar_text(&frame_at(&app, 100, 24), 100, 24, Split::default()),
+        list,
+        "t is a toggle, not a one-way door"
+    );
+}
+
+/// `s` on a directory row folds it away — the project's one verb for *fold the
+/// thing under the cursor*, which is already what it means for a comment box
+/// and for a browsed comment.
+#[test]
+fn s_folds_a_directory_row_and_hides_the_files_under_it() {
+    let workspace = Fixture::nested();
+    let mut app = workspace.app();
+    app.on_key(KeyCode::Char('t')).expect("the tree");
+    app.on_key(KeyCode::Left).expect("focus the file list");
+    // The review opens on the first file, which is under `docs/specs`; one
+    // step up is the directory row itself.
+    app.on_key(KeyCode::Up).expect("onto the directory row");
+
+    app.on_key(KeyCode::Char('s')).expect("fold it");
+    let folded = sidebar_text(&frame_at(&app, 100, 24), 100, 24, Split::default());
+    assert!(
+        folded.contains("docs/specs"),
+        "the directory row itself is gone:\n{folded}"
+    );
+    assert!(
+        !folded.contains("a.md") && !folded.contains("b.md"),
+        "its files are still on screen:\n{folded}"
+    );
+    assert!(
+        folded.contains("top.rs") && folded.contains("lib.rs"),
+        "folding one directory took its siblings with it:\n{folded}"
+    );
+
+    app.on_key(KeyCode::Char('s')).expect("unfold it");
+    assert!(
+        sidebar_text(&frame_at(&app, 100, 24), 100, 24, Split::default()).contains("a.md"),
+        "s did not put the directory back"
+    );
+}
+
+/// A row that holds others says what the whole subtree costs, folded or not.
+///
+/// A folded row that hid its own weight would be a row you have to expand to
+/// judge, which is the work folding it was meant to save.
+#[test]
+fn a_directory_row_carries_its_whole_subtrees_count() {
+    let workspace = Fixture::nested();
+    let mut app = workspace.app();
+    app.on_key(KeyCode::Char('t')).expect("the tree");
+
+    let frame = frame_at(&app, 100, 24);
+    let row = sidebar_row_for(&frame, "docs/specs");
+    let text: String = (0..100).map(|x| frame[(x, row)].symbol()).collect();
+    assert!(
+        text.contains("+15"),
+        "a 10-line file and a 5-line file under one row add up to 15: {text:?}"
+    );
+}
+
+/// Every row says what it costs to review.
+#[test]
+fn every_row_shows_what_it_costs_to_review() {
+    let workspace = Fixture::mixed();
+    let app = workspace.app_from("@--");
+
+    let text = sidebar_text(&frame_at(&app, 100, 24), 100, 24, Split::default());
+    assert!(text.contains("+40"), "additions are shown:\n{text}");
+    assert!(text.contains("25"), "and so are removals:\n{text}");
+}
+
+/// A row too narrow for both gives up its counts and keeps its path.
+///
+/// The path is the row's identity and the counts are context — and the gradient
+/// behind the row still carries the ratio the counts would have spelled, so
+/// nothing is truly lost.
+#[test]
+fn a_narrow_sidebar_drops_the_counts_before_the_path() {
+    let workspace = Fixture::mixed();
+    let mut app = workspace.app_from("@--");
+    for _ in 0..30 {
+        app.on_key(KeyCode::Char('<')).expect("squeeze the sidebar");
+    }
+
+    let split = app.split();
+    let text = sidebar_text(&frame_at(&app, 60, 24), 60, 24, split);
+    assert!(
+        text.contains("added"),
+        "the path went before the counts did:\n{text}"
+    );
+    assert!(
+        !text.contains("+40"),
+        "the counts survived a column that cannot hold both:\n{text}"
+    );
+}
+
+/// `o` cycles the order, and the pane names it — a list whose order you cannot
+/// see is a list you cannot trust.
+#[test]
+fn o_cycles_the_order_and_the_sidebar_says_which() {
+    let workspace = Fixture::nested();
+    let mut app = workspace.app();
+    let shape = |app: &App| sidebar_shape(&frame_at(app, 100, 24));
+
+    assert!(shape(&app).contains("natural"), "{:?}", shape(&app));
+    app.on_key(KeyCode::Char('o')).expect("o");
+    assert!(shape(&app).contains("added"), "{:?}", shape(&app));
+    app.on_key(KeyCode::Char('o')).expect("o");
+    assert!(shape(&app).contains("removed"), "{:?}", shape(&app));
+    app.on_key(KeyCode::Char('o')).expect("o");
+    assert!(
+        shape(&app).contains("natural"),
+        "it does not cycle: {:?}",
+        shape(&app)
+    );
+}
+
+/// ...and the rows actually move when it does.
+#[test]
+fn sorting_by_additions_puts_the_biggest_file_first() {
+    let workspace = Fixture::nested();
+    let mut app = workspace.app();
+
+    let natural = sidebar_filled(&frame_at(&app, 100, 24), 100, 24, Split::default());
+    assert!(
+        natural[0].contains("a.md"),
+        "the natural order is path order: {natural:?}"
+    );
+
+    app.on_key(KeyCode::Char('o')).expect("order by additions");
+    let by_size = sidebar_filled(&frame_at(&app, 100, 24), 100, 24, Split::default());
+    assert!(
+        by_size[0].contains("top.rs"),
+        "the 50-line file is not first: {by_size:?}"
+    );
+    let mut sorted = by_size.clone();
+    sorted.sort();
+    let mut was = natural.clone();
+    was.sort();
+    assert_eq!(sorted, was, "an order that loses a file is worse than none");
+}
+
+/// Every row is tinted across its width by the shape of its change: green where
+/// additions dominate, red where removals do.
+#[test]
+fn the_sidebar_tints_a_row_by_the_shape_of_its_change() {
+    let workspace = Fixture::mixed();
+    let app = workspace.app_from("@--");
+    let frame = frame_at(&app, 100, 24);
+    let column = areas(100, 24, Split::default()).sidebar.x + 2;
+
+    let added = sidebar_row_for(&frame, "added.rs");
+    let removed = sidebar_row_for(&frame, "removed.rs");
+    assert_ne!(
+        bg_of(&frame, column, added),
+        bg_of(&frame, column, removed),
+        "the two files are tinted the same:\n{}",
+        sidebar_text(&frame, 100, 24, Split::default())
+    );
+    assert_eq!(
+        bg_of(&frame, column, added),
+        Some(colour(gradient::ADDED)),
+        "a file that is nothing but additions is not green all the way across"
+    );
+    assert_eq!(
+        bg_of(&frame, column, removed),
+        Some(colour(gradient::REMOVED)),
+        "a file that is nothing but removals is not red all the way across"
+    );
+}
+
+/// ...and the tint reaches the right-hand edge of the column, so a row reads as
+/// a band rather than as a stripe behind its name.
+#[test]
+fn the_tint_covers_the_whole_row() {
+    let workspace = Fixture::mixed();
+    let app = workspace.app_from("@--");
+    let frame = frame_at(&app, 100, 24);
+    let area = inner(areas(100, 24, Split::default()).sidebar);
+    let row = sidebar_row_for(&frame, "added.rs");
+
+    for x in area.x..area.right() {
+        assert_eq!(
+            bg_of(&frame, x, row),
+            Some(colour(gradient::ADDED)),
+            "column {x} of a pure addition is not tinted"
+        );
+    }
+}
+
+/// ...including the columns past the end of a row's own text.
+///
+/// A wide row already fills its column — the counts are right-aligned against
+/// the edge — so the row above cannot tell "the tint is padded out" from "the
+/// text happened to reach the edge". This one squeezes the pane until the
+/// counts are dropped and the name is shorter than the column, which is the
+/// only shape where the two answers differ.
+#[test]
+fn the_tint_reaches_past_the_end_of_the_text() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    for _ in 0..30 {
+        app.on_key(KeyCode::Char('<')).expect("squeeze the sidebar");
+    }
+
+    let split = app.split();
+    let frame = frame_at(&app, 60, 24);
+    let area = inner(areas(60, 24, split).sidebar);
+    let row = area.y;
+    let text = row_in(&frame, area, row);
+    assert!(
+        text.trim_end().chars().count() < usize::from(area.width),
+        "the row already fills the column, so this proves nothing: {text:?}"
+    );
+
+    for x in area.x..area.right() {
+        assert!(
+            bg_of(&frame, x, row).is_some(),
+            "column {x} is past the name and was left bare: {text:?}"
+        );
+    }
+}
+
+/// A change with no shape is left alone: a gradient over zero changed lines
+/// would be inventing a ratio.
+#[test]
+fn a_pure_rename_is_left_neutral() {
+    let workspace = Fixture::pure_rename();
+    let app = workspace.app_from("@--");
+    let frame = frame_at(&app, 100, 24);
+    let column = areas(100, 24, Split::default()).sidebar.x + 2;
+
+    let row = sidebar_row_for(&frame, "b.rs");
+    assert_eq!(
+        bg_of(&frame, column, row),
+        None,
+        "a rename that changed no line was tinted anyway:\n{}",
+        sidebar_text(&frame, 100, 24, Split::default())
+    );
+}
+
+/// The colours are computed once, when the review is opened, and never move.
+#[test]
+fn the_colours_do_not_move_as_you_browse() {
+    let workspace = Fixture::nested();
+    let mut app = workspace.app();
+    let before = sidebar_backgrounds(&frame_at(&app, 100, 24));
+
+    for _ in 0..3 {
+        app.on_key(KeyCode::Char(']')).expect("next file");
+    }
+    assert_eq!(
+        sidebar_backgrounds(&frame_at(&app, 100, 24)),
+        before,
+        "the tints were recomputed as files were opened"
+    );
+}
+
+/// The shape, the order and the folds are this session's, like every other view
+/// preference in this reviewer.
+#[test]
+fn the_shape_and_the_order_never_reach_disk() {
+    let workspace = Fixture::nested();
+    let mut app = workspace.app();
+    let before = workspace_tree(workspace.root());
+
+    app.on_key(KeyCode::Char('t')).expect("the tree");
+    app.on_key(KeyCode::Char('o')).expect("order by additions");
+    app.on_key(KeyCode::Left).expect("focus the file list");
+    app.on_key(KeyCode::Char('s')).expect("fold something");
+    app.on_key(KeyCode::Char('o')).expect("order by removals");
+
+    assert_eq!(
+        workspace_tree(workspace.root()),
+        before,
+        "how one reviewer likes their file list is not review state"
+    );
+}
+
+/// Walking onto a directory row moves the cursor and leaves the diff alone: the
+/// reviewer chose the file they are reading, and a folder is a thing to fold
+/// rather than a file to open.
+#[test]
+fn the_cursor_can_rest_on_a_directory_without_changing_the_diff() {
+    let workspace = Fixture::nested();
+    let mut app = workspace.app();
+    app.on_key(KeyCode::Char('t')).expect("the tree");
+    app.on_key(KeyCode::Left).expect("focus the file list");
+
+    let file = app.file_index();
+    app.on_key(KeyCode::Up).expect("onto the directory row");
+    assert_eq!(app.file_index(), file, "a directory row selected a file");
+    assert!(
+        buffer_text(&frame_at(&app, 100, 24)).contains("a.md"),
+        "the diff pane stopped showing the file that is selected"
+    );
+
+    app.on_key(KeyCode::Down).expect("back onto the file");
+    assert_eq!(app.file_index(), file, "and coming back moved it");
+}
+
+/// The file list's cursor is on the row that holds the selected file, whatever
+/// order the rows are in and however the file came to be selected.
+///
+/// The two are different numbers the moment an order moves a row: under
+/// `added` the review's first file is the *third* row here, and `]` from it
+/// lands on the fourth. A cursor that stayed at the row number would highlight
+/// a file nobody selected — and `s`, which acts on the row, would be aimed at
+/// it.
+#[test]
+fn the_file_lists_cursor_follows_the_file_that_is_selected() {
+    let workspace = Fixture::nested();
+    let mut app = workspace.app();
+    // Natural order is path order: a.md (10), b.md (5), lib.rs (30), top.rs
+    // (50). By additions it is top.rs, lib.rs, a.md, b.md.
+    assert_eq!((app.file_index(), app.sidebar_row()), (0, 0));
+
+    app.on_key(KeyCode::Char('o')).expect("order by additions");
+    assert_eq!(app.file_index(), 0, "reordering moved the selection");
+    assert_eq!(
+        app.sidebar_row(),
+        2,
+        "the cursor stayed at a row number instead of following the file"
+    );
+
+    app.on_key(KeyCode::Char(']')).expect("next file");
+    assert_eq!(app.file_index(), 1, "] did not move to the next file");
+    assert_eq!(
+        app.sidebar_row(),
+        3,
+        "the 5-line file is the last row under this order"
+    );
+
+    // ...and the pane highlights that row rather than the file's own index.
+    app.on_key(KeyCode::Left).expect("focus the file list");
+    let frame = frame_at(&app, 100, 24);
+    let area = inner(areas(100, 24, Split::default()).sidebar);
+    let highlighted = (area.y..area.bottom())
+        .find(|y| frame[(area.x, *y)].modifier.contains(Modifier::REVERSED))
+        .expect("the focused file list highlights a row");
+    assert!(
+        row_in(&frame, area, highlighted).contains("b.md"),
+        "the highlight is on {:?}",
+        row_in(&frame, area, highlighted)
+    );
+}
+
+/// `t` and `o` are preferences about the file list, so from the comment browser
+/// they refuse and say where the list they are about is.
+#[test]
+fn the_view_keys_say_they_are_about_the_file_list() {
+    let workspace = Fixture::nested();
+    let mut app = workspace.app();
+    app.on_key(KeyCode::Tab).expect("the comments tab");
+    let tree = app.tree_view();
+    let sort = app.sort();
+
+    app.on_key(KeyCode::Char('t')).expect("t");
+    assert_eq!(app.tree_view(), tree, "t reshaped a list nobody can see");
+    assert!(
+        app.status().contains("file list"),
+        "t refused without saying why: {:?}",
+        app.status()
+    );
+
+    app.on_key(KeyCode::Char('o')).expect("o");
+    assert_eq!(app.sort(), sort, "o reordered a list nobody can see");
+    assert!(
+        app.status().contains("file list"),
+        "o refused without saying why: {:?}",
+        app.status()
+    );
+}
+
+// ---------------------------------------------------------------------------
+// The bar is the status bar
+// ---------------------------------------------------------------------------
+
+/// The bar along the bottom is drawn from `rv::statusbar`, so it says what mode
+/// the keyboard is in, which file is selected and where in the list, what is
+/// under review, how many comments are open, and where the keymap is.
+#[test]
+fn the_bar_is_drawn_from_the_status_bars_segments() {
+    let workspace = Fixture::new();
+    let app = workspace.app();
+
+    let bar = last_row(&frame_at(&app, 100, 24));
+    assert!(
+        bar.contains("BROWSE"),
+        "the mode is not on the bar: {bar:?}"
+    );
+    assert!(bar.contains("a.rs"), "nor the selected file: {bar:?}");
+    assert!(bar.contains("1/2"), "nor how far through the list: {bar:?}");
+    assert!(bar.contains("trunk()"), "nor what is in scope: {bar:?}");
+    assert!(bar.contains("0 open"), "nor the comment count: {bar:?}");
+    assert!(bar.contains("? help"), "nor where the keymap is: {bar:?}");
+}
+
+/// The defect the `?` popup was a workaround for, pinned in the frame: a status
+/// message is one segment among six now, so it cannot take the keymap hint's
+/// place.
+#[test]
+fn a_status_message_can_no_longer_evict_the_keymap_hint() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    write_comment(&mut app, "a finding");
+    assert!(
+        app.status().contains("comment saved"),
+        "the fixture did not produce a status message: {:?}",
+        app.status()
+    );
+
+    let bar = last_row(&frame_at(&app, 120, 24));
+    assert!(
+        bar.contains("comment saved"),
+        "the message is not on the bar at all: {bar:?}"
+    );
+    assert!(
+        bar.contains("? help"),
+        "the message took the hint's place: {bar:?}"
+    );
+    assert!(bar.contains("BROWSE"), "...and the mode's with it: {bar:?}");
+}
+
+/// A confirmation keeps the whole row. It is a modal question whose answer
+/// destroys written work, and a question that could be dropped for want of room
+/// is a question the reviewer answers blind.
+#[test]
+fn a_confirmation_is_never_dropped_for_want_of_room() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    write_comment(&mut app, "a finding");
+    app.on_key(KeyCode::Char('d')).expect("d");
+
+    let bar = last_row(&frame_at(&app, 24, 24));
+    assert!(
+        bar.contains("delete"),
+        "the question was dropped like a status message: {bar:?}"
+    );
+    assert!(
+        bar.contains('…'),
+        "...and what did not fit was not marked: {bar:?}"
+    );
+}
+
+/// `RV_ASCII` is read once, by the app, and the renderer draws from what the
+/// app read rather than asking the environment per frame.
+///
+/// "Once" is a property of the code's shape rather than of a frame — there is
+/// no way to observe a syscall from out here — so what is pinned is the chain:
+/// the app owns the answer, and the bar on screen agrees with it.
+#[test]
+fn the_powerline_glyphs_are_decided_by_the_app_at_startup() {
+    let workspace = Fixture::new();
+    let app = workspace.app();
+
+    assert_eq!(
+        app.ascii(),
+        rv::statusbar::ascii_from(std::env::var_os(rv::statusbar::RV_ASCII).as_deref()),
+        "the app did not read the switch the status bar defines"
+    );
+    let bar = last_row(&frame_at(&app, 100, 24));
+    assert_eq!(
+        bar.contains('\u{e0b0}'),
+        !app.ascii(),
+        "the bar drew glyphs the app did not ask for: {bar:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Focus colours the border
+// ---------------------------------------------------------------------------
+
+/// The focused pane's border is the magenta accent and the other pane's is not.
+#[test]
+fn the_focused_pane_border_is_the_accent_and_the_other_is_not() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    let rects = areas(100, 24, Split::default());
+    let corner = |frame: &Buffer, area: Rect| frame[(area.x, area.y)].style().fg;
+    let accent = Some(colour(gradient::FOCUS));
+
+    let frame = frame_at(&app, 100, 24);
+    assert_eq!(
+        corner(&frame, rects.diff),
+        accent,
+        "the diff has focus at launch and its border is not the accent"
+    );
+    assert_ne!(
+        corner(&frame, rects.sidebar),
+        accent,
+        "the sidebar does not have focus and its border is the accent anyway"
+    );
+
+    app.on_key(KeyCode::Left).expect("focus the sidebar");
+    let frame = frame_at(&app, 100, 24);
+    assert_eq!(
+        corner(&frame, rects.sidebar),
+        accent,
+        "the accent did not move"
+    );
+    assert_ne!(corner(&frame, rects.diff), accent, "...and did not let go");
+}
+
+/// The accent is none of the colours that already mean something.
+#[test]
+fn the_accent_is_none_of_the_colours_that_already_mean_something() {
+    for taken in [
+        gradient::ADDED,
+        gradient::REMOVED,
+        gradient::COMMENT,
+        gradient::ALERT,
+    ] {
+        assert_ne!(
+            gradient::FOCUS,
+            taken,
+            "the focus accent must be unambiguous"
+        );
+    }
+}
+
+/// The `▸` on the focused pane's title survives the colour.
+///
+/// Redundant on purpose: a sixteen-colour terminal, or a reader who does not
+/// separate magenta from red, still needs to know where the keys go.
+#[test]
+fn the_title_marker_survives_the_colour() {
+    let workspace = Fixture::new();
+    let app = workspace.app();
+    assert!(buffer_text(&frame_at(&app, 100, 24)).contains('▸'));
+}
+
+/// The panes' borders are rounded.
+#[test]
+fn the_panes_borders_are_rounded() {
+    let workspace = Fixture::new();
+    let app = workspace.app();
+    let frame = frame_at(&app, 100, 24);
+    let rects = areas(100, 24, Split::default());
+
+    for area in [rects.sidebar, rects.diff] {
+        assert_eq!(
+            frame[(area.x, area.y)].symbol(),
+            "╭",
+            "a pane's top-left corner is square"
+        );
+        assert_eq!(
+            frame[(area.x, area.bottom() - 1)].symbol(),
+            "╰",
+            "a pane's bottom-left corner is square"
+        );
+    }
 }

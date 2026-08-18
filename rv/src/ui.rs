@@ -9,14 +9,13 @@
 //! The layout is two panes over a bar:
 //!
 //! ```text
-//! ┌──────────────┬┬────────────────────────────────┐
-//! │ sidebar (30%)││ diff (70%)                     │
-//! ├──────────────┴┴────────────────────────────────┤
-//! │ status (1 row) — or the comment box (3 rows)   │
-//! └────────────────────────────────────────────────┘
+//! ╭──────────────╮│╭───────────────────────────────╮
+//! │ sidebar (30%)│││ diff (70%)                    │
+//! ╰──────────────╯│╰───────────────────────────────╯
+//!  status bar (1 row) — or the comment box (3 rows)
 //! ```
 //!
-//! The bar carries the status line while browsing and becomes the comment box
+//! The bar carries the status bar while browsing and becomes the comment box
 //! while typing, rather than adding a fourth region: the two are never needed
 //! at once, and a review is worth every row the diff can have.
 //!
@@ -47,13 +46,18 @@
 //! There are two layers here and they are kept apart deliberately — **by
 //! channel, not by hue**.
 //!
-//! **The chrome** — borders, comment boxes, the status line, the gutter — has
-//! three colours with one meaning each: blue is a *comment*, green an
-//! *addition*, red a *removal*. Focus is therefore shown without colour at all
-//! — a `▸` on the focused pane's title and a bold border — so that the two
-//! never compete for the same cue. A comment that is no longer open drops to
-//! grey and dim, which is the one deliberate exception: it is still a comment,
-//! but not one asking for an answer.
+//! **The chrome** — borders, the file list, comment boxes, the status bar, the
+//! gutter — spends one colour per meaning, and every one of them is declared in
+//! [`crate::gradient`] so that no second meaning can be added quietly: blue is a
+//! *comment*, green an *addition*, red a *removal*, orange an *alert*, and
+//! magenta the *focused pane* and nothing else. A comment that is no longer open
+//! drops to grey and dim, which is the one deliberate exception: it is still a
+//! comment, but not one asking for an answer.
+//!
+//! Focus is shown three times over — the `▸` on the title, a bold border, and
+//! the magenta — because the two cheap signals survive a sixteen-colour
+//! terminal and a reader who does not separate magenta from red. Colour
+//! enhances the mark; it never carries it alone.
 //!
 //! **The code** inside the diff pane carries its own syntax colours, and they
 //! are the *terminal's* rather than rv's: [`capture_colour`] emits only the 16
@@ -109,6 +113,7 @@ use ratatui::text::Line;
 use ratatui::text::Span;
 use ratatui::text::Text;
 use ratatui::widgets::Block;
+use ratatui::widgets::BorderType;
 use ratatui::widgets::Clear;
 use ratatui::widgets::List;
 use ratatui::widgets::ListItem;
@@ -134,6 +139,8 @@ use crate::app::Mode;
 use crate::app::SidebarTab;
 use crate::app::anchored_side;
 use crate::gradient;
+use crate::gradient::Rgb;
+use crate::gradient::Stat;
 use crate::layout::Chrome;
 use crate::layout::Split;
 use crate::layout::layout;
@@ -141,6 +148,10 @@ use crate::rows::BodyKind;
 use crate::rows::Plan;
 use crate::rows::Row;
 use crate::rows::window;
+use crate::statusbar;
+use crate::tree;
+use crate::tree::Node;
+use crate::tree::NodeKind;
 
 /// Rows the comment box needs: its two borders and the line being typed.
 const COMMENT_ROWS: u16 = 3;
@@ -215,6 +226,25 @@ const WASH_SELECTED_CONTEXT: f32 = 0.78;
 /// and between one column of the popup and the next.
 const HELP_GAP: usize = 2;
 
+/// The fewest columns a file list row will show of a path before it gives up
+/// its counts instead.
+///
+/// The path is the row's *identity* and the counts are context: a row reading
+/// `+40 -0` and nothing else names no file, while a row reading `added.…` still
+/// does — and the gradient behind it still carries the ratio the counts would
+/// have spelled, so nothing is truly lost. Eight columns is a short name and
+/// the clip marker.
+const MIN_PATH_COLUMNS: usize = 8;
+
+/// The mark a file list row that holds others carries: pointing down when its
+/// contents are shown, right when they are folded away.
+///
+/// Three columns wide, like the change marks beside it, so names line up down
+/// the column whatever kind of row they are on.
+const OPEN: &str = "▾  ";
+/// See [`OPEN`].
+const FOLDED: &str = "▸  ";
+
 /// Paints the whole reviewer.
 ///
 /// Every rectangle comes from [`layout`]; nothing is computed here. That is
@@ -250,15 +280,36 @@ fn chrome(app: &App) -> Chrome {
     }
 }
 
-/// The status line, or the comment being typed.
+/// The status bar, the confirmation being answered, or the comment being typed.
+///
+/// **Browsing draws [`crate::statusbar`]'s segments**, not `app.status()` across
+/// the row. That is what fixes the defect the `?` popup was a workaround for:
+/// the status used to *be* the bar, so the first `d` a reviewer pressed replaced
+/// the keymap with `deleted comment at a.rs:42` and it never came back. As one
+/// segment among six it can displace nothing, and it is the first thing dropped
+/// when the terminal is narrow because it is the only part of the bar that stops
+/// being true on its own.
+///
+/// **A confirmation is not a status message**, so it keeps the whole row. It is
+/// a modal question whose answer destroys written work, and a question that
+/// could be dropped for want of room is a question the reviewer answers blind.
+/// It is clipped with a marker rather than dropped, for the same reason: half a
+/// sentence about a deletion is worse than none, but it is far better than none
+/// at all.
 fn draw_bar(frame: &mut Frame, app: &App, area: Rect) {
     match app.mode() {
-        // `ConfirmDelete` puts its question in the status line, so it draws
-        // exactly as browsing does.
-        Mode::Browse | Mode::ConfirmDelete { .. } => frame.render_widget(
-            // Clipped with a marker like everything else: a status line is a
-            // sentence, and half a sentence about a deletion is worse than
-            // none.
+        Mode::Browse => {
+            let view = status_view(app);
+            frame.render_widget(
+                Paragraph::new(statusbar::render(
+                    &statusbar::segments(&view),
+                    area.width,
+                    app.ascii(),
+                )),
+                area,
+            );
+        }
+        Mode::ConfirmDelete { .. } => frame.render_widget(
             Paragraph::new(clip(app.status(), usize::from(area.width))),
             area,
         ),
@@ -272,6 +323,36 @@ fn draw_bar(frame: &mut Frame, app: &App, area: Rect) {
                 area,
             )
         }
+    }
+}
+
+/// What the status bar needs to know about the review, read off the app in one
+/// place.
+///
+/// The bar takes plain data rather than an `&App` — see [`statusbar::View`] —
+/// so this is the whole of the coupling between the two, and the bar stays
+/// testable without a workspace.
+///
+/// `mode` is `BROWSE` and nothing else, because this is the only mode that
+/// draws the bar: a comment box replaces it while typing and a confirmation
+/// takes the row whole. Naming the *context* the cursor is in — `FILES`,
+/// `DIFF`, `STACK` — is the next wave's, and the segment is here now so that
+/// what a reviewer reads in the bar is a fact about the keyboard rather than
+/// about which pane happened to draw last.
+fn status_view(app: &App) -> statusbar::View<'_> {
+    statusbar::View {
+        mode: "BROWSE",
+        file: app.selected_file().map(|file| file.path.as_str()),
+        file_index: app.file_index(),
+        file_count: app.files().len(),
+        stat: app.selected_file().map(|_| app.stat(app.file_index())),
+        scope: &app.session().revset,
+        open_comments: app
+            .comments()
+            .iter()
+            .filter(|comment| comment.state == CommentState::Open)
+            .count(),
+        status: app.status(),
     }
 }
 
@@ -289,26 +370,185 @@ fn draw_sidebar(frame: &mut Frame, app: &App, area: Rect) {
     }
 }
 
-/// The file list, one row per changed file, marked by how it changed.
+/// The file list: one row per file, per directory that holds files, or per
+/// change that touched them — marked by how it changed, tinted by the shape of
+/// that change, and counted.
+///
+/// Every row comes from [`App::sidebar_nodes`], which is [`crate::tree`]'s
+/// answer and the same list the cursor walks. Nothing here decides which rows
+/// exist or what order they are in; this module turns one row into one line.
+///
+/// The **shape and the order go on the bottom border**, not into the title. The
+/// title already carries the focus mark and the count, and at 80 columns the
+/// sidebar is twenty-one columns wide — `▸ Files (2) · list · natural` is
+/// twenty-six, so putting the order up there would truncate away exactly the
+/// thing it is there to say. The bottom border is empty and is as much the
+/// pane's title as the top one.
 fn draw_files(frame: &mut Frame, app: &App, area: Rect, focused: bool) {
     let width = usize::from(area.width.saturating_sub(BORDER_ROWS));
-    let items: Vec<ListItem> = app
-        .files()
+    let nodes = app.sidebar_nodes();
+    // One counts column for the whole list, as wide as its widest entry, so the
+    // names line up down the pane instead of ending wherever their own row's
+    // numbers happened to start. Zero when nothing in the review changed a
+    // line, which is when there is no column to reserve.
+    let counted: Vec<String> = nodes.iter().map(|node| counts(node.stat)).collect();
+    let counts_width = counted
         .iter()
-        .map(|file| {
-            ListItem::new(clip(
-                &format!("{:<2} {}", marker(file.kind), file.path),
-                width,
-            ))
-        })
+        .map(|counts| counts.chars().count())
+        .max()
+        .unwrap_or(0);
+    let items: Vec<ListItem> = nodes
+        .iter()
+        .zip(&counted)
+        .map(|(node, counts)| ListItem::new(file_row(app, node, counts, counts_width, width)))
         .collect();
     let list = List::new(items)
-        .block(pane(format!("Files ({})", app.files().len()), focused))
+        .block(pane(format!("Files ({})", app.files().len()), focused).title_bottom(shape(app)))
         .highlight_style(selection_style(focused));
 
-    let mut state = ListState::default()
-        .with_selected(app.selected_file().is_some().then_some(app.file_index()));
+    let mut state =
+        ListState::default().with_selected((!nodes.is_empty()).then_some(app.sidebar_row()));
     frame.render_stateful_widget(list, area, &mut state);
+}
+
+/// What the file list says about itself along its bottom border: whether it is
+/// a list or a tree, and what order its rows are in.
+///
+/// Said out loud rather than left to be inferred from the rows, because an
+/// order you cannot see is an order you cannot trust: a reviewer who does not
+/// know the list is sorted by additions reads its first row as "the first file"
+/// rather than "the biggest change".
+fn shape(app: &App) -> String {
+    format!(
+        " {} · {} ",
+        if app.tree_view() { "tree" } else { "list" },
+        app.sort().label()
+    )
+}
+
+/// One row of the file list, exactly `width` columns wide.
+///
+/// The counts are right-aligned in a `counts_width` column shared by the whole
+/// list, and are **the first thing to go** when the pane is narrow — see
+/// [`MIN_PATH_COLUMNS`].
+fn file_row(
+    app: &App,
+    node: &Node,
+    counts: &str,
+    counts_width: usize,
+    width: usize,
+) -> Line<'static> {
+    let head = format!(
+        "{}{}{}",
+        "  ".repeat(node.depth),
+        row_mark(app, node),
+        node.label
+    );
+    let room = width.saturating_sub(counts_width + 1);
+    let text = if counts_width == 0 || room < MIN_PATH_COLUMNS {
+        clip(&head, width)
+    } else {
+        let head = clip(&head, room);
+        let pad = width.saturating_sub(counts_width + head.chars().count());
+        format!("{head}{}{counts:>counts_width$}", " ".repeat(pad))
+    };
+    tinted(&text, node.stat, width)
+}
+
+/// The three columns a file list row spends on saying what kind of row it is:
+/// how a file changed, or whether a row that holds others is open or folded.
+fn row_mark(app: &App, node: &Node) -> String {
+    match &node.kind {
+        NodeKind::Dir { collapsed, .. } | NodeKind::Commit { collapsed, .. } => {
+            if *collapsed { FOLDED } else { OPEN }.to_owned()
+        }
+        NodeKind::File { index } => match app.files().get(*index) {
+            Some(file) => format!("{:<2} ", marker(file.kind)),
+            // A row addressing a file the review does not have cannot happen —
+            // the rows are built from that very list — and is drawn blank
+            // rather than panicking a frame over it.
+            None => " ".repeat(3),
+        },
+    }
+}
+
+/// What a row costs to review, or nothing at all where it cost no lines.
+///
+/// Abbreviated by [`tree::abbreviate`], which is never wider than four
+/// characters, so the counts cannot push the path out of a narrow column by
+/// being long.
+///
+/// A row that changed no lines — a pure rename, a mode change — says nothing
+/// rather than `+0 -0`: zero is not a measurement of anything, and the row is
+/// left untinted for the same reason.
+fn counts(stat: Stat) -> String {
+    if stat.total() == 0 {
+        return String::new();
+    }
+    format!(
+        "+{} -{}",
+        tree::abbreviate(stat.added),
+        tree::abbreviate(stat.removed)
+    )
+}
+
+/// `text`, padded to `width` and washed across it by
+/// [`gradient::column_colour`] — green for the share of the change that is
+/// additions, red for the rest, meeting at a tight light seam.
+///
+/// The whole row, not a bar in a column of its own: the sidebar is the one
+/// place a reviewer decides what to read next, and a proportion drawn across
+/// the row is legible at a glance in a way a three-column bar is not. The ink
+/// is chosen per cell by [`gradient::readable_on`], because the ground runs
+/// from a dark green through a near-white seam to a dark red and no single
+/// foreground is readable on all three.
+///
+/// A row whose change has no shape — nothing added and nothing removed — is
+/// left on the terminal's own ground. A gradient over zero changed lines would
+/// be inventing a ratio.
+fn tinted(text: &str, stat: Stat, width: usize) -> Line<'static> {
+    let Some(ratio) = stat.added_ratio() else {
+        return Line::from(text.to_owned());
+    };
+    let columns = u16::try_from(width).unwrap_or(u16::MAX);
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let mut run = String::new();
+    let mut ground: Option<Rgb> = None;
+    // Padded with blanks to the full width, so a tinted row reads as a band
+    // across the column rather than stopping wherever its name does — and run
+    // together into as few spans as the gradient has flat stretches.
+    for (column, character) in text
+        .chars()
+        .chain(std::iter::repeat(' '))
+        .take(width)
+        .enumerate()
+    {
+        let colour =
+            gradient::column_colour(ratio, u16::try_from(column).unwrap_or(u16::MAX), columns);
+        if ground != Some(colour) {
+            if let Some(previous) = ground {
+                spans.push(Span::styled(std::mem::take(&mut run), tint(previous)));
+            }
+            ground = Some(colour);
+        }
+        run.push(character);
+    }
+    if let Some(previous) = ground {
+        spans.push(Span::styled(run, tint(previous)));
+    }
+    Line::from(spans)
+}
+
+/// A file list cell: the gradient's colour, with whichever ink reads on it.
+fn tint(ground: Rgb) -> Style {
+    Style::default()
+        .bg(colour(ground))
+        .fg(colour(gradient::readable_on(ground)))
+}
+
+/// One of [`crate::gradient`]'s colours, as ratatui sends it.
+fn colour(Rgb(red, green, blue): Rgb) -> Color {
+    Color::Rgb(red, green, blue)
 }
 
 /// Every comment in the review, wherever it lives: `path:line`, its state, and
@@ -473,15 +713,26 @@ impl<'a> Highlighting<'a> {
     }
 }
 
-/// A pane's block: bordered, titled, and marked when it holds the focus.
+/// A pane's block: rounded, titled, and marked when it holds the focus.
 ///
-/// The mark is a `▸` and a bold border, never a colour — see the module docs.
+/// The mark is **three signals for one fact**: a `▸` on the title, a bold
+/// border, and the border in [`gradient::FOCUS`] — the magenta this interface
+/// spends on nothing else, because green is an addition, red a removal, blue a
+/// comment and orange an alert, and a fifth meaning for any of them would be
+/// ambiguous exactly when a reviewer is scanning fast.
+///
+/// The `▸` is redundant on purpose and stays. A sixteen-colour terminal renders
+/// the magenta as whatever it likes or not at all, and a reader who does not
+/// separate magenta from red gets nothing from the hue; colour *enhances* the
+/// signal here and is never the only carrier of it.
 fn pane(title: String, focused: bool) -> Block<'static> {
-    let block = Block::bordered();
+    let block = Block::bordered().border_type(BorderType::Rounded);
     if focused {
-        block
-            .title(format!("▸ {title}"))
-            .border_style(Style::default().add_modifier(Modifier::BOLD))
+        block.title(format!("▸ {title}")).border_style(
+            Style::default()
+                .fg(colour(gradient::FOCUS))
+                .add_modifier(Modifier::BOLD),
+        )
     } else {
         block.title(title)
     }

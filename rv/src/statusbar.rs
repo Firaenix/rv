@@ -22,6 +22,17 @@
 //! go looking for the manual, and a bar with nothing but `? help` on it still
 //! answers the only question a lost reviewer has.
 //!
+//! **Only what a terminal can draw reaches the bar.** A path, a revset or a
+//! status built from one can carry a control character, and the two halves of
+//! ratatui disagree about those: `Line::width` asks `unicode-width`, which
+//! gives every character below `U+00A1` one column, while the renderer walks
+//! graphemes and refuses to draw any that holds a control. A bar measured by
+//! the first and painted by the second is one column short per control
+//! character — and a `\x1b` that *did* reach the terminal would be a control
+//! sequence a file name had smuggled onto the screen. [`printable`] drops them
+//! before either measuring or painting, so the two agree and the bar carries
+//! only what it can show.
+//!
 //! **Segments drop whole.** Nothing is ever cut mid-word: half of
 //! `deleted comment at app.rs:42` is a claim about a file that does not exist,
 //! and half of a revset is a revset that would select something else. The bar
@@ -353,7 +364,7 @@ fn measure(segments: &[Segment], kept: &[usize], ascii: bool) -> usize {
 fn block(segment: &Segment) -> Span<'static> {
     let background = segment.role.background();
     Span::styled(
-        format!(" {} ", segment.text),
+        format!(" {} ", printable(&segment.text)),
         Style::new()
             .fg(colour(gradient::readable_on(background)))
             .bg(colour(background))
@@ -390,7 +401,26 @@ fn colour(Rgb(red, green, blue): Rgb) -> Color {
 }
 
 /// The width of some text in terminal columns, asked of ratatui rather than
-/// computed here.
+/// computed here — and asked of the text ratatui will actually paint, which is
+/// [`printable`] of it.
 fn columns(text: &str) -> usize {
-    Span::raw(text).width()
+    Span::raw(printable(text)).width()
+}
+
+/// `text` with every character a terminal cannot draw taken out.
+///
+/// ratatui's renderer drops any grapheme containing a control character, while
+/// its `width` asks `unicode-width`, which charges one column for every
+/// character below `U+00A1` — control or not. Left alone the two disagree and
+/// the bar comes up a column short of the `Rect` it was painted into, letting
+/// the pane underneath show through the gap. Dropping the controls here makes
+/// the measurement and the painting the same question, and keeps an escape
+/// sequence that arrived inside a file name off the terminal into the bargain.
+///
+/// Filtering characters rather than graphemes is exact, not an approximation:
+/// a control character always begins and ends a grapheme cluster, the sole
+/// exception being `\r\n`, which is a cluster of nothing but controls. So the
+/// characters removed here are precisely the graphemes ratatui would refuse.
+fn printable(text: &str) -> String {
+    text.chars().filter(|c| !c.is_control()).collect()
 }

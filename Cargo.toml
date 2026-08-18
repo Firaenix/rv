@@ -42,6 +42,11 @@ tree-sitter-json = "0.24"
 tree-sitter-md = "0.5"
 tree-sitter-python = "0.25"
 tree-sitter-rust = "0.24"
+# Symbol extraction, from the *same* grammar crates the highlighter uses.
+# It has to track `tree-sitter-highlight`'s minor version, because both depend
+# on `tree-sitter` itself with a `^0.26.x` requirement and two different
+# tree-sitter runtimes in one binary would be two different `Language` types.
+tree-sitter-tags = "0.26"
 # TOML: the `-ng` fork is the maintained one. `tree-sitter-toml` proper was
 # last released in 2022 against a tree-sitter that predates this workspace's.
 tree-sitter-toml-ng = "0.7"

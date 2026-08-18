@@ -8,4 +8,5 @@ pub mod highlight;
 pub mod markdown;
 pub mod model;
 pub mod store;
+pub mod symbols;
 pub mod vcs;

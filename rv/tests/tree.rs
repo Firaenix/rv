@@ -893,6 +893,45 @@ fn a_heavy_file_outranks_a_light_directory_beside_it() {
     );
 }
 
+/// How many rows the tie test uses, and how many distinct sizes they spread
+/// over.
+///
+/// Both numbers are load bearing, and neither is arbitrary. Rust's unstable
+/// sort hands a short list to an insertion sort, which is stable, and leaves an
+/// already-ordered run alone however long it is. So three rows cannot tell a
+/// stable sort from an unstable one — and neither can sixty-four rows that are
+/// all the same size, since both come back untouched. What tells them apart is
+/// a list long enough to reach the real algorithm *and* a spread of sizes with
+/// ties inside each, which is the shape a review has: there the unstable sort
+/// has work to do and reshuffles the ties while doing it, which is the sidebar
+/// moving under the reviewer's cursor.
+///
+/// The exact length needed depends on how big a row is — the fallback is a size
+/// in bytes as much as a count — so this is set well past where the two
+/// diverge for the largest of the three lists rather than at the boundary. If a
+/// future Rust widens the fallback the test stops *discriminating*; it never
+/// starts lying.
+const REVIEW_SCALE: usize = 64;
+/// See [`REVIEW_SCALE`].
+const TIED_SIZES: u32 = 3;
+
+/// The `n`th row's size: a few distinct values, ten rows apiece, interleaved so
+/// that no size arrives in one run.
+fn tied(index: usize) -> Stat {
+    stat(u32::try_from(index).unwrap_or_default() % TIED_SIZES, 0)
+}
+
+/// The rows of one size, in the order they arrive.
+fn tied_run(added: u32) -> impl Iterator<Item = usize> {
+    (0..REVIEW_SCALE).filter(move |index| tied(*index).added == added)
+}
+
+/// The rows a stable sort by additions must answer with: the sizes heaviest
+/// first, and inside each size the rows in the order they already had.
+fn tied_order() -> Vec<usize> {
+    (0..TIED_SIZES).rev().flat_map(tied_run).collect()
+}
+
 #[test]
 fn a_tie_keeps_the_order_it_already_had() {
     // Two files of the same size have no reason to swap, and a sort that
@@ -909,6 +948,62 @@ fn a_tie_keeps_the_order_it_already_had() {
         labels(&build(&paths, &nothing(), true, Sort::Added, &stats)),
         ["a.rs", "m.rs", "z.rs"],
         "and the tree keeps the order it draws in"
+    );
+}
+
+#[test]
+fn a_tie_keeps_the_order_it_already_had_at_review_scale() {
+    // The three rows above are the ruling stated readably; they do not pin it.
+    // An unstable sort answers them exactly as a stable one does — see
+    // [`REVIEW_SCALE`] for why — so the claim is asserted again here at the
+    // size and shape a real review has, which is where the two differ.
+    let names: Vec<String> = (0..REVIEW_SCALE).map(|n| format!("f{n:02}.rs")).collect();
+    let flat: Vec<&str> = names.iter().map(String::as_str).collect();
+    let expected: Vec<&str> = tied_order().into_iter().map(|n| flat[n]).collect();
+
+    let rows = build(&flat, &nothing(), false, Sort::Added, &tied);
+    let sorted = labels(&rows);
+    assert_ne!(
+        sorted, flat,
+        "the rows did move, which is what makes the rest of this worth asserting"
+    );
+    assert_eq!(
+        sorted, expected,
+        "heaviest first, and every tie in the order it already had"
+    );
+
+    // The same rows inside a directory, where a different list is put in order:
+    // one directory's children rather than the flat list.
+    let nested: Vec<String> = flat.iter().map(|name| format!("src/{name}")).collect();
+    let nested: Vec<&str> = nested.iter().map(String::as_str).collect();
+    let tree = build(&nested, &nothing(), true, Sort::Added, &tied);
+    assert_eq!(
+        labels(&tree)[1..].to_vec(),
+        expected,
+        "and a directory's children are no different"
+    );
+
+    // And a stack of changes, which is the third list `order` is asked about.
+    let one = ["x.rs"];
+    let ids: Vec<String> = (0..REVIEW_SCALE).map(|n| format!("c{n:02}")).collect();
+    let groups: Vec<Group<'_>> = ids
+        .iter()
+        .map(|id| Group {
+            change_id: id,
+            description: "a change",
+            paths: &one,
+        })
+        .collect();
+    let rows = build_grouped(&groups, &nothing(), false, Sort::Added, &tied);
+    let stack: Vec<&str> = rows
+        .iter()
+        .filter(|node| node.depth == 0)
+        .map(|node| node.label.trim_end_matches(" a change"))
+        .collect();
+    let stacked: Vec<&str> = tied_order().into_iter().map(|n| ids[n].as_str()).collect();
+    assert_eq!(
+        stack, stacked,
+        "and a stack of changes does not shuffle either"
     );
 }
 
@@ -939,6 +1034,75 @@ fn commits_sort_by_what_they_weigh_and_keep_their_files() {
             "tweak.rs"
         ],
         "a change is a directory here too: it sorts by its aggregate and takes its files with it"
+    );
+}
+
+#[test]
+fn files_sort_inside_a_change_in_the_commits_tree() {
+    // The flat commits view is the easy half, and the test above it covers
+    // that. The tree is where the two features have to reach through one
+    // another: the order moves the changes, and inside each change it has to
+    // reach down into that change's own directories without flattening them.
+    // The conservation properties compare rows as a bag and are blind to it, so
+    // nothing else in this file can see whether the order got past a `Commit`
+    // row.
+    let groups = [
+        Group {
+            change_id: "aaaa",
+            description: "a tweak",
+            paths: &["src/a_small.rs", "src/z_huge.rs", "top.rs"],
+        },
+        Group {
+            change_id: "bbbb",
+            description: "the big one",
+            paths: &["lib/one.rs", "lib/two.rs"],
+        },
+    ];
+    // The names run the other way from the sizes at every level, so an
+    // alphabetical answer cannot pass this by accident.
+    let stats = by_index(&[(1, 0), (99, 0), (50, 0), (30, 0), (400, 0)]);
+
+    assert_eq!(
+        sketch(&build_grouped(
+            &groups,
+            &nothing(),
+            true,
+            Sort::Natural,
+            &stats
+        )),
+        "\
+v aaaa a tweak
+  v src
+      a_small.rs
+      z_huge.rs
+    top.rs
+v bbbb the big one
+  v lib
+      one.rs
+      two.rs",
+        "stack order, path order, and the weights ignored"
+    );
+
+    let nodes = build_grouped(&groups, &nothing(), true, Sort::Added, &stats);
+    assert_eq!(
+        sketch(&nodes),
+        "\
+v bbbb the big one
+  v lib
+      two.rs
+      one.rs
+v aaaa a tweak
+  v src
+      z_huge.rs
+      a_small.rs
+    top.rs",
+        "the changes sort by their aggregate, the files sort inside each of \
+         them, and the directories they hang under survive both"
+    );
+    assert_eq!(
+        file_indices(&nodes),
+        [4, 3, 1, 0, 2],
+        "and a file that moved still addresses the diff it named"
     );
 }
 
@@ -1022,6 +1186,29 @@ fn sizes() -> impl Strategy<Value = Vec<(u32, u32)>> {
     prop::collection::vec((0u32..4, 0u32..4), 0..14)
 }
 
+/// Keys the commits view can actually fold: a change's id, and a directory
+/// under one — which is the key shape only this view has, since the same
+/// directory under two changes folds independently. Both bite against the
+/// changes [`grouped`] builds and the paths [`paths`] generates, so folding is
+/// really exercised rather than merely offered.
+fn commit_folds() -> impl Strategy<Value = Vec<String>> {
+    prop::collection::vec("(aaaa|bbbb|cccc|dddd)(:[a-c.]{0,2}(/[a-c.]{0,2})?)?", 0..4)
+}
+
+/// The changes a generated set of path lists stands for, named the way the
+/// fold keys above expect.
+fn grouped<'a>(paths: &'a [Vec<&'a str>]) -> Vec<Group<'a>> {
+    paths
+        .iter()
+        .enumerate()
+        .map(|(at, paths)| Group {
+            change_id: ["aaaa", "bbbb", "cccc", "dddd"][at],
+            description: "a change",
+            paths,
+        })
+        .collect()
+}
+
 proptest! {
     /// The one that matters: every file, exactly once, whatever the paths.
     #[test]
@@ -1095,15 +1282,7 @@ proptest! {
         tree in any::<bool>(),
     ) {
         let borrowed: Vec<Vec<&str>> = groups.iter().map(|paths| borrowed(paths)).collect();
-        let groups: Vec<Group<'_>> = borrowed
-            .iter()
-            .enumerate()
-            .map(|(at, paths)| Group {
-                change_id: ["aaaa", "bbbb", "cccc", "dddd"][at],
-                description: "a change",
-                paths,
-            })
-            .collect();
+        let groups = grouped(&borrowed);
         let total: usize = groups.iter().map(|group| group.paths.len()).sum();
 
         let nodes = grouped_shape(&groups, &nothing(), tree);
@@ -1149,36 +1328,42 @@ proptest! {
     }
 
     /// And the same in the commits view, where an order also moves the changes
-    /// themselves.
+    /// themselves — and, like its bookmark-view counterpart above, with rows
+    /// folded away underneath it. Folding and ordering are the two features
+    /// this view gained at once and they meet on the same rows: a fold decides
+    /// which rows exist and an order decides where they go, so a bug in either
+    /// one shows up as the other losing a file. Checked together, they cannot
+    /// each be correct alone and wrong in company.
     #[test]
     fn no_order_loses_a_file_in_the_commits_view(
         groups in prop::collection::vec(paths(), 0..4),
         stats in sizes(),
         sort in orders(),
         tree in any::<bool>(),
+        fold in commit_folds(),
     ) {
         let borrowed: Vec<Vec<&str>> = groups.iter().map(|paths| borrowed(paths)).collect();
-        let groups: Vec<Group<'_>> = borrowed
-            .iter()
-            .enumerate()
-            .map(|(at, paths)| Group {
-                change_id: ["aaaa", "bbbb", "cccc", "dddd"][at],
-                description: "a change",
-                paths,
-            })
-            .collect();
+        let groups = grouped(&borrowed);
         let total: usize = groups.iter().map(|group| group.paths.len()).sum();
         let stat_of = by_index(&stats);
+        let collapsed: HashSet<String> = fold.into_iter().collect();
 
-        let sorted = build_grouped(&groups, &nothing(), tree, sort, &stat_of);
+        let sorted = build_grouped(&groups, &collapsed, tree, sort, &stat_of);
+        let natural = build_grouped(&groups, &collapsed, tree, Sort::Natural, &stat_of);
         let mut indices = file_indices(&sorted);
         indices.sort_unstable();
-        prop_assert_eq!(indices, (0..total).collect::<Vec<_>>());
-        prop_assert_eq!(
-            bag(&sorted),
-            bag(&build_grouped(&groups, &nothing(), tree, Sort::Natural, &stat_of)),
-            "only the order moves"
-        );
+        let unique: HashSet<usize> = indices.iter().copied().collect();
+
+        prop_assert_eq!(indices.len(), unique.len(), "no file is listed twice");
+        prop_assert!(indices.iter().all(|index| *index < total), "no index is invented");
+        prop_assert_eq!(bag(&sorted), bag(&natural), "only the order moves");
+        if collapsed.is_empty() {
+            prop_assert_eq!(
+                indices,
+                (0..total).collect::<Vec<_>>(),
+                "and with nothing folded, every file is still there"
+            );
+        }
     }
 
     /// A directory stands for its subtree, so its weight is its subtree's —

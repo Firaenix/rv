@@ -18,7 +18,11 @@
 //! `Cargo.lock` is TOML, and it is the first file in a Rust repository
 //! alphabetically, so an rv that cannot colour it looks like an rv whose
 //! highlighting does not work. A name earns a filename row only if it is
-//! unambiguous; guessing there is content sniffing by another spelling.
+//! unambiguous; guessing there is content sniffing by another spelling. Those
+//! two tables are the *only* place rv decides what a file is written in:
+//! [`symbols`](crate::symbols) asks them through [`language_of`] rather than
+//! keeping a list of its own, so a file cannot be coloured as one language and
+//! searched as another.
 //!
 //! **Nothing here fails.** A blob that is not UTF-8, a half-typed function
 //! that does not parse, a path that is not a path — each produces an answer.
@@ -764,6 +768,21 @@ fn markdown_injection(name: &str) -> Option<&'static HighlightConfiguration> {
     (name == "markdown_inline")
         .then(markdown_inline_configuration)
         .flatten()
+}
+
+/// The name of the language `path` selects, or `None` when neither table
+/// claims it — the same answer [`Highlights::of`] would report, without
+/// parsing anything.
+///
+/// This exists so that [`symbols`](crate::symbols) can ask *which language is
+/// this file* through the one table that already answers it. Detection lives
+/// here and nowhere else: a second table would drift, and the day it drifted a
+/// file would be coloured as one language and searched as another. It is also
+/// how a caller that only wants the language avoids paying for a whole
+/// highlight parse to learn it.
+#[must_use]
+pub fn language_of(path: &str) -> Option<&'static str> {
+    grammar_for_path(path).map(|grammar| grammar.name)
 }
 
 /// The grammar `path`'s name selects, or `None` when neither table claims it.

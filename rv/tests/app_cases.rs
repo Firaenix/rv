@@ -71,6 +71,7 @@ use rv::layout::Chrome;
 use rv::layout::Split;
 use rv::layout::layout;
 use rv::session;
+use rv::tree::Sort;
 use rv::ui;
 use rv_core::anchor;
 use rv_core::diff;
@@ -578,6 +579,20 @@ fn rewind(app: &mut App) {
         app.on_key(KeyCode::Up).expect("first comment");
     }
     app.on_key(KeyCode::Tab).expect("back to the file list");
+    // The file list's shape and order are session preferences a generated `t`
+    // or `o` will have moved, and both change what `j` walks in that pane: a
+    // sorted list puts a different file under the cursor, and a tree puts rows
+    // there that are not files at all. Reset from the Files tab, which is the
+    // one place either key does anything.
+    if app.tree_view() {
+        app.on_key(KeyCode::Char('t')).expect("back to the list");
+    }
+    for _ in 0..3 {
+        if app.sort() == Sort::Natural {
+            break;
+        }
+        app.on_key(KeyCode::Char('o')).expect("back to path order");
+    }
     app.on_key(KeyCode::Right).expect("back onto the diff");
     for _ in 0..=app.files().len() {
         app.on_key(KeyCode::Char('[')).expect("first file");
@@ -607,6 +622,9 @@ fn rewind(app: &mut App) {
     assert_eq!(app.buffer(), "");
     assert_eq!(app.sidebar_tab(), SidebarTab::Files);
     assert_eq!(app.browser_index(), 0);
+    assert!(!app.tree_view());
+    assert_eq!(app.sort(), Sort::Natural);
+    assert_eq!(app.sidebar_row(), 0);
     // The `Esc` above is also what puts the `?` popup away — a generated `?`
     // would otherwise leave every key of the next case inert.
     assert!(!app.help_open());
@@ -950,6 +968,11 @@ fn any_body() -> impl Strategy<Value = String> {
 // rest of the keymap. What each of them actually moved is asserted in the body.
 #[case::narrower_sidebar(KeyCode::Char('<'), Action::Continue, Mode::Browse, Focus::Diff, (0, 0), None)]
 #[case::wider_sidebar(KeyCode::Char('>'), Action::Continue, Mode::Browse, Focus::Diff, (0, 0), None)]
+// `t` and `o` reshape and reorder the file list. Neither moves the selection —
+// the file being read is the reviewer's choice, not the list's — and neither
+// says anything in the bar. What each of them moved is asserted in the body.
+#[case::list_or_tree(KeyCode::Char('t'), Action::Continue, Mode::Browse, Focus::Diff, (0, 0), None)]
+#[case::order_the_files(KeyCode::Char('o'), Action::Continue, Mode::Browse, Focus::Diff, (0, 0), None)]
 #[case::open_the_help(KeyCode::Char('?'), Action::Continue, Mode::Browse, Focus::Diff, (0, 0), None)]
 // Not in the table, and therefore inert.
 #[case::unbound_letter(KeyCode::Char('x'), Action::Continue, Mode::Browse, Focus::Diff, (0, 0), None)]
@@ -1031,6 +1054,17 @@ fn browse_keybindings(
         KeyCode::Char('<') => assert!(ratio < Split::DEFAULT, "< did not narrow the sidebar"),
         _ => assert_eq!(ratio, Split::DEFAULT, "{key:?} moved the divider"),
     }
+    // ...and exactly one reshapes the file list, and exactly one reorders it.
+    assert_eq!(
+        app.tree_view(),
+        key == KeyCode::Char('t'),
+        "{key:?} left the file list in the wrong shape"
+    );
+    assert_eq!(
+        app.sort() != Sort::Natural,
+        key == KeyCode::Char('o'),
+        "{key:?} left the file list in the wrong order"
+    );
 }
 
 /// README draws the reviewer as an ASCII mock-up, status bar and all, and that
@@ -3263,6 +3297,20 @@ fn diff_area(width: u16, height: u16, mode: Mode) -> Rect {
     .diff
 }
 
+/// Whether a comment box is drawn inside the diff pane at `width` x `height`.
+///
+/// Inside the pane rather than across the frame: the panes are drawn with
+/// rounded corners, so `╭` is a frame at the edge of the screen and a box only
+/// within one.
+fn box_drawn(app: &App, width: u16, height: u16) -> bool {
+    let terminal = render(app, width, height);
+    let buffer = terminal.backend().buffer();
+    let area = diff_area(width, height, app.mode());
+    ((area.y + 1)..area.bottom().saturating_sub(1)).any(|y| {
+        ((area.x + 1)..area.right().saturating_sub(1)).any(|x| buffer[(x, y)].symbol() == "╭")
+    })
+}
+
 fn render(app: &App, width: u16, height: u16) -> Terminal<TestBackend> {
     let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("test terminal");
     terminal
@@ -3551,7 +3599,10 @@ fn drawing_never_panics_with_comment_boxes_on_screen() {
                 Rect::new(0, 0, width, height)
             );
         }
-        if render(app, 120, 44).backend().to_string().contains('╭') {
+        // Asked *inside* the diff pane. The panes' own corners are rounded
+        // now, so a `╭` anywhere in the frame is a pane frame and this
+        // coverage probe would report every case as having drawn a box.
+        if box_drawn(app, 120, 44) {
             seen.hit(1);
         }
         Ok(())

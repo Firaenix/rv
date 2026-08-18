@@ -73,11 +73,16 @@ use rv_core::store::Comment;
 use rv_core::store::CommentState;
 use rv_core::store::Session;
 
+use crate::gradient::Stat;
 use crate::layout::Split;
 use crate::rows;
 use crate::rows::Plan;
 use crate::session;
 use crate::session::Review;
+use crate::statusbar;
+use crate::tree;
+use crate::tree::NodeKind;
+use crate::tree::Sort;
 use crate::ui;
 
 /// How many hex characters of the digest make up a comment id.
@@ -133,6 +138,16 @@ const DELETE_NEEDS_A_COMMENT: &str =
 /// showing a line, and answering "no comments on this line" would send the
 /// reviewer looking at the diff for the reason.
 const NO_COMMENTS_IN_REVIEW: &str = "no comments in this review yet";
+
+/// What `t` and `o` say from the sidebar's **Comments** tab.
+///
+/// Both are preferences about the *file list* — its shape and its order — and
+/// the comment browser is a different list in the same column. A key that
+/// silently rearranged a list nobody is looking at would be a key whose effect
+/// the reviewer discovers two keystrokes later, so it refuses and names the tab
+/// that would show it.
+const VIEW_KEYS_ARE_FOR_THE_FILE_LIST: &str =
+    "the shape and the order are the file list's: tab for it";
 
 /// What `Enter`, `d` and `s` say when the selected line carries no comments.
 ///
@@ -395,6 +410,20 @@ pub const BINDINGS: &[Binding] = &[
         command: Command::Wider,
     },
     Binding {
+        keys: "t",
+        group: Group::View,
+        what: "list / tree",
+        codes: &[KeyCode::Char('t')],
+        command: Command::ToggleTree,
+    },
+    Binding {
+        keys: "o",
+        group: Group::View,
+        what: "order the files",
+        codes: &[KeyCode::Char('o')],
+        command: Command::CycleSort,
+    },
+    Binding {
         keys: "?",
         group: Group::View,
         what: "this keymap",
@@ -431,6 +460,8 @@ enum Command {
     Fold,
     Narrower,
     Wider,
+    ToggleTree,
+    CycleSort,
     Help,
     Quit,
 }
@@ -506,6 +537,49 @@ pub struct App {
     /// reviewer's way. Keyed by id rather than by position so that folding
     /// survives a delete, a save, or a walk to another file and back.
     collapsed: HashSet<String>,
+    /// The directory rows of the file list the reviewer has folded away, by the
+    /// key [`crate::tree::NodeKind::Dir`] carries.
+    ///
+    /// A **session-only view preference**, like `collapsed` beside it, and kept
+    /// apart from it because the two are folds of different things under one
+    /// key: `s` folds the comment box under the cursor in the diff, and the
+    /// directory under the cursor in the file list. One set holding both would
+    /// let a comment id and a path collide.
+    collapsed_dirs: HashSet<String>,
+    /// Whether the file list is drawn as a directory tree rather than as a flat
+    /// list of whole paths. Session-only, like every other preference here.
+    tree: bool,
+    /// The order the file list's rows are in. Session-only.
+    sort: Sort,
+    /// Which **row of the file list** the cursor is on.
+    ///
+    /// A row rather than a file, because a tree has rows that are not files: a
+    /// directory row is what `s` folds, and a cursor that could only address
+    /// files could never be pointed at one. `file_index` stays the *selection*
+    /// — the file the diff pane is showing — and the two are kept in step at
+    /// the two places either of them moves: walking the list selects whatever
+    /// file the new row holds ([`App::move_sidebar`]), and selecting a file puts
+    /// the cursor back on its row ([`App::resettle_sidebar`]). With the flat
+    /// list in its natural order the two numbers are equal, which is the case
+    /// every earlier wave of this reviewer had.
+    sidebar_row: usize,
+    /// How many lines each file adds and removes, computed **once** when the
+    /// review is opened and never again — parallel to `review.files`.
+    ///
+    /// The sidebar tints and counts every row from these, so they have to exist
+    /// before the first frame; recomputing them lazily would mean the colours
+    /// moved as the reviewer browsed, which is the one thing a change bar must
+    /// not do. See [`App::measure`] for why they come from the in-process
+    /// `similar` diff rather than from difftastic.
+    stats: Vec<Stat>,
+    /// Whether the status bar draws its separators in ASCII, read from
+    /// `RV_ASCII` **once** at startup.
+    ///
+    /// Here rather than in [`crate::ui`] because the renderer runs on every
+    /// keystroke and the environment cannot change under a running process: a
+    /// per-frame `var_os` is a syscall per keypress to answer a question whose
+    /// answer was fixed before the first frame.
+    ascii: bool,
     /// How the width is divided between the two panes.
     ///
     /// A **session-only view preference**, exactly like `collapsed`: it never
@@ -609,6 +683,11 @@ impl App {
             .filter(|comment| comment.state != CommentState::Open)
             .map(|comment| comment.id.clone())
             .collect();
+        // Before the first diff is computed and before anything is drawn: the
+        // sidebar's tint and counts are facts about the whole review, and a
+        // colour that filled in as the reviewer walked would be a change bar
+        // that means something different every frame.
+        let stats = Self::measure(&review);
         let mut app = Self {
             review,
             diffs,
@@ -620,6 +699,12 @@ impl App {
             browser_index: 0,
             comment_index: 0,
             collapsed,
+            collapsed_dirs: HashSet::new(),
+            tree: false,
+            sort: Sort::default(),
+            sidebar_row: 0,
+            stats,
+            ascii: statusbar::ascii_from_env(),
             split: Split::default(),
             help_open: false,
             help_scroll: 0,
@@ -632,6 +717,56 @@ impl App {
         };
         app.load_selected()?;
         Ok(app)
+    }
+
+    /// How many lines every file in the review adds and removes, in sidebar
+    /// order.
+    ///
+    /// Through [`diff::compute_with`] with difftastic **off**, always, whatever
+    /// the rest of the review is diffed with. difftastic is a subprocess per
+    /// file, and this runs over *every* file before the first frame: on a review
+    /// of a hundred files that is a hundred process spawns between the reviewer
+    /// pressing enter and seeing anything, which is seconds. The `similar` path
+    /// is in-process and its line counts are the same question asked of the same
+    /// two blobs.
+    ///
+    /// A file whose blobs cannot be read measures zero rather than failing the
+    /// whole review. The alternative is a review of five hundred files refusing
+    /// to open because one of them is unreadable — and it is not silence:
+    /// [`App::load_selected`] reads the same blobs and reports the failure with
+    /// its path the moment the reviewer opens that file.
+    fn measure(review: &Review) -> Vec<Stat> {
+        review
+            .files
+            .iter()
+            .map(|file| {
+                let base = file.source_path.as_deref().unwrap_or(&file.path);
+                let old = review
+                    .repo
+                    .read_blob(&review.session.base_commit, base)
+                    .ok()
+                    .flatten();
+                let new = review
+                    .repo
+                    .read_blob(&review.session.head_commit, &file.path)
+                    .ok()
+                    .flatten();
+                let diff = diff::compute_with(old.as_deref(), new.as_deref(), &file.path, false);
+                diff.lines
+                    .iter()
+                    .fold(Stat::default(), |stat, line| match line.kind {
+                        LineKind::Added => Stat {
+                            added: stat.added.saturating_add(1),
+                            ..stat
+                        },
+                        LineKind::Removed => Stat {
+                            removed: stat.removed.saturating_add(1),
+                            ..stat
+                        },
+                        LineKind::Context => stat,
+                    })
+            })
+            .collect()
     }
 
     /// Runs the reviewer on the terminal until the user quits.
@@ -682,6 +817,62 @@ impl App {
     /// Which file the sidebar has selected.
     pub fn file_index(&self) -> usize {
         self.file_index
+    }
+
+    /// How many lines file `index` adds and removes, or nothing at all for an
+    /// index the review has no file at.
+    ///
+    /// Measured once when the review was opened — see [`App::measure`]. The
+    /// sidebar tints and counts every row from this and the status bar names
+    /// the selected file's, so there is one answer rather than one per
+    /// renderer.
+    pub fn stat(&self, index: usize) -> Stat {
+        self.stats.get(index).copied().unwrap_or_default()
+    }
+
+    /// Whether the file list is drawn as a directory tree. Session-only.
+    pub fn tree_view(&self) -> bool {
+        self.tree
+    }
+
+    /// The order the file list's rows are in. Session-only.
+    pub fn sort(&self) -> Sort {
+        self.sort
+    }
+
+    /// Which row of the file list the cursor is on — see the field.
+    pub fn sidebar_row(&self) -> usize {
+        self.sidebar_row
+    }
+
+    /// Whether the status bar draws in ASCII, decided once at startup.
+    pub fn ascii(&self) -> bool {
+        self.ascii
+    }
+
+    /// The file list's rows, as the sidebar draws them and as the cursor walks
+    /// them.
+    ///
+    /// Built fresh from [`crate::tree`] rather than cached, for the reason
+    /// [`App::plan`] is: it is a pure function of the file list, the folds, the
+    /// shape and the order, and a cache would be a fifth thing to keep in step
+    /// with the four. The one place the rows are made, so what the keyboard
+    /// walks and what the pane shows are the same list rather than two that
+    /// agree by inspection.
+    pub fn sidebar_nodes(&self) -> Vec<tree::Node> {
+        let paths: Vec<&str> = self
+            .review
+            .files
+            .iter()
+            .map(|file| file.path.as_str())
+            .collect();
+        tree::build(
+            &paths,
+            &self.collapsed_dirs,
+            self.tree,
+            self.sort,
+            &|index| self.stat(index),
+        )
     }
 
     /// Which **row** of the selected file's plan the cursor is on.
@@ -937,7 +1128,13 @@ impl App {
             Command::Escape => self.focus == Focus::Stack,
             Command::Comment => self.selected_line().is_some(),
             Command::Delete => self.delete_target().is_some(),
-            Command::Fold => !self.fold_targets().is_empty(),
+            // Two things under one key, so two ways for it to have a target:
+            // the directory under the cursor in the file list, or the comments
+            // under the cursor everywhere else.
+            Command::Fold => self.sidebar_fold_key().is_some() || !self.fold_targets().is_empty(),
+            // Preferences about the file list, and inert while the column is
+            // showing the other one — see [`VIEW_KEYS_ARE_FOR_THE_FILE_LIST`].
+            Command::ToggleTree | Command::CycleSort => self.sidebar_tab == SidebarTab::Files,
         }
     }
 
@@ -945,7 +1142,7 @@ impl App {
     fn can_move_forward(&self) -> bool {
         match self.focus {
             Focus::Sidebar => match self.sidebar_tab {
-                SidebarTab::Files => self.file_index + 1 < self.review.files.len(),
+                SidebarTab::Files => self.sidebar_row + 1 < self.sidebar_nodes().len(),
                 SidebarTab::Comments => self.browser_index + 1 < self.comments.len(),
             },
             Focus::Diff => self.cursor_row() + 1 < self.row_count(),
@@ -957,7 +1154,7 @@ impl App {
     fn can_move_back(&self) -> bool {
         match self.focus {
             Focus::Sidebar => match self.sidebar_tab {
-                SidebarTab::Files => self.file_index > 0,
+                SidebarTab::Files => self.sidebar_row > 0,
                 SidebarTab::Comments => self.browser_index > 0,
             },
             Focus::Diff => self.cursor_row() > 0,
@@ -1102,6 +1299,8 @@ impl App {
             Command::Escape => self.leave_stack(),
             Command::Narrower => self.split = self.split.nudged(-NUDGE),
             Command::Wider => self.split = self.split.nudged(NUDGE),
+            Command::ToggleTree => self.toggle_tree(),
+            Command::CycleSort => self.cycle_sort(),
             Command::Help => {
                 self.help_open = true;
                 // Opened at the top, always: a popup that remembered where it
@@ -1112,6 +1311,68 @@ impl App {
             }
         }
         Ok(Action::Continue)
+    }
+
+    /// `t`: flips the file list between a flat list of whole paths and a
+    /// directory tree.
+    ///
+    /// Says nothing in the status line when it works, for the reason
+    /// [`App::switch_tab`] does not: the pane names its own shape, and the bar
+    /// is not a place for a view key to announce itself.
+    fn toggle_tree(&mut self) {
+        if self.sidebar_tab != SidebarTab::Files {
+            self.status = VIEW_KEYS_ARE_FOR_THE_FILE_LIST.to_owned();
+            return;
+        }
+        self.tree = !self.tree;
+        self.resettle_sidebar();
+    }
+
+    /// `o`: cycles the file list's order. See [`Sort`], whose `next` is what
+    /// "cycles" means, declared beside the orders themselves.
+    fn cycle_sort(&mut self) {
+        if self.sidebar_tab != SidebarTab::Files {
+            self.status = VIEW_KEYS_ARE_FOR_THE_FILE_LIST.to_owned();
+            return;
+        }
+        self.sort = self.sort.next();
+        self.resettle_sidebar();
+    }
+
+    /// Puts the file list's cursor back on the row that holds the selected
+    /// file, after something rebuilt the rows under it — a fold, a shape, an
+    /// order.
+    ///
+    /// The *file* is what survives such a change; a row index is an address in
+    /// a list that has just been rewritten. A selected file with no row of its
+    /// own — it is inside a folded directory — leaves the cursor where it was,
+    /// clamped onto the list.
+    fn resettle_sidebar(&mut self) {
+        let nodes = self.sidebar_nodes();
+        let selected = self.file_index;
+        self.sidebar_row = nodes
+            .iter()
+            .position(|node| matches!(node.kind, NodeKind::File { index } if index == selected))
+            .unwrap_or_else(|| self.sidebar_row.min(nodes.len().saturating_sub(1)));
+    }
+
+    /// Which directory (or change) `s` would fold, as the key it folds under,
+    /// or `None` where the cursor is not on a row that holds anything.
+    ///
+    /// Only from the file list, and only from the sidebar: `s` means *fold the
+    /// thing under the cursor*, and everywhere else the thing under the cursor
+    /// is a comment. [`App::binding_enabled`] asks the same question to decide
+    /// whether to dim the row, so the popup cannot claim `s` is live where it
+    /// would refuse.
+    fn sidebar_fold_key(&self) -> Option<String> {
+        if self.focus != Focus::Sidebar || self.sidebar_tab != SidebarTab::Files {
+            return None;
+        }
+        match &self.sidebar_nodes().get(self.sidebar_row)?.kind {
+            NodeKind::Dir { key, .. } => Some(key.clone()),
+            NodeKind::Commit { change_id, .. } => Some(change_id.clone()),
+            NodeKind::File { .. } => None,
+        }
     }
 
     /// Flips the left column between the files and the comments.
@@ -1305,7 +1566,7 @@ impl App {
     fn move_forward(&mut self) -> Result<()> {
         match self.focus {
             Focus::Sidebar => match self.sidebar_tab {
-                SidebarTab::Files => self.select_file(self.file_index.saturating_add(1))?,
+                SidebarTab::Files => self.move_sidebar(true)?,
                 SidebarTab::Comments => {
                     let last = self.comments.len().saturating_sub(1);
                     self.browser_index = self.browser_index.saturating_add(1).min(last);
@@ -1326,16 +1587,40 @@ impl App {
     /// `k` / `Up` in the focused pane.
     fn move_back(&mut self) -> Result<()> {
         match self.focus {
-            // `select_file(0)` from file 0 is a no-op by its own guard, so `k`
-            // at the top of the list stays put rather than wrapping.
+            // Row 0 is the top of the list, so `k` there stays put rather than
+            // wrapping — the same clamp `j` has at the bottom.
             Focus::Sidebar => match self.sidebar_tab {
-                SidebarTab::Files => self.select_file(self.file_index.saturating_sub(1))?,
+                SidebarTab::Files => self.move_sidebar(false)?,
                 SidebarTab::Comments => {
                     self.browser_index = self.browser_index.saturating_sub(1);
                 }
             },
             Focus::Diff => self.set_cursor_row(self.cursor_row().saturating_sub(1)),
             Focus::Stack => self.comment_index = self.comment_index.saturating_sub(1),
+        }
+        Ok(())
+    }
+
+    /// `j`/`k` inside the file list: one row, clamped at both ends, selecting
+    /// whatever file the new row holds.
+    ///
+    /// A row that holds no file — a directory, a change — moves the cursor and
+    /// leaves the selection alone, so walking past a folder does not throw the
+    /// diff pane at whatever happens to be inside it. The reviewer chose the
+    /// file they are reading; a directory row is a thing to fold, not a file to
+    /// open.
+    fn move_sidebar(&mut self, forward: bool) -> Result<()> {
+        let nodes = self.sidebar_nodes();
+        let Some(last) = nodes.len().checked_sub(1) else {
+            return Ok(());
+        };
+        self.sidebar_row = if forward {
+            self.sidebar_row.saturating_add(1).min(last)
+        } else {
+            self.sidebar_row.saturating_sub(1)
+        };
+        if let NodeKind::File { index } = nodes[self.sidebar_row].kind {
+            self.select_file(index)?;
         }
         Ok(())
     }
@@ -1420,7 +1705,26 @@ impl App {
     /// once. Expanding is then the answer to "they are all folded already".
     ///
     /// Nothing here writes: see [`App::collapsed`].
+    ///
+    /// The **file list** is the fourth case and is answered first, because it
+    /// is the one where the thing under the cursor is not a comment at all: on
+    /// a directory row `s` folds that directory. One verb for *fold the thing
+    /// under the cursor* rather than a second key for the tree, which is the
+    /// whole reason the tree reuses this handler.
     fn toggle_collapse(&mut self) {
+        if let Some(key) = self.sidebar_fold_key() {
+            if !self.collapsed_dirs.remove(&key) {
+                self.collapsed_dirs.insert(key);
+            }
+            // The folded row is still there and still under the cursor — folding
+            // only ever removes rows *below* it — so the cursor is clamped
+            // rather than resettled onto the selected file, which may now be
+            // inside what was just folded away.
+            let rows = self.sidebar_nodes().len();
+            self.sidebar_row = self.sidebar_row.min(rows.saturating_sub(1));
+            return;
+        }
+
         let ids = self.fold_targets();
         if ids.is_empty() {
             // Said about the review from the browser, which is not showing a
@@ -1644,6 +1948,10 @@ impl App {
         self.file_index = index;
         self.load_selected()?;
         self.set_cursor_row(self.cursor_row());
+        // `[` and `]` consult no focus, so a file can be selected from anywhere;
+        // the file list's cursor follows it rather than staying on a row about
+        // some other file.
+        self.resettle_sidebar();
         Ok(())
     }
 
