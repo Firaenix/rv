@@ -128,6 +128,7 @@ fn plain_comment(id: &str, state: CommentState) -> Comment {
         body: "an ordinary comment".to_owned(),
         state,
         reply: None,
+        settled_by: None,
     }
 }
 
@@ -479,6 +480,7 @@ fn build_comments(specs: &[CommentSpec]) -> Vec<Comment> {
             body: spec.body.clone(),
             state: spec.state,
             reply: spec.reply.clone(),
+            settled_by: None,
         })
         .collect()
 }

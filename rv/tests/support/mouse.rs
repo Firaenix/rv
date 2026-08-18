@@ -1,14 +1,13 @@
 //! Synthesising mouse events, and the columns and rows they land on.
 
+use super::areas;
+use super::frame_at;
+use super::inner;
 use crossterm::event::KeyModifiers;
 use crossterm::event::MouseButton;
 use crossterm::event::MouseEvent;
 use crossterm::event::MouseEventKind;
 use rv::app::App;
-use super::areas;
-use super::frame_at;
-use super::inner;
-
 
 /// A left-button press at `(column, row)`, which is what a click sends first
 /// and the only half of one `rv` acts on: a click is a *choice*, and the choice

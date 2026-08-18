@@ -156,6 +156,7 @@ impl App {
             body: body.to_owned(),
             state: CommentState::Open,
             reply: None,
+            settled_by: None,
         }))
     }
 

@@ -1,6 +1,5 @@
 //! Browsing comments in the sidebar.
 
-
 use crossterm::event::KeyCode;
 use rstest::rstest;
 use rv::app::App;

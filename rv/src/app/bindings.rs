@@ -154,6 +154,20 @@ pub const BINDINGS: &[Binding] = &[
         command: Command::Delete,
     },
     Binding {
+        keys: "r",
+        group: Group::Comment,
+        what: "resolve / reopen",
+        codes: &[KeyCode::Char('r')],
+        command: Command::Resolve,
+    },
+    Binding {
+        keys: "a",
+        group: Group::Comment,
+        what: "abandon / reopen",
+        codes: &[KeyCode::Char('a')],
+        command: Command::Abandon,
+    },
+    Binding {
         keys: "s",
         group: Group::Comment,
         what: "fold a comment",
@@ -221,6 +235,8 @@ pub(super) enum Command {
     Escape,
     Comment,
     Delete,
+    Resolve,
+    Abandon,
     Fold,
     Narrower,
     Wider,
@@ -260,6 +276,7 @@ impl App {
             Command::Escape => self.focus == Focus::Stack,
             Command::Comment => self.selected_line().is_some(),
             Command::Delete => self.delete_target().is_some(),
+            Command::Resolve | Command::Abandon => self.settle_target().is_some(),
             // Two things under one key, so two ways for it to have a target.
             Command::Fold => self.sidebar_fold_key().is_some() || !self.fold_targets().is_empty(),
             Command::ToggleTree | Command::CycleSort => self.sidebar_tab == SidebarTab::Files,

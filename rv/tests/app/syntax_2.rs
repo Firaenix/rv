@@ -1,6 +1,5 @@
 //! Syntax colours inside the green and the red.
 
-
 use rv::app::BINDINGS;
 use rv::layout::Split;
 

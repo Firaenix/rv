@@ -1,6 +1,5 @@
 //! The bar is the status bar.
 
-
 use crossterm::event::KeyCode;
 
 use crate::support::*;

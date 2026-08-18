@@ -32,6 +32,7 @@ mod mouse_2;
 mod panes;
 mod popup;
 mod resize;
+mod settle;
 mod stack;
 mod syntax_1;
 mod syntax_2;

@@ -1,6 +1,5 @@
 //! The file list as a counted tree.
 
-
 use crossterm::event::KeyCode;
 use ratatui::style::Modifier;
 use rv::layout::Split;

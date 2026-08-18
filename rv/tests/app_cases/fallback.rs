@@ -1,6 +1,5 @@
 //! The `similar` fallback: what a reviewer without difftastic sees.
 
-use std::cell::RefCell;
 use crossterm::event::KeyCode;
 use proptest::prelude::*;
 use rv::app::Mode;
@@ -9,6 +8,7 @@ use rv_core::anchor;
 use rv_core::diff::DiffSource;
 use rv_core::diff::LineKind;
 use rv_core::model::Side;
+use std::cell::RefCell;
 
 use crate::support::*;
 

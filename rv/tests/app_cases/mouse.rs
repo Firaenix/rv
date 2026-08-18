@@ -1,6 +1,5 @@
 //! The mouse.
 
-use std::cell::RefCell;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyModifiers;
 use crossterm::event::MouseButton;
@@ -9,6 +8,7 @@ use crossterm::event::MouseEventKind;
 use proptest::prelude::*;
 use rv::app::Action;
 use rv::app::Mode;
+use std::cell::RefCell;
 
 use crate::support::*;
 

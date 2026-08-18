@@ -33,6 +33,7 @@ mod mouse;
 mod navigate;
 mod query;
 mod run;
+mod settle;
 mod sidebar;
 mod stack;
 mod status;

@@ -1,6 +1,5 @@
 //! Which pane the keys act on.
 
-
 use crossterm::event::KeyCode;
 use rstest::rstest;
 use rv::app::Focus;

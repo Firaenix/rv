@@ -48,6 +48,7 @@ fn sample_comment(id: &str) -> Comment {
         body: "why does this exist".to_owned(),
         state: CommentState::Open,
         reply: None,
+        settled_by: None,
     }
 }
 

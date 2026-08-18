@@ -1,9 +1,9 @@
 //! Navigation.
 
-use std::cell::RefCell;
 use crossterm::event::KeyCode;
 use proptest::prelude::*;
 use rv::app::Focus;
+use std::cell::RefCell;
 
 use crate::support::*;
 

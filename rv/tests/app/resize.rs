@@ -1,6 +1,5 @@
 //! Resizing the panes.
 
-
 use crossterm::event::KeyCode;
 use rv::layout::Split;
 

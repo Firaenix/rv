@@ -104,6 +104,8 @@ impl App {
             Command::PreviousFile => self.select_file(self.file_index.saturating_sub(1))?,
             Command::Comment => self.begin_comment(),
             Command::Delete => self.begin_delete(),
+            Command::Resolve => self.resolve_comment()?,
+            Command::Abandon => self.abandon_comment()?,
             Command::Fold => self.toggle_collapse(),
             // Focus-free, like `[` and `]`.
             Command::SwitchTab => self.switch_tab(),

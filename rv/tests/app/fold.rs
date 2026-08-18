@@ -1,6 +1,5 @@
 //! Collapsing a box.
 
-
 use crossterm::event::KeyCode;
 use rv::app::SidebarTab;
 

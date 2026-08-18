@@ -27,7 +27,8 @@ pub const BASE_SIDE: &str = "fn a() {\n    let x = 1;\n    let y = 2;\n    let z
 /// The head side of [`Fixture::renamed`]: one line rewritten and one added
 /// *above* it, so the changed line sits at a different number on each side —
 /// 2 on the left, 3 on the right.
-pub const HEAD_SIDE: &str = "// header\nfn a() {\n    let x = 42;\n    let y = 2;\n    let z = 3;\n}\n";
+pub const HEAD_SIDE: &str =
+    "// header\nfn a() {\n    let x = 42;\n    let y = 2;\n    let z = 3;\n}\n";
 
 /// The base side of [`Fixture::rewritten`]: a rewrite that does *not* move, so
 /// only the side can tell the two halves of the line apart. The token at

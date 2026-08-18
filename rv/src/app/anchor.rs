@@ -92,13 +92,7 @@ pub fn anchored_side(kind: LineKind) -> Side {
 /// path), so within one review the location and the body carry the whole of the
 /// seed's discriminating power. It stays in because ids outlive the review that
 /// made them.
-pub(super) fn comment_id(
-    change_id: &str,
-    path: &str,
-    side: Side,
-    line: u32,
-    body: &str,
-) -> String {
+pub(super) fn comment_id(change_id: &str, path: &str, side: Side, line: u32, body: &str) -> String {
     let side = match side {
         Side::Left => "left",
         Side::Right => "right",

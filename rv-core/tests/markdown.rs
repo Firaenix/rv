@@ -64,6 +64,7 @@ fn comment(id: &str, change_id: &str, file: &str, line: u32, state: CommentState
         body: "`unwrap()` panics for node-scoped comments, which have no offset.".to_owned(),
         state,
         reply: None,
+        settled_by: None,
     }
 }
 

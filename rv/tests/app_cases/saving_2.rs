@@ -1,6 +1,5 @@
 //! Saving a comment.
 
-use std::cell::RefCell;
 use crossterm::event::KeyCode;
 use proptest::prelude::*;
 use rv::app::Mode;
@@ -8,6 +7,7 @@ use rv::app::anchored_side;
 use rv_core::anchor;
 use rv_core::diff::LineKind;
 use rv_core::model::Side;
+use std::cell::RefCell;
 
 use crate::support::*;
 

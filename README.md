@@ -175,7 +175,11 @@ everywhere.
 | `Esc` | Leave the comment stack |
 | `c` | Comment on the highlighted line |
 | `d` | Delete a comment, after a `y`/`n` confirmation |
-| `s` | Fold a comment box away, or unfold it |
+| `r` | Resolve a comment — press it again to reopen |
+| `a` | Abandon a comment, dropping it without fixing it — again to reopen |
+| `s` | Fold a comment box away, or a directory in the file list — again to unfold |
+| `t` | Switch the file list between a flat list and a tree |
+| `o` | Cycle the file list's order: by path, by additions, by deletions |
 | `<` | Narrow the sidebar |
 | `>` | Widen it |
 | `?` | The whole keymap, in a popup — `?`, `Esc` or `q` closes it again |

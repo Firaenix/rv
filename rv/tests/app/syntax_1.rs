@@ -1,6 +1,5 @@
 //! Syntax colours inside the green and the red.
 
-
 use crossterm::event::KeyCode;
 use ratatui::style::Color;
 use ratatui::style::Modifier;

@@ -1,11 +1,10 @@
 //! Consts shared by the case modules.
 
-
-
 /// The status line `App::new` starts on. Copied from `app.rs`'s private `HELP`
 /// on purpose: if the help text changes, these cases should be re-read rather
 /// than silently following it.
-pub const HELP: &str = "↓↑ line  [/] file  c comment  enter stack  d delete  s fold  ? help  q quit";
+pub const HELP: &str =
+    "↓↑ line  [/] file  c comment  enter stack  d delete  s fold  ? help  q quit";
 
 /// What `Enter`, `d` and `s` report on a line carrying no comments. Copied from
 /// `app.rs`'s private constant for the same reason [`HELP`] is.

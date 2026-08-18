@@ -1,6 +1,5 @@
 //! Focus colours the border.
 
-
 use crossterm::event::KeyCode;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;

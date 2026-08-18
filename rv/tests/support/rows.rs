@@ -2,12 +2,11 @@
 
 use std::ops::Range;
 
+use super::areas;
 use ratatui::layout::Rect;
 use rv::app::App;
 use rv::layout::Split;
 use rv::ui;
-use super::areas;
-
 
 /// The diff pane's rectangle on a terminal `width` columns wide, sized so the
 /// pane itself is `height` rows tall.

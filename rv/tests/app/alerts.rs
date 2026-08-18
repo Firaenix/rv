@@ -7,8 +7,8 @@ use crossterm::event::KeyCode;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Color;
-use rv::layout::Split;
 use rv::layout::Chrome;
+use rv::layout::Split;
 use rv::layout::layout;
 
 use crate::support::*;

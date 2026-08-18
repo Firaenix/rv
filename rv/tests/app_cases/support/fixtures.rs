@@ -1,9 +1,5 @@
 //! Fixtures shared by the case modules.
 
-use std::fs;
-use std::path::Path;
-use std::process::Command;
-use std::sync::OnceLock;
 use crossterm::event::KeyCode;
 use rstest::fixture;
 use rv::app::App;
@@ -12,6 +8,10 @@ use rv::app::SidebarTab;
 use rv::session;
 use rv_core::store::Comment;
 use rv_core::store::Store;
+use std::fs;
+use std::path::Path;
+use std::process::Command;
+use std::sync::OnceLock;
 use tempfile::TempDir;
 
 use super::*;

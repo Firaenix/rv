@@ -3,7 +3,6 @@
 use crossterm::event::KeyCode;
 use proptest::prelude::*;
 
-
 /// Every key the reviewer might see, weighted so a random walk actually
 /// navigates instead of drowning in inert keys.
 pub fn any_key() -> impl Strategy<Value = KeyCode> {

@@ -838,3 +838,62 @@ is an addition, not a replacement, and it is not required to fix this.
 | Parsing every blob slows rendering | One lazy parse per `(commit, path)`, cached, exactly as blob reads already are; review-sized files |
 | Mouse reporting annoys users who want to select text | Shift-drag documented; no capture of the clipboard; nothing rv does is irreversible by mouse |
 | The keymap grows past what a bar can show | That is why `?` exists, and why it is generated from the dispatch table rather than written by hand |
+
+## 14. Rationale the code no longer restates
+
+The 2026-08-18 shape refactor split `rv/src/app.rs` and `rv/src/ui.rs` into
+modules and cut their doc comments back to constraints the code cannot show.
+The reasoning below was cut from those files and lives here instead, so it can
+be revised once rather than echoed in five places.
+
+### The two colour layers are split by channel, not by hue
+
+§6 fixes the mapping; this is why it is that mapping.
+
+An earlier version of the renderer kept chrome and code apart **by hue**,
+banning green, red and blue from the syntax palette because the chrome spends
+all three in the diff pane. That is the wrong axis, and it cost the mapping its
+semantics: it pushed `Capture::Comment` onto index 7 — the terminal's *white* —
+which is the loudest thing on screen on a dark scheme and near-invisible on a
+light one. A user reported it as a defect.
+
+The colours are split by **channel** instead, which is where they actually
+cannot collide:
+
+| Colour | Chrome owns | Code owns |
+|---|---|---|
+| green | the **background** wash on an added line, and the `+` in the gutter | a string literal, as a **foreground** on code text |
+| red | the **background** wash on a removed line, and the `-` in the gutter | nothing |
+| blue | a comment box's **border glyphs**, drawn on the box's own rows | a function name, as a foreground on code text |
+| index 8 | nothing | a comment, and nothing else |
+
+A wash is a background and a syntax colour is a foreground, so the two never
+contend for the same cell; a box's border is drawn on rows that hold no code at
+all, and the gutter's sigil sits in the seven columns before a line's text
+starts. So `Capture::Function` moved to blue, `Capture::String` to green, and
+`Capture::Comment` to index 8 once `Capture::Punctuation` gave it up. No cell
+carries both meanings.
+
+### `?` is what makes the rest of the keymap reachable
+
+The status bar's default text ends in `? help` because, as shipped, the popup
+could only be found by guessing the key — which is no way to find a manual. The
+bar is the one surface every reviewer sees, so it is where the pointer to the
+manual belongs. `j`/`k` are left to the popup and the README rather than spelled
+out in the bar: the bar is the smallest surface the keymap appears on, and the
+arrows are the half a reviewer can find unaided.
+
+### `h` and `l` are aliases that were missing
+
+`j` and `k` existed and their horizontal halves never did, which left the vim
+set half-present. Adding them removed nothing, and the arrow still leads in both
+the table's `codes` and the popup's spelling.
+
+### Test files are split the same way
+
+`rv/tests/app.rs` and `rv/tests/app_cases.rs` became `rv/tests/app/` and
+`rv/tests/app_cases/` — one binary each, entered through `main.rs`, with one
+module per feature area and the fixtures shared through `rv/tests/support/`.
+Splitting them into separate top-level test files would have meant one binary
+per area, each rebuilding its own fixtures; module files keep the fixture cost
+where it was while still naming the area in every test path.

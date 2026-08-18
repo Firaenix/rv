@@ -1,6 +1,5 @@
 //! Saving a comment.
 
-use std::cell::RefCell;
 use crossterm::event::KeyCode;
 use proptest::prelude::*;
 use rv::app::Mode;
@@ -9,6 +8,7 @@ use rv_core::anchor;
 use rv_core::diff::LineKind;
 use rv_core::model::Side;
 use rv_core::store::CommentState;
+use std::cell::RefCell;
 
 use crate::support::*;
 

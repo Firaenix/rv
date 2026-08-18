@@ -72,6 +72,7 @@ fn comment_with_id_and_body(id: &str, body: &str) -> Comment {
         body: body.to_owned(),
         state: CommentState::Open,
         reply: None,
+        settled_by: None,
     }
 }
 

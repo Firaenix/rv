@@ -1,6 +1,5 @@
 //! Drawing a comment box, and which pane has the focus.
 
-
 use crossterm::event::KeyCode;
 use ratatui::style::Color;
 use ratatui::style::Modifier;

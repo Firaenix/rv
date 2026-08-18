@@ -1,6 +1,5 @@
 //! Never clipping content silently.
 
-
 use crossterm::event::KeyCode;
 use rv::layout::Split;
 

@@ -241,3 +241,44 @@ newer than both.
 - No modal windows anywhere in the TUI.
 - No history of a comment's state changes. The current state and who set it is the
   whole record.
+
+## 10. What a comment id is made of
+
+Moved here from `rv/src/app/anchor.rs` by the 2026-08-18 shape refactor, which
+cut the code's doc comments back to constraints the code cannot show. The rules
+themselves are still enforced there; the history is here.
+
+**Eight hex characters, not four.** The plan and the branch-reviewer spec §10
+both write four. `Store::append_comment` upserts by id, so two *different*
+comments that share a prefix mean the second save silently replaces the first
+in `comments.json` and overwrites its snapshot — under a "comment saved" status
+line. A four-character id is a 65,536-value space, which by the birthday bound
+is a ~2% chance of losing a comment at 50 of them and ~7% at 100: reachable on
+one real review. The guarantee that nothing loses a comment outranks the
+literal width, and eight still reads out of a marker at a glance.
+
+**The side is part of the seed.** A location is a side as well as a path and a
+number. difftastic aligns a rewritten line with its counterpart and gives both
+halves of the pair both numbers, so a rewrite that stays at the same line number
+produces a removed line and an added line at, say, `same.rs:2` on the base and
+head sides. Without the side, one sentence typed on each half — "which of these
+two is right?" — seeds two identical ids and the second save replaces the first.
+Unlike a digest collision, that happens with probability 1. The path alone is
+not enough: the two paths differ only for a rename.
+
+**Adding the side changed every id this function produces, and that was safe.**
+Nothing recomputes an id in order to find a comment: `comments.json` is keyed by
+the id it stored, snapshots are filed under it, and `session::fold_replies`
+matches the id a document's marker carries against the stored one. A review in
+progress therefore keeps working across the change — its comments, snapshots
+and replies all still resolve. The only visible effect is that re-typing a
+comment saved *before* the change appends a second entry beside it rather than
+upserting the first. A duplicate is recoverable; the loss above is not.
+
+**`change_id` is the range's first change, not the change that touched the
+line.** It is the same string for every comment in one review, so within a
+review the location and the body carry the whole of the seed's discriminating
+power. It stays in the seed because ids outlive the review that made them: a
+`.review/` from another range, keyed by these ids, must not collide with this
+one's. Attributing a comment to the change that introduced its line is
+Milestone 2's work and needs per-change diffs.

@@ -1,10 +1,10 @@
 //! Rendering.
 
-use std::cell::RefCell;
 use crossterm::event::KeyCode;
 use proptest::prelude::*;
 use ratatui::layout::Rect;
 use rv::app::Mode;
+use std::cell::RefCell;
 
 use crate::support::*;
 

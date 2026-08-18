@@ -221,6 +221,7 @@ fn fixed_comment(id: &str) -> Comment {
         body: "why".to_owned(),
         state: CommentState::Open,
         reply: None,
+        settled_by: None,
     }
 }
 
@@ -354,6 +355,7 @@ fn comment(id: impl Strategy<Value = String>, text_max: usize) -> impl Strategy<
                 body,
                 state,
                 reply,
+                settled_by: None,
             },
         )
 }
@@ -832,6 +834,7 @@ proptest! {
             body,
             state: CommentState::Open,
             reply,
+            settled_by: None,
         };
         // The context is written to a snapshot path too, but ids — not
         // context — name that file, so hostile context is safe here.
@@ -2099,6 +2102,7 @@ fn comment_state_wire_format(#[case] state: CommentState, #[case] expected: &str
         body: "why".to_owned(),
         state,
         reply: None,
+        settled_by: None,
     };
 
     store.append_comment(&comment).expect("append comment");

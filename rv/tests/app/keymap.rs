@@ -5,6 +5,8 @@ use std::path::Path;
 
 use rstest::rstest;
 
+use rv::app::BINDINGS;
+
 use crate::support::*;
 
 /// The README, read from the workspace rather than from the process's working
@@ -56,6 +58,44 @@ fn the_readme_documents_every_browse_binding() {
              cannot find out that it exists: {documented:?}"
         );
     }
+}
+
+/// The direction the pair above could not see.
+///
+/// [`BROWSE_KEYS`] and the README were held to each other, and both to nothing
+/// else — so a key added to [`BINDINGS`] and to neither of them shipped
+/// documented nowhere and the suite stayed green. That is not a hypothetical:
+/// `r` and `a` were added to the table and the whole suite passed with the page
+/// still describing a reviewer that could not resolve anything.
+///
+/// This closes the loop. [`BINDINGS`] is the dispatcher, so a row of it is a key
+/// that *works*; every one of them has to reach the manual.
+#[test]
+fn every_binding_is_a_key_the_readme_lists() {
+    for binding in BINDINGS {
+        let spelled = readme_spelling(binding.keys);
+        assert!(
+            BROWSE_KEYS.contains(&spelled.as_str()),
+            "`{}` is dispatched but is not in BROWSE_KEYS, so nothing requires \
+             the README to mention it: {BROWSE_KEYS:?}",
+            binding.keys
+        );
+    }
+}
+
+/// A binding's `keys` as the README spells it: every key token in backticks,
+/// the parentheses around an alias left as they are.
+///
+/// `↓ (j)` in the table is `` `↓` (`j`) `` on the page — the same two keys with
+/// the same one leading, which is the spelling the whole keymap is held to.
+fn readme_spelling(keys: &str) -> String {
+    keys.split(' ')
+        .map(|token| match token.strip_prefix('(').and_then(|t| t.strip_suffix(')')) {
+            Some(alias) => format!("(`{alias}`)"),
+            None => format!("`{token}`"),
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// ...and no row for a key that is not one of them: a table that documents a

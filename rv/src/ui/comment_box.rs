@@ -16,6 +16,7 @@ use ratatui::text::Line;
 use ratatui::text::Span;
 use rv_core::store::Comment;
 use rv_core::store::CommentState;
+use rv_core::store::SettledBy;
 
 use super::BOX_PADDING;
 use super::GUTTER;
@@ -74,14 +75,27 @@ pub(super) fn box_bottom(app: &App, comment: &Comment, width: usize) -> Line<'st
 pub(super) fn box_collapsed(app: &App, comment: &Comment, width: usize) -> Line<'static> {
     let style = box_style(app, comment);
     let first = comment.body.lines().next().unwrap_or_default();
-    let text = format!("{}▸ {} — {first}", indent(width), label(comment));
+    let text = format!(
+        "{}▸ {}{} — {first}",
+        indent(width),
+        state_mark(comment.state),
+        label(comment)
+    );
     Line::styled(clip(&text, width), style)
 }
 
-/// A box's title: the id it is filed under and the state it is in, so the box
-/// on screen and the entry in the store name each other.
+/// A box's title: the id it is filed under, the state it is in, and — where it
+/// was settled — who settled it, so the box on screen and the entry in the
+/// store name each other.
+///
+/// The actor is printed rather than implied. An agent may resolve its own
+/// finding, and the one thing a reviewer must be able to see is that it did.
 fn label(comment: &Comment) -> String {
-    format!("{} · {}", comment.id, state_name(comment.state))
+    let state = state_name(comment.state);
+    match comment.settled_by {
+        Some(SettledBy::Agent) => format!("{} · {state} by agent", comment.id),
+        Some(SettledBy::User) | None => format!("{} · {state}", comment.id),
+    }
 }
 
 /// A comment state's name, spelled the way the store serializes it.
@@ -90,21 +104,42 @@ pub(super) fn state_name(state: CommentState) -> &'static str {
         CommentState::Open => "open",
         CommentState::AwaitingVerification => "awaiting-verification",
         CommentState::Resolved => "resolved",
+        CommentState::Abandoned => "abandoned",
         CommentState::Outdated => "outdated",
     }
 }
 
-/// Blue while a comment is open, grey and dim once it is neither.
+/// The mark a settled state carries beside its name: a tick for work that
+/// happened, nothing for work that did not.
 ///
-/// The second is the only place a comment is not blue, and it is not a second
-/// meaning for the colour: a resolved or outdated comment is still a comment,
-/// but not one asking for an answer, and drawing it as loudly as one that is
-/// would bury the review under its own history.
+/// Abandoned is marked by the strikethrough in [`comment_style`] instead —
+/// crossing a remark out is what dropping it unfixed looks like, and a second
+/// glyph would say the same thing twice.
+pub(super) fn state_mark(state: CommentState) -> &'static str {
+    match state {
+        CommentState::Resolved => "✓ ",
+        _ => "",
+    }
+}
+
+/// Blue while a comment is open, grey and dim once it is neither, and struck
+/// through where it was abandoned.
+///
+/// Grey is not a second meaning for blue: a settled or outdated comment is
+/// still a comment, just not one asking for an answer, and drawing it as loudly
+/// as one that is would bury the review under its own history.
+///
+/// The strikethrough separates the two settled states without a second colour.
+/// *Fixed* and *dropped unfixed* are different facts about a review, and a
+/// reader who cannot tell them apart is reading a summary that lies about what
+/// the review concluded.
 pub(super) fn comment_style(comment: &Comment) -> Style {
-    if comment.state == CommentState::Open {
-        Style::default().fg(Color::Blue)
-    } else {
-        Style::default().fg(Color::Gray).add_modifier(Modifier::DIM)
+    match comment.state {
+        CommentState::Open => Style::default().fg(Color::Blue),
+        CommentState::Abandoned => Style::default()
+            .fg(Color::Gray)
+            .add_modifier(Modifier::DIM | Modifier::CROSSED_OUT),
+        _ => Style::default().fg(Color::Gray).add_modifier(Modifier::DIM),
     }
 }
 

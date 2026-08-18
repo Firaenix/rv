@@ -1,13 +1,13 @@
 //! Alerts.
 
-use std::cell::RefCell;
-use std::time::Duration;
-use std::time::Instant;
 use proptest::prelude::*;
 use rv::app::App;
 use rv::session;
 use rv_core::model::ChangeKind;
 use rv_core::model::FileChange;
+use std::cell::RefCell;
+use std::time::Duration;
+use std::time::Instant;
 
 use crate::support::*;
 

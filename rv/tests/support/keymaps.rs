@@ -1,6 +1,5 @@
 //! The keys the browse-mode keymap answers.
 
-
 /// Every key this reviewer binds while browsing, spelled the way README's
 /// **Browsing** table spells the `Key` column of its rows.
 ///
@@ -32,7 +31,11 @@ pub const BROWSE_KEYS: &[&str] = &[
     "`Esc`",
     "`c`",
     "`d`",
+    "`r`",
+    "`a`",
     "`s`",
+    "`t`",
+    "`o`",
     "`<`",
     "`>`",
     "`?`",

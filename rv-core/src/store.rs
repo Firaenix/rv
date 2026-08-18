@@ -99,6 +99,12 @@ pub struct Comment {
     pub body: String,
     pub state: CommentState,
     pub reply: Option<String>,
+    /// Who moved the comment out of `Open`, where anybody has.
+    ///
+    /// Defaulted on read so that a `.review/` written before settling existed
+    /// still loads.
+    #[serde(default)]
+    pub settled_by: Option<SettledBy>,
 }
 
 /// A comment's place in the review lifecycle.
@@ -106,13 +112,32 @@ pub struct Comment {
 /// Serializes in kebab-case: `Open` as `"open"`, `AwaitingVerification` as
 /// `"awaiting-verification"`, and so on, matching the markdown vocabulary the
 /// export task uses.
+///
+/// `Resolved` and `Abandoned` are separate states rather than one "dismissed"
+/// because they record two different facts about a review — *this was fixed*
+/// and *this was dropped without being fixed* — and a count that adds them
+/// together misreports what the review concluded (storage spec §3).
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum CommentState {
     Open,
     AwaitingVerification,
     Resolved,
+    Abandoned,
     Outdated,
+}
+
+/// Who settled a comment.
+///
+/// Stored, and shown, rather than forbidden: an agent may resolve or abandon,
+/// but the file and the screen always say it was the agent. Hiding the
+/// distinction is the actual danger; forbidding the action only pushes it into
+/// prose nobody reads (storage spec §3).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SettledBy {
+    User,
+    Agent,
 }
 
 /// The revset and stack a review session covers.
@@ -261,20 +286,47 @@ impl Store {
         write_atomic(&self.comments_path(), serialized.as_bytes())
     }
 
+    /// Moves the comment with `id` to `state`, recording who did it, and
+    /// returns whether one was there.
+    ///
+    /// Settling touches no snapshot: the anchor is unchanged, so the stored
+    /// context still describes the code the comment was written against. Only
+    /// `comments.json` is rewritten, through the same atomic path every other
+    /// write uses.
+    ///
+    /// An unknown id is not an error, for the same reason it is not one in
+    /// [`Store::remove_comment`]: settling twice must be safe.
+    pub fn settle_comment(
+        &self,
+        id: &str,
+        state: CommentState,
+        by: SettledBy,
+    ) -> Result<bool, Error> {
+        let mut comments = self.comments()?;
+        let Some(comment) = comments.iter_mut().find(|existing| existing.id == id) else {
+            return Ok(false);
+        };
+        comment.state = state;
+        // `Open` is nobody's doing — it is where a comment starts and where
+        // un-settling returns it — so the actor is cleared rather than left
+        // pointing at whoever last settled it.
+        comment.settled_by = (state != CommentState::Open).then_some(by);
+
+        let serialized =
+            serde_json::to_string_pretty(&comments).map_err(Error::SerializeComments)?;
+        write_atomic(&self.comments_path(), serialized.as_bytes())?;
+        Ok(true)
+    }
+
     /// Removes the comment with `id`, returning whether one was there.
     ///
-    /// `comments.json` is rewritten *before* `.review/snapshots/<id>` is
-    /// deleted, which is [`Store::append_comment`]'s ordering read backwards
-    /// and holds the same invariant for the same reason: at every instant
-    /// during the delete, every comment `comments.json` claims exists still
-    /// has its snapshot on disk. A crash between the two steps strands an
-    /// orphaned snapshot, which is inert — nothing looks a snapshot up except
-    /// by an id already found in `comments.json` — rather than leaving a live
-    /// comment whose snapshot has been deleted out from under it.
+    /// `comments.json` is rewritten *before* the snapshot is deleted — the
+    /// reverse of [`Store::append_comment`]'s order, holding the same
+    /// invariant: at every instant, every comment `comments.json` claims
+    /// exists still has its snapshot on disk. A crash between the two strands
+    /// an inert snapshot rather than orphaning a live comment.
     ///
-    /// An unknown id is not an error, so deleting is idempotent: the retry
-    /// after an interrupted delete finds the entry already gone, reports
-    /// `false`, and succeeds.
+    /// An unknown id is not an error, so deleting is idempotent.
     pub fn remove_comment(&self, id: &str) -> Result<bool, Error> {
         let mut comments = self.comments()?;
         let before = comments.len();

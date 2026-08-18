@@ -15,6 +15,10 @@ pub(super) const HELP: &str =
 pub(super) const DELETE_NEEDS_A_COMMENT: &str =
     "the file list selects files, not comments: tab for those, right for the diff";
 
+/// What `r` and `a` say from the sidebar's **Files** tab.
+pub(super) const SETTLE_NEEDS_A_COMMENT: &str =
+    "resolving and abandoning are about comments: tab for those, right for the diff";
+
 /// What `d` and `s` say from the sidebar's **Comments** tab when the review has
 /// no comments at all.
 ///

@@ -1,10 +1,10 @@
 //! Jumping to a comment's code.
 
-use std::cell::RefCell;
 use crossterm::event::KeyCode;
 use proptest::prelude::*;
 use rv::app::Focus;
 use rv::app::Mode;
+use std::cell::RefCell;
 
 use crate::support::*;
 

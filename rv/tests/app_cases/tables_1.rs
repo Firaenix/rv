@@ -1,7 +1,5 @@
 //! The documented keybinding tables.
 
-use std::fs;
-use std::path::Path;
 use crossterm::event::KeyCode;
 use rstest::rstest;
 use rv::app::Action;
@@ -11,6 +9,8 @@ use rv::app::Mode;
 use rv::app::SidebarTab;
 use rv::layout::Split;
 use rv::tree::Sort;
+use std::fs;
+use std::path::Path;
 
 use crate::support::*;
 

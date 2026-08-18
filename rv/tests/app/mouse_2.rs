@@ -1,6 +1,5 @@
 //! The mouse.
 
-
 use crossterm::event::KeyCode;
 use rv::app::Mode;
 

@@ -1,6 +1,5 @@
 //! The binding table and the `?` popup.
 
-
 use crossterm::event::KeyCode;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -9,8 +8,8 @@ use rstest::rstest;
 use rv::app::Action;
 use rv::app::BINDINGS;
 use rv::app::SidebarTab;
-use rv::layout::Split;
 use rv::layout::Chrome;
+use rv::layout::Split;
 use rv::layout::layout;
 
 use crate::support::*;

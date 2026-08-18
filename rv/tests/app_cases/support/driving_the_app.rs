@@ -1,6 +1,5 @@
 //! Driving_the_app shared by the case modules.
 
-use std::cell::RefCell;
 use crossterm::event::KeyCode;
 use proptest::prelude::*;
 use proptest::test_runner::TestCaseResult;
@@ -15,7 +14,7 @@ use rv::tree::Sort;
 use rv_core::diff::DiffLine;
 use rv_core::diff::DiffSource;
 use rv_core::model::Side;
-
+use std::cell::RefCell;
 
 /// Returns the app to the state `App::new` leaves it in, using nothing but
 /// keys the reviewer has.

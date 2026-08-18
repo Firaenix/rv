@@ -9,15 +9,14 @@ use std::time::SystemTime;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
+use ratatui::style::Color;
 use rv::app::App;
 use rv::app::Mode;
 use rv::layout::Chrome;
 use rv::layout::Split;
 use rv::layout::layout;
 use rv::ui;
-use ratatui::style::Color;
 use rv_core::diff::LineKind;
-
 
 /// Every file in the **whole workspace**, as `(path relative to the root,
 /// mtime, bytes)`, sorted: a snapshot of everything on disk an action could

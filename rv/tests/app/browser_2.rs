@@ -1,6 +1,5 @@
 //! Browsing comments in the sidebar.
 
-
 use crossterm::event::KeyCode;
 use ratatui::style::Modifier;
 use rv::app::App;

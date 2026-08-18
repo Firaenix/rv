@@ -153,6 +153,7 @@ fn status(review: &Review, json: bool) -> Result<()> {
                 "open": counts.open,
                 "awaiting_verification": counts.awaiting_verification,
                 "resolved": counts.resolved,
+                "abandoned": counts.abandoned,
                 "outdated": counts.outdated,
             },
         });
@@ -183,9 +184,15 @@ fn status(review: &Review, json: bool) -> Result<()> {
         println!("  {:<8}  {}{binary}", kind_name(file.kind), file.path);
     }
 
+    // Resolved and abandoned are counted apart, never summed: one is work that
+    // happened and the other is work that was decided against.
     println!(
-        "\ncomments  {} open, {} awaiting verification, {} resolved, {} outdated",
-        counts.open, counts.awaiting_verification, counts.resolved, counts.outdated
+        "\ncomments  {} open, {} awaiting verification, {} resolved, {} abandoned, {} outdated",
+        counts.open,
+        counts.awaiting_verification,
+        counts.resolved,
+        counts.abandoned,
+        counts.outdated
     );
     Ok(())
 }
@@ -203,6 +210,7 @@ struct Counts {
     open: usize,
     awaiting_verification: usize,
     resolved: usize,
+    abandoned: usize,
     outdated: usize,
 }
 
@@ -214,6 +222,7 @@ impl Counts {
                 CommentState::Open => &mut counts.open,
                 CommentState::AwaitingVerification => &mut counts.awaiting_verification,
                 CommentState::Resolved => &mut counts.resolved,
+                CommentState::Abandoned => &mut counts.abandoned,
                 CommentState::Outdated => &mut counts.outdated,
             };
             *bucket += 1;
