@@ -89,6 +89,7 @@
 
 use crate::model::Side;
 use crate::store::Comment;
+use crate::model::Anchor;
 use crate::store::CommentState;
 use crate::store::Session;
 
@@ -331,6 +332,42 @@ pub fn parse_replies(document: &str) -> Vec<(String, String)> {
     replies
 }
 
+/// Which lines the excerpt below covers, and which of them the comment is about.
+///
+/// The excerpt is up to eleven lines and its target is **not** reliably the
+/// middle one: [`crate::anchor::snapshot_of`] clamps at the edges, so the
+/// commented line is the sixth row in the middle of a file and the third near the
+/// top. Nothing in the document said which, and a reviewer reading the finished
+/// export reported that as the one thing they could not resolve from the file
+/// alone — which matters most in exactly the case the excerpt exists for, where
+/// the file has moved on and cannot be consulted.
+///
+/// # Why a caption rather than a numbered gutter
+///
+/// Numbering each row inside the fence would answer the same question and cost
+/// two things worth more: the quoted text would stop being verbatim, and it is
+/// stored precisely so a later reader can check it against the revision it came
+/// from; and a fence whose every line carries `238 │ ` is no longer code anyone
+/// can copy or any viewer can highlight. The caption states the mapping and
+/// leaves the snapshot alone.
+///
+/// `None` for an anchor written before `context_start` existed, where the mapping
+/// is genuinely unknown — an unnumbered excerpt is honest, and a guessed number
+/// is worse than none.
+fn excerpt_caption(anchor: &Anchor) -> Option<String> {
+    let start = anchor.context_start;
+    if start == 0 {
+        return None;
+    }
+    let count = u32::try_from(anchor.context.len()).unwrap_or(u32::MAX);
+    let end = start.saturating_add(count.saturating_sub(1));
+    let row = anchor.line.checked_sub(start)?.saturating_add(1);
+    Some(format!(
+        "Lines {start}–{end}; the comment is on line {} — row {row} of {count} below.",
+        anchor.line
+    ))
+}
+
 /// An expanded entry: heading, anchor marker, context fence, comment, reply.
 fn render_expanded(out: &mut String, number: usize, comment: &Comment) {
     out.push_str(&format!(
@@ -380,6 +417,9 @@ fn render_body(out: &mut String, comment: &Comment) {
     ));
 
     if !anchor.context.is_empty() {
+        if let Some(caption) = excerpt_caption(anchor) {
+            out.push_str(&format!("\n{BODY_INDENT}{caption}\n"));
+        }
         // One backtick longer than the longest run in the context (never
         // shorter than three), so quoted code that itself contains a fence
         // cannot close this one early.

@@ -217,6 +217,7 @@ fn fixed_comment(id: &str) -> Comment {
             line: 1,
             content_hash: "deadbeef".to_owned(),
             context: vec!["fn a() {}".to_owned()],
+            context_start: 1,
         },
         body: "why".to_owned(),
         state: CommentState::Open,
@@ -333,6 +334,7 @@ fn anchor(text_max: usize) -> impl Strategy<Value = Anchor> {
             line,
             content_hash,
             context,
+            context_start: 1,
         })
 }
 
@@ -830,6 +832,7 @@ proptest! {
                 line: 7,
                 content_hash: "deadbeef".to_owned(),
                 context,
+                context_start: 1,
             },
             body,
             state: CommentState::Open,
@@ -2098,6 +2101,7 @@ fn comment_state_wire_format(#[case] state: CommentState, #[case] expected: &str
             line: 1,
             content_hash: "deadbeef".to_owned(),
             context: vec!["fn a() {}".to_owned()],
+            context_start: 1,
         },
         body: "why".to_owned(),
         state,

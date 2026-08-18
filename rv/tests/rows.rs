@@ -68,6 +68,7 @@ fn comment_with_id_and_body(id: &str, body: &str) -> Comment {
             line: 1,
             content_hash: "deadbeef".to_owned(),
             context: Vec::new(),
+            context_start: 1,
         },
         body: body.to_owned(),
         state: CommentState::Open,

@@ -87,4 +87,19 @@ pub struct Anchor {
     pub line: u32,
     pub content_hash: String,
     pub context: Vec<String>,
+    /// Which line of the file `context[0]` is, 1-based.
+    ///
+    /// Without it the excerpt in `REVIEW-FEEDBACK.md` cannot say which of its
+    /// (up to) eleven lines the comment is about: the target is the sixth line in
+    /// the middle of a file but the third near the top, because
+    /// [`crate::anchor::snapshot_of`] clamps at the edges. A reviewer reading the
+    /// finished document reported that as the one thing they could not resolve
+    /// from the file alone — and the excerpt exists precisely for the case where
+    /// the file has moved on and cannot be consulted.
+    ///
+    /// Defaulted on read, so a `.review/` written before it existed still loads;
+    /// `0` means "unknown", and the export falls back to an unnumbered fence
+    /// rather than numbering from a guess.
+    #[serde(default)]
+    pub context_start: u32,
 }

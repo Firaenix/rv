@@ -36,6 +36,24 @@ pub fn content_hash(line: &str) -> String {
 /// Purely descriptive: [`resolve`] does not consult this, so a stale
 /// snapshot never changes where a comment re-anchors, only what a reviewer
 /// sees while it dangles.
+/// Which line of `text` [`snapshot_of`]'s first entry is, 1-based, or `0` where
+/// the snapshot is empty.
+///
+/// The same clamp `snapshot_of` applies, stated once: near the top of a file the
+/// window cannot open five lines above the target, so the target is not in the
+/// middle and its position has to be recorded rather than assumed.
+#[must_use]
+pub fn snapshot_start(text: &str, line: u32) -> u32 {
+    let lines = text.lines().count();
+    let Some(index) = line.checked_sub(1).map(|zero_based| zero_based as usize) else {
+        return 0;
+    };
+    if index >= lines {
+        return 0;
+    }
+    u32::try_from(index.saturating_sub(5)).unwrap_or(0).saturating_add(1)
+}
+
 pub fn snapshot_of(text: &str, line: u32) -> Vec<String> {
     let lines: Vec<&str> = text.lines().collect();
     let Some(index) = line.checked_sub(1).map(|zero_based| zero_based as usize) else {
@@ -86,6 +104,7 @@ pub fn create(file: &str, side: Side, line: u32, text: &str) -> Anchor {
         line,
         content_hash,
         context: snapshot_of(text, line),
+        context_start: snapshot_start(text, line),
     }
 }
 

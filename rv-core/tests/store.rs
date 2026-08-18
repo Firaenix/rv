@@ -36,6 +36,7 @@ fn sample_anchor() -> Anchor {
             "    let x = 1;".to_owned(),
             "}".to_owned(),
         ],
+        context_start: 1,
     }
 }
 
