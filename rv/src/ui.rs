@@ -52,6 +52,22 @@ const COMMENT_ROWS: u16 = 3;
 /// Rows a bordered pane spends on its own borders.
 const BORDER_ROWS: u16 = 2;
 
+/// What the diff pane says about a diff [`rv_core::diff`] suppressed and gave
+/// no lines: difftastic's `unchanged` status, which emits no chunks, so there
+/// is nothing to put the sentence above.
+const SUPPRESSED_EMPTY: &str = "no semantic change";
+
+/// The same, as a header over a suppressed diff that *does* have lines — the
+/// `similar` fallback's terminator-only change, whose difference is real but
+/// lives where no line's `text` can show it.
+///
+/// A note rather than a replacement, because the reviewer can put the highlight
+/// on those lines and comment on them: a pane that swallowed them would let
+/// `j`/`k` walk through rows it never drew and let a comment land on one of
+/// them. The wording starts with [`SUPPRESSED_EMPTY`] so both branches read the
+/// same way.
+const SUPPRESSED_NOTE: &str = "no semantic change — the difference is not visible below";
+
 /// Paints the whole reviewer.
 pub fn draw(frame: &mut Frame, app: &App) {
     let bar_rows = match app.mode() {
@@ -130,40 +146,66 @@ fn title(diff: &FileDiff) -> String {
     }
 }
 
-/// The diff pane's contents: the visible window of lines, or the one sentence
-/// that explains why there are none.
+/// The diff pane's contents: the visible window of lines, under a note where
+/// the diff is suppressed, or the one sentence that explains why there are no
+/// lines at all.
+///
+/// `suppressed` does not imply "no lines". It used to — it was set only from
+/// difftastic's `unchanged` status, which emits no chunks — and this function
+/// short-circuited on the flag accordingly. The `similar` fallback now also
+/// sets it for a change that lives entirely in the line terminators, and
+/// reports that change's lines as `Context`; short-circuiting on the flag there
+/// showed a sentence in place of content [`App`] was still letting the reviewer
+/// navigate through and comment on. The note goes *above* the lines instead, so
+/// that what can be reached is what is drawn.
+///
+/// The note takes a row from the window, and only where there is one to take:
+/// below two rows the lines win, since a pane that spent its only row on the
+/// note would hide the highlight — which is the failure this branch exists to
+/// avoid.
 fn body<'a>(app: &App, diff: &'a FileDiff, height: usize) -> Text<'a> {
-    if diff.suppressed {
-        return Text::from("no semantic change");
-    }
     if diff.source == DiffSource::Binary {
         return Text::from("binary file, not shown by line");
     }
     if diff.lines.is_empty() {
-        return Text::from("no lines to show");
+        return Text::from(if diff.suppressed {
+            SUPPRESSED_EMPTY
+        } else {
+            "no lines to show"
+        });
     }
 
+    let note = diff.suppressed && height >= 2;
+    let height = height - usize::from(note);
     let window = window(app.line_index(), diff.lines.len(), height);
-    let lines: Vec<Line> = diff.lines[window.clone()]
-        .iter()
-        .zip(window)
-        .map(|(line, index)| {
-            let (sigil, color) = match line.kind {
-                LineKind::Added => ('+', Color::Green),
-                LineKind::Removed => ('-', Color::Red),
-                LineKind::Context => (' ', Color::Gray),
-            };
-            let number = match line_number(line) {
-                Some(number) => format!("{number:>5}"),
-                None => " ".repeat(5),
-            };
-            let mut style = Style::default().fg(color);
-            if index == app.line_index() {
-                style = style.add_modifier(Modifier::REVERSED);
-            }
-            Line::styled(format!("{number} {sigil}{}", line.text), style)
-        })
-        .collect();
+    let mut lines: Vec<Line> = Vec::with_capacity(window.len() + usize::from(note));
+    if note {
+        lines.push(Line::styled(
+            SUPPRESSED_NOTE,
+            Style::default().fg(Color::Yellow),
+        ));
+    }
+    lines.extend(
+        diff.lines[window.clone()]
+            .iter()
+            .zip(window)
+            .map(|(line, index)| {
+                let (sigil, color) = match line.kind {
+                    LineKind::Added => ('+', Color::Green),
+                    LineKind::Removed => ('-', Color::Red),
+                    LineKind::Context => (' ', Color::Gray),
+                };
+                let number = match line_number(line) {
+                    Some(number) => format!("{number:>5}"),
+                    None => " ".repeat(5),
+                };
+                let mut style = Style::default().fg(color);
+                if index == app.line_index() {
+                    style = style.add_modifier(Modifier::REVERSED);
+                }
+                Line::styled(format!("{number} {sigil}{}", line.text), style)
+            }),
+    );
     Text::from(lines)
 }
 

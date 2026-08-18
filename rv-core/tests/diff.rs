@@ -141,6 +141,89 @@ fn difftastic_chunks_reported_out_of_order_are_shown_in_file_order() {
     );
 }
 
+/// The same ordering requirement when difftastic emits *no aligned pair at
+/// all*, which is the shape
+/// `difftastic_chunks_reported_out_of_order_are_shown_in_file_order` cannot
+/// reach: every hunk here is a pure insertion or a pure deletion, so there is
+/// no both-sides entry for a one-sided one to be positioned against.
+///
+/// For these two files difft 0.70 reports four chunks —
+/// `rhs 1`, `lhs 3`, `rhs 12`, `lhs 15` (0-based) — i.e. base lines 4 and 16
+/// deleted and head lines 2 and 13 inserted. Placing each entry by its own
+/// side's number alone sorted every removal above every insertion and rendered
+/// `-4, -16, +2, +13`: the reviewer saw the file's deletions as one block and
+/// its insertions as another, instead of in file order.
+///
+/// Needs `difft` on `PATH`, like `changed_line`.
+#[test]
+fn one_sided_difftastic_hunks_interleave_with_each_other() {
+    let old = b"a\nb\nc\nd\ne\nf\ng\nh\ni\nj\nk\nl\nm\nn\no\np\nq\nr\n";
+    let new = b"a\nZ\nb\nc\ne\nf\ng\nh\ni\nj\nk\nl\nY\nm\nn\no\nq\nr\n";
+
+    let diff = compute_with(Some(old), Some(new), "notes.txt", true);
+
+    assert!(
+        matches!(diff.source, DiffSource::Difftastic { .. }),
+        "{diff:#?}"
+    );
+    assert_eq!(
+        render(&diff),
+        vec![
+            "+./2 Z".to_owned(),
+            "-4/. d".to_owned(),
+            "+./13 Y".to_owned(),
+            "-16/. p".to_owned(),
+        ],
+        "{diff:#?}"
+    );
+}
+
+/// The smallest version of the same shape, and the one that shows the order
+/// is not merely "insertions first": here the deletion (base line 3) comes
+/// before the insertion (head line 5), because two lines the files share
+/// (`a`, `b`) precede the deletion and four (`a`, `b`, `d`, `e`) precede the
+/// insertion. difft 0.70 reports these as two separate one-entry chunks.
+///
+/// Needs `difft` on `PATH`, like `changed_line`.
+#[test]
+fn a_pure_deletion_and_a_pure_insertion_interleave_by_shared_position() {
+    let old = b"a\nb\nc\nd\ne\nf\n";
+    let new = b"a\nb\nd\ne\nQ\nf\n";
+
+    let diff = compute_with(Some(old), Some(new), "notes.txt", true);
+
+    assert!(
+        matches!(diff.source, DiffSource::Difftastic { .. }),
+        "{diff:#?}"
+    );
+    assert_eq!(
+        render(&diff),
+        vec!["-3/. c".to_owned(), "+./5 Q".to_owned()],
+        "{diff:#?}"
+    );
+}
+
+/// `<sigil><left>/<right> <text>` per line, `.` for an absent number — the
+/// same compact rendering `tests/prop_diff.rs` uses.
+fn render(diff: &rv_core::diff::FileDiff) -> Vec<String> {
+    diff.lines
+        .iter()
+        .map(|line| {
+            let sigil = match line.kind {
+                LineKind::Added => '+',
+                LineKind::Removed => '-',
+                LineKind::Context => ' ',
+            };
+            format!(
+                "{sigil}{}/{} {}",
+                line.left.map_or_else(|| ".".to_owned(), |n| n.to_string()),
+                line.right.map_or_else(|| ".".to_owned(), |n| n.to_string()),
+                line.text
+            )
+        })
+        .collect()
+}
+
 /// `compute_with(..., false)` never spawns `difft` or reads the environment,
 /// so this test is hermetic regardless of what is installed.
 #[test]

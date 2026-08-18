@@ -7,20 +7,34 @@
 //!
 //! * an in-memory upsert reduction recomputed with a different data structure
 //!   (`HashMap` + insertion-order `Vec`) as the oracle for `comments()`,
+//! * for the interleaving properties, an oracle derived from the operation
+//!   *sequence* rather than read back off disk — a read-back oracle bakes any
+//!   damage an operation did mid-sequence into both sides of the comparison,
+//!   so it can only ever catch a cache,
 //! * `split('\n')` as the inverse of the `join("\n")` the snapshot file uses,
 //! * whole-directory byte snapshots as a conservation oracle ("nothing lost,
 //!   nothing invented") for operations that must not touch other files,
 //! * permutation invariance, idempotence and last-write-wins as algebraic laws,
-//! * and, for the module's headline crash-safety claim, a *forced* failure of
-//!   the snapshot write: `comments.json` is the authority on which comments
-//!   exist, so a comment whose snapshot could not be written must not appear
-//!   in it.
+//! * and, for the module's headline crash-safety claims, two *forced* failures
+//!   rather than a wait for a real crash: a snapshot write made to fail
+//!   (`comments.json` is the authority on which comments exist, so a comment
+//!   whose snapshot could not be written must not appear in it) and a file
+//!   handle opened before a write and read after it (a rename leaves the old
+//!   inode whole, so the holder sees the complete previous document — a plain
+//!   in-place rewrite does not).
+//!
+//! Two shapes recur because both are places identity gets matched by something
+//! looser than it should be: comment ids of *varying length that are prefixes
+//! of one another*, so `==` is distinguishable from `starts_with`, and
+//! `change_id`s drawn from a pool small enough that collisions are the norm
+//! rather than a `hex(12)` lottery.
 //!
 //! Like `tests/store.rs`, these need no jj repository — only a tempdir shaped
 //! like a repo root, so `.git/info/exclude` lands where `ensure_excluded`
 //! looks for it.
 
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
@@ -93,6 +107,20 @@ fn dir_snapshot(dir: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
     out
 }
 
+/// Every regular file under `dir`, as a set of paths relative to it. The
+/// companion to [`dir_snapshot`]: where that one asks "did any byte change?",
+/// this one asks "does any file exist that nothing was entitled to create?".
+fn relative_files(dir: &Path) -> BTreeSet<PathBuf> {
+    dir_snapshot(dir)
+        .into_keys()
+        .map(|path| {
+            path.strip_prefix(dir)
+                .expect("dir_snapshot only yields paths under dir")
+                .to_owned()
+        })
+        .collect()
+}
+
 /// Any of `write_atomic`'s temp files still lying around under `dir`,
 /// recursively. On the happy path the rename consumes every one of them.
 fn stray_temp_files(dir: &Path) -> Vec<PathBuf> {
@@ -134,6 +162,26 @@ fn upsert_reduce(sequence: &[Comment]) -> Vec<Comment> {
         .into_iter()
         .map(|id| latest.remove(&id).expect("id was recorded"))
         .collect()
+}
+
+/// A concrete, boring comment, for the table-driven cases where the content is
+/// beside the point and only the file's fate matters.
+fn fixed_comment(id: &str) -> Comment {
+    Comment {
+        id: id.to_owned(),
+        change_id: "nowwnlnmvkwo".to_owned(),
+        commit_id: "abc123def456".to_owned(),
+        anchor: Anchor {
+            file: "src/lib.rs".to_owned(),
+            side: Side::Right,
+            line: 1,
+            content_hash: "deadbeef".to_owned(),
+            context: vec!["fn a() {}".to_owned()],
+        },
+        body: "why".to_owned(),
+        state: CommentState::Open,
+        reply: None,
+    }
 }
 
 fn ids_of(comments: &[Comment]) -> Vec<String> {
@@ -181,8 +229,32 @@ fn hostile_line(max: usize) -> impl Strategy<Value = String> {
 /// `../`, `/`, or `""` violates a precondition rather than exposing a broken
 /// promise, so every strategy here stays path-safe and the id space is kept
 /// small on purpose, to make upsert collisions common.
+///
+/// The ids also vary in *length* and are deliberately laid out so that some are
+/// prefixes of others (`id` of everything, `id0` of `id00`, `id1` of `id10`).
+/// An id space of equal-length ids cannot tell `existing.id == comment.id`
+/// apart from `existing.id.starts_with(&comment.id)` (or `contains`), which is
+/// the same class of defect as keying the upsert on the wrong field: identity
+/// matched by something looser than equality. The prefix pairs make the two
+/// disagree, so the upsert properties can see the difference.
+const ID_POOL: &[&str] = &["id", "id0", "id00", "id1", "id10", "id2"];
+
+/// The `index`-th distinct id: [`ID_POOL`] while it lasts, then `id6`, `id7`, …
+/// which stay distinct from every pool entry. Used where a strategy needs *n*
+/// pairwise-different ids rather than collisions.
+fn distinct_id(index: usize) -> String {
+    ID_POOL
+        .get(index)
+        .map(|id| (*id).to_owned())
+        .unwrap_or_else(|| format!("id{}", index + ID_POOL.len()))
+}
+
 fn id_pool(count: usize) -> Vec<String> {
-    (0..count).map(|i| format!("id{i}")).collect()
+    ID_POOL
+        .iter()
+        .take(count)
+        .map(|id| (*id).to_owned())
+        .collect()
 }
 
 fn hex(max: usize) -> impl Strategy<Value = String> {
@@ -247,19 +319,49 @@ fn comment(id: impl Strategy<Value = String>, text_max: usize) -> impl Strategy<
 }
 
 /// A sequence of comments drawn from a small id pool, so runs contain both
-/// fresh inserts and same-id updates.
+/// fresh inserts and same-id updates — and, because [`ID_POOL`] is
+/// prefix-structured, both same-id updates and *near*-id non-updates.
 fn comment_sequence(len: std::ops::Range<usize>) -> impl Strategy<Value = Vec<Comment>> {
-    prop::collection::vec(comment(prop::sample::select(id_pool(4)), 8), len)
+    prop::collection::vec(comment(prop::sample::select(id_pool(5)), 8), len)
 }
 
 /// Comments whose ids are distinct by construction, so no upsert collapsing
-/// happens and every appended comment must survive.
+/// happens and every appended comment must survive. The ids still come from
+/// [`ID_POOL`], so "distinct" here means distinct under `==` while remaining
+/// entangled under `starts_with`.
 fn distinct_comments(len: std::ops::Range<usize>) -> impl Strategy<Value = Vec<Comment>> {
     prop::collection::vec(comment(Just(String::new()), 8), len).prop_map(|mut comments| {
         for (index, comment) in comments.iter_mut().enumerate() {
-            comment.id = format!("id{index}");
+            comment.id = distinct_id(index);
         }
         comments
+    })
+}
+
+/// Distinct ids as above, but `change_id` drawn from a two-element pool so
+/// collisions on it are the common case rather than a `hex(12)` lottery. Any
+/// identity keyed on `change_id` instead of `id` collapses these; identity
+/// keyed on `id` leaves every one of them standing.
+fn distinct_comments_sharing_change_ids(
+    len: std::ops::Range<usize>,
+) -> impl Strategy<Value = Vec<Comment>> {
+    prop::collection::vec(
+        (
+            comment(Just(String::new()), 8),
+            prop::sample::select(vec!["chg0".to_owned(), "chg1".to_owned()]),
+        ),
+        len,
+    )
+    .prop_map(|pairs| {
+        pairs
+            .into_iter()
+            .enumerate()
+            .map(|(index, (mut comment, change_id))| {
+                comment.id = distinct_id(index);
+                comment.change_id = change_id;
+                comment
+            })
+            .collect()
     })
 }
 
@@ -332,10 +434,10 @@ enum Op {
 
 fn op() -> impl Strategy<Value = Op> {
     prop_oneof![
-        4 => comment(prop::sample::select(id_pool(3)), 8).prop_map(Op::Append),
+        4 => comment(prop::sample::select(id_pool(4)), 8).prop_map(Op::Append),
         2 => session(8, 2).prop_map(Op::WriteSession),
         2 => hostile_text(20).prop_map(Op::WriteMarkdown),
-        1 => Just(Op::EnsureExcluded),
+        2 => Just(Op::EnsureExcluded),
     ]
 }
 
@@ -346,6 +448,50 @@ fn apply(store: &Store, op: &Op) -> Result<(), rv_core::store::Error> {
         Op::WriteMarkdown(document) => store.write_markdown(document),
         Op::EnsureExcluded => store.ensure_excluded().map(|_| ()),
     }
+}
+
+// --- oracles computed from an op *sequence*, never read back from disk -------
+//
+// The point of these four is that they are a model of what the sequence
+// implies, evaluated without touching the store. A property whose expectation
+// is a second read through the same code path can only catch a cache; one whose
+// expectation comes from the sequence catches an operation that wrote the
+// wrong bytes, or wrote them into somebody else's file.
+
+/// Every comment the sequence appended, in order.
+fn appended_comments(ops: &[Op]) -> Vec<Comment> {
+    ops.iter()
+        .filter_map(|op| match op {
+            Op::Append(comment) => Some(comment.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// What `comments.json` must hold after the sequence: the upsert reduction of
+/// its appends, and nothing else.
+fn expected_comments(ops: &[Op]) -> Vec<Comment> {
+    upsert_reduce(&appended_comments(ops))
+}
+
+/// What `REVIEW-FEEDBACK.md` must hold: the last document written, or nothing
+/// at all if the sequence never wrote one.
+fn expected_markdown(ops: &[Op]) -> Option<Vec<u8>> {
+    ops.iter()
+        .rev()
+        .find_map(|op| match op {
+            Op::WriteMarkdown(document) => Some(document.clone()),
+            _ => None,
+        })
+        .map(String::into_bytes)
+}
+
+/// What `session.toml` must round-trip to: the last session written.
+fn expected_session(ops: &[Op]) -> Option<Session> {
+    ops.iter().rev().find_map(|op| match op {
+        Op::WriteSession(session) => Some(session.clone()),
+        _ => None,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -465,10 +611,25 @@ proptest! {
     /// business) — it must never decide *which* comments survive. An upsert
     /// keyed on anything but `id`, or any capacity limit, would make the
     /// surviving set depend on the order the reviewer happened to work in.
+    ///
+    /// The comments' `change_id`s are drawn from a two-element pool rather than
+    /// from `hex(12)`, which is what makes that first clause bite: a
+    /// `change_id`-keyed identity only diverges between the two orders when two
+    /// comments *share* a `change_id`, and independent `hex(12)` draws collide
+    /// in well under 1% of cases. With a two-element pool a collision is the
+    /// norm, and each store then keeps a different survivor at a different
+    /// position. The permutation is forced away from the identity for the same
+    /// reason — an identity permutation compares a store against itself.
     #[test]
     fn the_set_of_comments_never_depends_on_append_order(
-        (canonical, shuffled) in distinct_comments(1..6)
-            .prop_flat_map(|comments| (Just(comments.clone()), Just(comments).prop_shuffle())),
+        (canonical, shuffled) in distinct_comments_sharing_change_ids(1..6)
+            .prop_flat_map(|comments| (Just(comments.clone()), Just(comments).prop_shuffle()))
+            .prop_map(|(canonical, mut shuffled)| {
+                if shuffled == canonical && shuffled.len() > 1 {
+                    shuffled.rotate_left(1);
+                }
+                (canonical, shuffled)
+            }),
     ) {
         let repo_a = repo_root();
         let repo_b = repo_root();
@@ -491,28 +652,33 @@ proptest! {
 
     /// Write-through, generalized from the single-comment hand-written case:
     /// after an arbitrary interleaving of every write the module performs, a
-    /// *freshly opened* `Store` over the same root sees exactly what the first
-    /// one does. There is no in-memory state a second `Store` cannot see.
+    /// *freshly opened* `Store` over the same root sees exactly what the op
+    /// sequence implies — and so does the handle that did the writing.
+    ///
+    /// The expectation is computed from the sequence ([`expected_comments`] and
+    /// friends), not read back out of the store. A read-back oracle turns this
+    /// into a self-consistency check: it can only fail if someone adds an
+    /// in-memory cache, because any damage an op does mid-sequence is baked
+    /// into both sides of the comparison. Comparing against the sequence pins
+    /// what was written as well as that both handles agree about it.
     #[test]
     fn everything_written_is_visible_to_a_freshly_opened_store(
         ops in prop::collection::vec(op(), 1..7),
     ) {
         let repo = repo_root();
-        let seen_by_writer;
-        let markdown_by_writer;
         {
             let store = Store::open(repo.path()).expect("open store");
             for op in &ops {
                 apply(&store, op).expect("apply op");
             }
-            seen_by_writer = store.comments().expect("read comments");
-            markdown_by_writer = fs::read(store.markdown_path()).ok();
+            prop_assert_eq!(store.comments().expect("read comments"), expected_comments(&ops));
+            prop_assert_eq!(fs::read(store.markdown_path()).ok(), expected_markdown(&ops));
         }
 
         let reopened = Store::open(repo.path()).expect("reopen store");
-        prop_assert_eq!(reopened.comments().expect("read comments"), seen_by_writer);
-        prop_assert_eq!(fs::read(reopened.markdown_path()).ok(), markdown_by_writer);
-        prop_assert_eq!(reopened.markdown_path(), repo.path().join(".review/REVIEW-FEEDBACK.md"));
+        prop_assert_eq!(reopened.comments().expect("read comments"), expected_comments(&ops));
+        prop_assert_eq!(fs::read(reopened.markdown_path()).ok(), expected_markdown(&ops));
+        prop_assert_eq!(reopened.read_session().ok(), expected_session(&ops));
     }
 
     /// Hostile text survives `comments.json` byte-identically. JSON has to
@@ -730,26 +896,47 @@ proptest! {
         prop_assert_eq!(read_back, session);
     }
 
-    /// Duplicate change ids in one session survive as duplicates: `changes` is
-    /// a list, not a set, and the store must not collapse it.
+    /// Duplicate change ids in one session survive as duplicates, in position:
+    /// `changes` is a list, not a set, and the store must not collapse it.
+    ///
+    /// The general round-trip property above cannot see a dedup pass, because
+    /// its `change_id`s are independent `hex(12)` draws that practically never
+    /// collide. Here they collide by construction, in three shapes a
+    /// `dedup`/`unique_by` would each treat differently: exact clones, entries
+    /// sharing a `change_id` but differing in `description` (the real case — a
+    /// stack whose changes were described differently at two points in time),
+    /// and a duplicate separated from its twin by an unrelated entry, which
+    /// distinguishes an adjacent-only `Vec::dedup` from a global one.
     #[test]
     fn duplicate_change_ids_in_a_session_are_preserved(
         change in change_ref(12),
+        other in change_ref(12),
+        description in hostile_text(12),
         copies in 1usize..5,
     ) {
         let repo = repo_root();
         let store = Store::open(repo.path()).expect("open store");
+        let mut twin = change.clone();
+        twin.description = description;
+        let mut changes = vec![change.clone(); copies];
+        changes.push(other);
+        changes.push(twin);
+        changes.push(change.clone());
+        let expected_len = changes.len();
+
         let session = Session {
             revset: "trunk()..@".to_owned(),
             base_commit: "abc123".to_owned(),
             head_commit: "def456".to_owned(),
-            changes: vec![change.clone(); copies],
+            changes: changes.clone(),
             started_at: "epoch:1755460770".to_owned(),
         };
         store.write_session(&session).expect("write session");
 
         let read_back = store.read_session().expect("read session");
-        prop_assert_eq!(read_back.changes.len(), copies);
+        prop_assert_eq!(read_back.changes.len(), expected_len,
+            "a change list must not be deduped, adjacently or globally");
+        prop_assert_eq!(&read_back.changes, &changes, "and its order must be preserved");
         prop_assert_eq!(read_back, session);
     }
 
@@ -830,6 +1017,135 @@ proptest! {
 proptest! {
     #![proptest_config(config(16))]
 
+    /// After an arbitrary interleaving of every operation the module performs,
+    /// each of the four files it touches holds exactly what *its own*
+    /// operations wrote — and the tree contains nothing else.
+    ///
+    /// This is the isolation law stated positively, with an oracle computed
+    /// from the op sequence rather than read back from disk. That distinction
+    /// is the whole point: a property that snapshots the tree after the ops and
+    /// compares it with itself bakes any mid-sequence damage into both sides,
+    /// so `append_comment` clobbering `.git/info/exclude`, or `ensure_excluded`
+    /// deleting `comments.json`, sails straight through it. Here every file's
+    /// expectation is derived from the operations that own it, so an operation
+    /// writing outside its own file changes a value nothing in the sequence
+    /// asked to change, and the mismatch is immediate.
+    ///
+    /// `.git/info/exclude` gets the strongest form of the claim, because it is
+    /// the one file that lives outside `.review/` and belongs to git: it must
+    /// be byte-identical to its seed unless an `EnsureExcluded` op ran, and
+    /// even then only by the one line, appended after everything already there.
+    #[test]
+    fn every_file_holds_exactly_what_its_own_operations_wrote(
+        seed in exclude_seed(),
+        ops in prop::collection::vec(op(), 1..7),
+    ) {
+        let repo = repo_root();
+        let exclude_path = repo.path().join(".git/info/exclude");
+        fs::write(&exclude_path, &seed).expect("seed exclude file");
+
+        let store = Store::open(repo.path()).expect("open store");
+        for op in &ops {
+            apply(&store, op).expect("apply op");
+        }
+
+        let expected = expected_comments(&ops);
+        prop_assert_eq!(store.comments().expect("read comments"), expected.clone());
+        prop_assert_eq!(fs::read(store.markdown_path()).ok(), expected_markdown(&ops));
+        prop_assert_eq!(store.read_session().ok(), expected_session(&ops));
+
+        let after = fs::read_to_string(&exclude_path).expect("read exclude file");
+        let ran_ensure_excluded = ops.iter().any(|op| matches!(op, Op::EnsureExcluded));
+        let already_excluded = seed.lines().any(|line| line == EXCLUDE_LINE);
+        if !ran_ensure_excluded || already_excluded {
+            prop_assert_eq!(&after, &seed,
+                "an operation that does not own .git/info/exclude rewrote it");
+        } else {
+            let mut expected_lines: Vec<&str> = seed.lines().collect();
+            expected_lines.push(EXCLUDE_LINE);
+            prop_assert_eq!(after.lines().collect::<Vec<_>>(), expected_lines,
+                "ensure_excluded may add its line and change nothing else");
+            prop_assert!(after.starts_with(&seed) || seed.is_empty(),
+                "pre-existing exclude bytes must survive verbatim");
+        }
+
+        // Conservation over the whole tree: exactly the files these operations
+        // are entitled to create exist, and nothing they never mentioned does.
+        let mut entitled: BTreeSet<PathBuf> = BTreeSet::new();
+        entitled.insert(PathBuf::from(".git/info/exclude"));
+        if !expected.is_empty() {
+            entitled.insert(PathBuf::from(".review/comments.json"));
+        }
+        if expected_session(&ops).is_some() {
+            entitled.insert(PathBuf::from(".review/session.toml"));
+        }
+        if expected_markdown(&ops).is_some() {
+            entitled.insert(PathBuf::from(".review/REVIEW-FEEDBACK.md"));
+        }
+        for comment in &expected {
+            entitled.insert(Path::new(".review/snapshots").join(&comment.id));
+        }
+        prop_assert_eq!(relative_files(repo.path()), entitled);
+    }
+
+    /// Two live `Store` handles over one root are interchangeable. Writes
+    /// interleaved between them leave exactly what the *merged* sequence
+    /// implies, and both handles read that same state back.
+    ///
+    /// `Store` is documented to hold no cached state, which is what makes this
+    /// true; the property is the test of that claim. A per-handle cache — the
+    /// obvious "optimization" for a `comments()` that re-reads the file on
+    /// every append — is invisible to every single-handle property in this
+    /// file, because one handle's cache is always coherent with a file only it
+    /// writes. With two handles it is not: the stale one's next append rebuilds
+    /// `comments.json` from its own snapshot of the past and silently deletes
+    /// whatever the other handle wrote in the meantime.
+    ///
+    /// The appends are routed to alternating handles on purpose. Staleness only
+    /// shows up in an `A`, `B`, `A` sandwich — the third write is the one that
+    /// resurrects a list from before the second — and random routing produces
+    /// that sandwich often enough to catch a cache only two runs in three.
+    /// Alternating makes every third append a witness. Everything else about
+    /// the plan, including where the non-append operations go, is generated.
+    #[test]
+    fn two_store_handles_over_one_root_agree_on_the_interleaved_history(
+        plan in prop::collection::vec((op(), any::<bool>()), 3..9).prop_map(|mut plan| {
+            let mut appends = 0usize;
+            for (op, to_first) in plan.iter_mut() {
+                if matches!(op, Op::Append(_)) {
+                    *to_first = appends.is_multiple_of(2);
+                    appends += 1;
+                }
+            }
+            // And never let the whole plan land on one handle, which would just
+            // be the single-handle case again.
+            if plan.iter().all(|(_, to_first)| *to_first)
+                || plan.iter().all(|(_, to_first)| !*to_first)
+            {
+                plan[1].1 = !plan[0].1;
+            }
+            plan
+        }),
+    ) {
+        let repo = repo_root();
+        let first = Store::open(repo.path()).expect("open first handle");
+        let second = Store::open(repo.path()).expect("open second handle");
+
+        for (op, to_first) in &plan {
+            apply(if *to_first { &first } else { &second }, op).expect("apply op");
+        }
+
+        let ops: Vec<Op> = plan.into_iter().map(|(op, _)| op).collect();
+        prop_assert_eq!(first.comments().expect("read via the first handle"),
+            expected_comments(&ops));
+        prop_assert_eq!(second.comments().expect("read via the second handle"),
+            expected_comments(&ops));
+        prop_assert_eq!(fs::read(first.markdown_path()).ok(), expected_markdown(&ops));
+        prop_assert_eq!(fs::read(second.markdown_path()).ok(), expected_markdown(&ops));
+        prop_assert_eq!(first.read_session().ok(), expected_session(&ops));
+        prop_assert_eq!(second.read_session().ok(), expected_session(&ops));
+    }
+
     /// Opening a store is never destructive: `open` only has to create
     /// `.review/snapshots`, so re-opening over a populated store must leave
     /// every byte under the repo root exactly as it was.
@@ -877,7 +1193,6 @@ proptest! {
         let session_path = repo.path().join(".review/session.toml");
         let markdown_path = store.markdown_path();
         let comments_bytes = fs::read(&comments_path).expect("read comments.json");
-        let session_bytes = fs::read(&session_path).expect("read session.toml");
         let markdown_bytes = fs::read(&markdown_path).expect("read markdown");
 
         store.write_session(&second_session).expect("rewrite session");
@@ -885,7 +1200,6 @@ proptest! {
             "write_session touched comments.json");
         prop_assert_eq!(fs::read(&markdown_path).expect("read markdown"), markdown_bytes.clone(),
             "write_session touched REVIEW-FEEDBACK.md");
-        let _ = session_bytes;
 
         let session_bytes = fs::read(&session_path).expect("read session.toml");
         store.append_comment(&extra).expect("append extra comment");
@@ -944,28 +1258,286 @@ proptest! {
             keep,
             chars.len()
         );
+        // Which error matters: a caller telling "corrupt" from "unreadable"
+        // needs the parse failure to arrive as InvalidComments, not as Io.
+        prop_assert!(
+            matches!(result, Err(rv_core::store::Error::InvalidComments { .. })),
+            "a parse failure must be reported as InvalidComments, got {:?}",
+            result.err()
+        );
     }
 
     /// The complementary half: a *missing* `comments.json` is not an error —
-    /// a session with no comments has nothing to read. Holds no matter what
-    /// else exists under `.review/`.
+    /// a session with no comments has nothing to read — and the module's
+    /// documented crash residue is genuinely harmless.
+    ///
+    /// `append_comment` writes the snapshot first and `comments.json` last, so
+    /// a crash between the two strands an orphaned snapshot with no matching
+    /// entry, and a crash between `write_atomic`'s fsync and its rename strands
+    /// a `.rv-store-*.tmp` sibling. The doc calls both harmless; this generates
+    /// exactly that post-crash tree and holds it to that word: `comments()` is
+    /// empty (not an error, and not the orphans resurrected), and a subsequent
+    /// append works normally — including when it reuses an orphan's id, where
+    /// the stale snapshot must be replaced by the new comment's context rather
+    /// than left in place.
     #[test]
-    fn a_missing_comments_json_reads_as_empty(
+    fn an_orphaned_snapshot_is_harmless_and_a_missing_comments_json_reads_as_empty(
         session in session(12, 2),
         document in hostile_text(24),
+        orphans in prop::collection::vec((prop::sample::select(id_pool(5)), hostile_text(16)), 1..4),
+        stray_temp in any::<bool>(),
+        reuse in any::<bool>(),
+        newcomer in comment(prop::sample::select(id_pool(5)), 12),
     ) {
         let repo = repo_root();
         let store = Store::open(repo.path()).expect("open store");
         store.write_session(&session).expect("write session");
         store.write_markdown(&document).expect("write markdown");
 
+        // The tree a crash between the two writes leaves behind.
+        let snapshots = repo.path().join(".review/snapshots");
+        for (id, body) in &orphans {
+            fs::write(snapshots.join(id), body).expect("plant an orphaned snapshot");
+        }
+        if stray_temp {
+            fs::write(
+                repo.path().join(".review").join(format!("{TEMP_PREFIX}orphan.tmp")),
+                b"half a comments.json",
+            ).expect("plant a stray temp file");
+        }
+
         prop_assert_eq!(store.comments().expect("read comments"), Vec::<Comment>::new());
+
+        // Appending after the crash behaves as if the orphans were not there.
+        let mut newcomer = newcomer;
+        if reuse {
+            newcomer.id = orphans[0].0.clone();
+        }
+        store.append_comment(&newcomer).expect("append after a crash");
+        prop_assert_eq!(store.comments().expect("read comments"), vec![newcomer.clone()]);
+
+        let written = fs::read_to_string(snapshots.join(&newcomer.id)).expect("read new snapshot");
+        prop_assert_eq!(written, newcomer.anchor.context.join("\n"),
+            "a stale orphaned snapshot must be replaced, not kept");
     }
+}
+
+/// `comments()` has three cases to tell apart and only one of them means "no
+/// comments": *missing* (empty, no error), *corrupt* (an error), and *present
+/// but unreadable* (an error too). The third is the one that collapses first,
+/// because `Err(_) => Ok(Vec::new())` is one keystroke away from the `NotFound`
+/// arm that genuinely does mean "nothing saved yet" — and the consequence is a
+/// reviewer's saved work reported as an empty review, silently, with the file
+/// sitting right there on disk. The two properties above cover missing and
+/// corrupt; this covers unreadable, which is an *IO* failure and so reaches a
+/// different arm than a parse failure does.
+///
+/// A directory planted at the path is the portable way to produce one: reading
+/// it fails with a kind that is not `NotFound` on every platform, no `chmod`
+/// and no privileges involved.
+#[test]
+fn a_comments_json_that_cannot_be_read_is_an_error_not_silent_emptiness() {
+    let repo = repo_root();
+    let store = Store::open(repo.path()).expect("open store");
+    let path = repo.path().join(".review/comments.json");
+    fs::create_dir(&path).expect("plant a directory at comments.json");
+
+    let result = store.comments();
+
+    assert!(
+        result.is_err(),
+        "an unreadable comments.json read as {:?} instead of failing",
+        result.as_ref().map(Vec::len)
+    );
+    assert!(
+        matches!(result, Err(rv_core::store::Error::Io { .. })),
+        "an IO failure must be reported as Io, not as a parse error: {:?}",
+        result.err()
+    );
+}
+
+/// True when this process actually cannot read a mode-`0o000` file. It can when
+/// it runs as root, and on a filesystem that does not enforce permission bits —
+/// in either case the permission test below would be testing nothing, so it
+/// skips rather than fails.
+#[cfg(unix)]
+fn permission_bits_bite(probe_dir: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+
+    let probe = probe_dir.join(".permission-probe");
+    fs::write(&probe, b"probe").expect("write the probe file");
+    fs::set_permissions(&probe, fs::Permissions::from_mode(0o000)).expect("chmod the probe file");
+    let enforced = fs::read(&probe).is_err();
+    fs::set_permissions(&probe, fs::Permissions::from_mode(0o600)).expect("restore the probe file");
+    fs::remove_file(&probe).expect("remove the probe file");
+    enforced
+}
+
+/// The same claim as above at the shape it takes in the field: a
+/// `comments.json` that is a perfectly good file the process simply may not
+/// open — a review directory copied between accounts, a restrictive umask, a
+/// sandbox. Distinct from the directory case because it is an `EACCES` at
+/// `open` rather than an `EISDIR` at `read`, and a handler that special-cases
+/// one kind may still swallow the other.
+#[cfg(unix)]
+#[test]
+fn a_comments_json_the_process_may_not_open_is_an_error_not_silent_emptiness() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let repo = repo_root();
+    let store = Store::open(repo.path()).expect("open store");
+    store
+        .append_comment(&fixed_comment("id0"))
+        .expect("append comment");
+    let path = repo.path().join(".review/comments.json");
+
+    if !permission_bits_bite(repo.path()) {
+        // Running as root, or on a filesystem that ignores the mode bits.
+        return;
+    }
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o000)).expect("chmod comments.json");
+
+    let result = store.comments();
+
+    // Restore before asserting, so a failure still leaves a removable tempdir.
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).expect("restore comments.json");
+    assert!(
+        result.is_err(),
+        "an unreadable comments.json read as {:?} instead of failing — \
+         a saved review reported as empty",
+        result.as_ref().map(Vec::len)
+    );
+    assert!(
+        matches!(result, Err(rv_core::store::Error::Io { .. })),
+        "an IO failure must be reported as Io, not as a parse error: {:?}",
+        result.err()
+    );
+    // And the data really was there to be lost.
+    assert_eq!(store.comments().expect("read comments").len(), 1);
+}
+
+// ---------------------------------------------------------------------------
+// atomicity: what a reader sees across a write
+// ---------------------------------------------------------------------------
+
+/// The module's headline claim — "a reader can never observe a half-written
+/// file" — made observable without a race.
+///
+/// `write_atomic` renames a fresh temp file over the destination, which
+/// repoints the destination's *directory entry* at a new inode and leaves the
+/// old one complete and unmodified for as long as anybody holds it open. A
+/// plain `fs::write` instead truncates and rewrites the existing inode in
+/// place, which is precisely the window in which a concurrent reader sees a
+/// prefix of the new bytes, or an empty file, or a mix of both.
+///
+/// So the test opens the file first and reads it last: under a rename the held
+/// handle yields the document that was there when it was opened, whole; under
+/// an in-place rewrite it yields the newest one, or a truncated splice of the
+/// two. That difference is *deterministic*, which is why this is a plain test
+/// and not the threaded writer-and-reader probe the claim seems to demand — a
+/// probe racing two real threads can only ever fail to notice, never notice
+/// something that is not there, so it would be a weaker guard at a higher cost
+/// in wall time and flakiness.
+#[cfg(unix)]
+#[rstest]
+#[case::a_shorter_replacement("the original document\n", "short\n")]
+#[case::a_longer_replacement("short\n", "a considerably longer replacement document\n")]
+#[case::an_empty_replacement("the original document\n", "")]
+fn a_reader_holding_the_file_open_never_sees_a_later_write(
+    #[case] original: &str,
+    #[case] replacement: &str,
+) {
+    use std::io::Read as _;
+
+    let repo = repo_root();
+    let store = Store::open(repo.path()).expect("open store");
+    store.write_markdown(original).expect("write markdown");
+
+    let mut held = fs::File::open(store.markdown_path()).expect("open markdown before the rewrite");
+    store.write_markdown(replacement).expect("rewrite markdown");
+
+    let mut seen = String::new();
+    held.read_to_string(&mut seen)
+        .expect("read the handle opened before the rewrite");
+    assert_eq!(
+        seen, original,
+        "a reader that opened the file before the write observed the write"
+    );
+    // And the write did land, so the assertion above is not satisfied by a
+    // no-op.
+    assert_eq!(
+        fs::read_to_string(store.markdown_path()).expect("read markdown"),
+        replacement
+    );
+    assert!(stray_temp_files(repo.path()).is_empty());
+}
+
+/// The same, for the file that matters most: `comments.json` is rewritten
+/// wholesale on every single saved comment, so every append is a chance for a
+/// reader to catch it mid-flight.
+#[cfg(unix)]
+#[test]
+fn a_reader_holding_comments_json_open_never_sees_a_later_append() {
+    use std::io::Read as _;
+
+    let repo = repo_root();
+    let store = Store::open(repo.path()).expect("open store");
+    store
+        .append_comment(&fixed_comment("id0"))
+        .expect("append the first comment");
+    let path = repo.path().join(".review/comments.json");
+    let original = fs::read_to_string(&path).expect("read comments.json");
+
+    let mut held = fs::File::open(&path).expect("open comments.json before the append");
+    for id in ["id1", "id10", "id2"] {
+        store
+            .append_comment(&fixed_comment(id))
+            .expect("append another comment");
+    }
+
+    let mut seen = String::new();
+    held.read_to_string(&mut seen)
+        .expect("read the handle opened before the appends");
+    assert_eq!(
+        seen, original,
+        "a reader that opened comments.json before the appends observed them"
+    );
+    assert_eq!(store.comments().expect("read comments").len(), 4);
 }
 
 // ---------------------------------------------------------------------------
 // parameterized case tables
 // ---------------------------------------------------------------------------
+
+/// `markdown_path()` names the one file another program reads *while* `rv` is
+/// running, so where it points is contract, not an implementation detail: it is
+/// `REVIEW-FEEDBACK.md` inside `.review/`, and in particular it is not at the
+/// repo root, where it would land inside the change under review and defeat the
+/// whole point of [`Store::ensure_excluded`].
+#[rstest]
+#[case::repo_root_is_the_tempdir("")]
+#[case::repo_root_is_nested("outer/inner")]
+fn markdown_is_written_inside_the_review_directory(#[case] relative_root: &str) {
+    let tempdir = tempfile::tempdir().expect("create temp dir");
+    let root = tempdir.path().join(relative_root);
+    fs::create_dir_all(root.join(".git/info")).expect("create .git/info");
+    let store = Store::open(&root).expect("open store");
+
+    assert_eq!(
+        store.markdown_path(),
+        root.join(".review").join("REVIEW-FEEDBACK.md")
+    );
+
+    store.write_markdown("a document").expect("write markdown");
+    assert_eq!(
+        fs::read_to_string(root.join(".review/REVIEW-FEEDBACK.md")).expect("read markdown"),
+        "a document"
+    );
+    assert!(
+        !root.join("REVIEW-FEEDBACK.md").exists(),
+        "the feedback document must not land at the repo root"
+    );
+}
 
 /// `.git/info/exclude` contents that must and must not count as
 /// already-excluded, with the exact bytes the store is allowed to leave

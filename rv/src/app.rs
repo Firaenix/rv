@@ -347,11 +347,24 @@ impl App {
     /// Saves the typed comment against the selected line, then rewrites the
     /// markdown export.
     ///
-    /// Anything that makes the comment unanchorable — an empty body, a binary
-    /// or suppressed diff, a diff line with no number on the side it belongs
+    /// Anything that makes the comment unanchorable — an empty body, a diff
+    /// with no lines to select at all (a binary file, or difftastic reporting
+    /// no semantic change), a diff line with no number on the side it belongs
     /// to — leaves the store untouched and the reason in the status line. A
     /// comment that cannot be placed is never worth storing somewhere
     /// approximate.
+    ///
+    /// A *suppressed* diff is not on that list, and used to be described as if
+    /// it were. Suppression says the difference between the two sides is not
+    /// visible in the lines — difftastic's `unchanged`, or the `similar`
+    /// fallback's terminator-only change — not that the lines are unreal. The
+    /// difftastic case carries no lines, so it is refused by the clause above
+    /// and needs no clause of its own; the fallback case carries every line of
+    /// the file as `Context`, [`crate::ui`] draws them under a note saying the
+    /// difference is elsewhere, and a comment on one of them anchors to a real
+    /// line, at a real number, whose text the anchor hashes out of the file
+    /// itself. Refusing it would mean refusing a line the reviewer is looking
+    /// at.
     fn commit_comment(&mut self) -> Result<()> {
         let comment = match self.prepare_comment()? {
             Ok(comment) => comment,
@@ -380,13 +393,19 @@ impl App {
     /// The outer [`Result`] is reserved for a repository that could not be
     /// read, which is a real failure rather than a refusal.
     ///
-    /// Two of the refusals below are unreachable through the keyboard and are
-    /// kept as defence in depth rather than as behaviour any test can drive.
+    /// Two of the refusals below cannot be provoked from the keyboard alone.
+    ///
     /// "the review covers no change to comment on" needs an empty
-    /// `session.changes`, but [`rv_core::vcs::Repository::stack`] returns
-    /// `EmptyRange` for an empty range, so no [`Review`] — and therefore no
-    /// `App` — can be built with one. "this line has no number on the side it
-    /// belongs to" needs a [`rv_core::diff::DiffLine`] whose anchored side
+    /// `session.changes`. [`session::build`] never produces one —
+    /// [`rv_core::vcs::Repository::stack`] returns `EmptyRange` for an empty
+    /// range — but [`Review`] is `pub` with `pub` fields, so a caller that
+    /// assembles one by hand can, and `rv/tests/app_cases.rs` does exactly that
+    /// (`a_review_with_no_changes_refuses_to_attribute_a_comment`). It is a
+    /// tested refusal rather than an unreachable branch.
+    ///
+    /// "this line has no number on the side it belongs to" is the one that
+    /// really is unreachable, and is kept as defence in depth: it needs a
+    /// [`rv_core::diff::DiffLine`] whose anchored side
     /// carries no number, and every producer in [`rv_core::diff`] numbers the
     /// side it dispatches to: difftastic's paired entries set both sides, an
     /// unpaired lhs is `Removed` with `left`, an unpaired rhs is `Added` with
@@ -404,6 +423,24 @@ impl App {
         let (Some(file), Some(line)) = (self.selected_file(), self.selected_line()) else {
             return Ok(Err("no diff line selected, nothing saved".to_owned()));
         };
+        // What `change_id` and `commit_id` on the stored comment actually are,
+        // stated plainly because the names invite a stronger reading: the
+        // *first change of the reviewed range*, the same one for every comment
+        // in the review, and not the change that introduced the line being
+        // commented on. `Repository::stack` streams newest first, so for the
+        // default `trunk()..@` this is `@` — the working copy, which is usually
+        // an empty change.
+        //
+        // Two things follow, both of them current behaviour rather than
+        // problems this function should solve: `markdown::render` orders each
+        // section by the comment's index in `session.changes` and prints the id
+        // in every anchor marker, so today that ordering key is constant and
+        // every marker names the same change; and `comment_id`'s digest gets
+        // the same `change_id` from every comment, so the seed's whole
+        // discriminating power is the location and the body. Attributing a
+        // comment to the change that touched its line is Milestone 2's work
+        // (spec §14) and needs per-change diffs, which this milestone does not
+        // compute.
         let Some(change) = self.review.session.changes.first() else {
             return Ok(Err("the review covers no change to comment on".to_owned()));
         };
@@ -466,6 +503,13 @@ pub fn anchored_side(kind: LineKind) -> Side {
 /// Derived rather than random so that re-typing the same comment on the same
 /// line of the same change upserts the entry it already made instead of
 /// stacking a duplicate beside it.
+///
+/// `change_id` is the same string for every comment in a review — it is the
+/// range's first change, never the change that touched the line, as
+/// [`App::prepare_comment`] spells out — so within one review the location and
+/// the body carry the whole of the seed's discriminating power. It stays in
+/// because ids outlive the review that made them: `.review/` from another
+/// range, keyed by these ids, must not collide with this one's.
 ///
 /// # Why `side` is part of the seed
 ///

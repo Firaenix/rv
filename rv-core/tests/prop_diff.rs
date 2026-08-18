@@ -35,6 +35,7 @@
 
 use proptest::prelude::*;
 use rstest::rstest;
+use rv_core::diff::DiffLine;
 use rv_core::diff::DiffSource;
 use rv_core::diff::FileDiff;
 use rv_core::diff::LineKind;
@@ -234,6 +235,107 @@ fn render(diff: &FileDiff) -> Vec<String> {
         .collect()
 }
 
+/// THE INTERLEAVING ORACLE. Reads `diff.lines` top to bottom as one walk
+/// through *both* files at once and reports where that walk breaks down.
+///
+/// The two sides number their lines differently — an early deletion pushes
+/// every later head-side number down — so "is this in file order?" cannot be
+/// answered from either number sequence alone. What ties them together is the
+/// lines the diff steps over without mentioning: those are lines the two files
+/// have in common, so passing one of them advances *both* files by one. The
+/// walk therefore keeps a cursor per file and, for each step:
+///
+/// - a `Removed` line naming base line `L` steps over `L - 1 - cursor`
+///   unmentioned base lines, so the head cursor advances by that many too,
+///   then the base cursor lands past `L`;
+/// - an `Added` line naming head line `R` is the mirror image;
+/// - an aligned pair (two lines carrying both numbers) and a `Context` line
+///   name a line on each side, so they place both cursors directly.
+///
+/// A step that asks a cursor to move *backwards* is the failure: it means the
+/// vector claims to be somewhere in one file that it has already read past in
+/// the other, which is precisely what "out of file order" means. The
+/// cross-advance is where the strength is — without it, each side's numbers
+/// are only ever compared to that same side's, which is exactly the hole the
+/// old version of this property had.
+///
+/// `-4, -16, +2, +13` (real difft 0.70 output, pinned by
+/// `one_sided_difftastic_hunks_interleave_with_each_other` in `tests/diff.rs`)
+/// fails on the third step: reaching base line 4 and then base line 16 steps
+/// over fourteen unmentioned base lines, so fourteen head lines go by with
+/// them, and `+2` cannot then be reached without reading head line 2 a second
+/// time.
+///
+/// What this deliberately does *not* claim: that the unmentioned lines really
+/// are identical, or that the two files' leftovers balance. difftastic is a
+/// structural differ and neither holds for it — for base `["", "a", "\ttab",
+/// "a", "a"]` against head `["b", "\ttab"]`, difft 0.70 aligns `""` with `"b"`
+/// and then reports no change for the pair. What lines difftastic chooses to
+/// report is its own business; the *order* the module puts them in is not.
+fn patch_problems(diff: &FileDiff) -> Vec<String> {
+    let mut problems = Vec::new();
+    let mut base_cursor = 0usize;
+    let mut head_cursor = 0usize;
+    let mut index = 0usize;
+
+    while let Some(line) = diff.lines.get(index) {
+        // 1-based line number to a 0-based index into the file's lines.
+        let at = |number: Option<u32>| {
+            number.map(|n| {
+                usize::try_from(n)
+                    .expect("fixtures are small")
+                    .saturating_sub(1)
+            })
+        };
+        let aligned_partner = |kind: LineKind, index: usize| {
+            diff.lines.get(index).is_some_and(|other| {
+                other.kind == kind && other.left == line.left && other.right == line.right
+            })
+        };
+        // Which line of each file this step lands on, and how many diff lines
+        // it accounts for. An aligned pair is one step spelled as two lines.
+        let (base_at, head_at, step) = match line.kind {
+            LineKind::Context => (at(line.left), at(line.right), 1),
+            LineKind::Removed if aligned_partner(LineKind::Added, index + 1) => {
+                (at(line.left), at(line.right), 2)
+            }
+            LineKind::Removed => (at(line.left), None, 1),
+            LineKind::Added => (None, at(line.right), 1),
+        };
+        index += step;
+
+        let advanced = match (base_at, head_at) {
+            (None, None) => {
+                problems.push(format!("{line:?} carries no line number to place it by"));
+                break;
+            }
+            // One-sided: the lines stepped over on this side are shared, so
+            // the other side moves the same distance.
+            (Some(base), None) => base
+                .checked_sub(base_cursor)
+                .map(|run| (base + 1, head_cursor + run)),
+            (None, Some(head)) => head
+                .checked_sub(head_cursor)
+                .map(|run| (base_cursor + run, head + 1)),
+            // Two-sided: both cursors are placed outright.
+            (Some(base), Some(head)) => {
+                (base >= base_cursor && head >= head_cursor).then_some((base + 1, head + 1))
+            }
+        };
+        let Some((next_base, next_head)) = advanced else {
+            problems.push(format!(
+                "{line:?} goes backwards: reading the diff this far has already walked past base \
+                 line {base_cursor} and head line {head_cursor}"
+            ));
+            break;
+        };
+        base_cursor = next_base;
+        head_cursor = next_head;
+    }
+
+    problems
+}
+
 // ---------------------------------------------------------------------------
 // Strategies
 // ---------------------------------------------------------------------------
@@ -404,6 +506,138 @@ fn edited_pair() -> impl Strategy<Value = (Vec<u8>, Vec<u8>)> {
         })
 }
 
+/// Every `DiffSource` the module can produce, including the two the fallback
+/// path never returns.
+fn diff_source() -> impl Strategy<Value = DiffSource> {
+    prop_oneof![
+        1 => Just(DiffSource::Similar),
+        1 => Just(DiffSource::Binary),
+        // The languages difftastic reports, plus the shapes a language name
+        // could take that JSON escaping would have to survive.
+        2 => prop::sample::select(vec!["Text", "Rust", "C++", "", "\"quoted\"", "ünïcøde"])
+            .prop_map(|language| DiffSource::Difftastic { language: language.to_owned() }),
+    ]
+}
+
+fn diff_line() -> impl Strategy<Value = DiffLine> {
+    (
+        prop::sample::select(vec![LineKind::Context, LineKind::Added, LineKind::Removed]),
+        prop::option::of(1u32..=u32::MAX),
+        prop::option::of(1u32..=u32::MAX),
+        prop::sample::select(LINE_CONTENTS.to_vec()),
+    )
+        .prop_map(|(kind, left, right, text)| DiffLine {
+            kind,
+            left,
+            right,
+            text: text.to_owned(),
+        })
+}
+
+/// What [`a_file_diff_survives_a_json_round_trip`] round-trips: real diffs
+/// from the module, and hand-built ones covering the corners a computed
+/// fallback diff can never reach — every `DiffSource` variant, `suppressed`
+/// both ways, absent line numbers on either side, and numbers at the top of
+/// `u32`.
+fn round_trip_subject() -> impl Strategy<Value = FileDiff> {
+    prop_oneof![
+        1 => mixed_pair().prop_map(|(old, new)| {
+            compute_with(old.as_deref(), new.as_deref(), "round.txt", false)
+        }),
+        1 => (
+            path(),
+            prop::collection::vec(diff_line(), 0..6),
+            diff_source(),
+            any::<bool>(),
+        )
+            .prop_map(|(path, lines, source, suppressed)| FileDiff {
+                path: path.to_owned(),
+                lines,
+                source,
+                suppressed,
+            }),
+    ]
+}
+
+/// What happens to one base-side line in [`ordering_pair`]. Deliberately not
+/// [`Edit`]: there are no terminator games here (every line is LF-terminated,
+/// the one shape both engines tokenize alike) and `Replace` — the only edit
+/// that makes difftastic emit an aligned pair — is rare, because the shape the
+/// ordering rule is *about* is the one with no pairs to anchor against.
+#[derive(Clone, Copy, Debug)]
+enum LfEdit {
+    /// The line survives verbatim: a line the two files share.
+    Keep,
+    /// The line is not on the head side at all — a pure deletion.
+    Delete,
+    /// A brand-new line precedes it on the head side — a pure insertion.
+    InsertBefore,
+    /// A brand-new line follows it on the head side — a pure insertion.
+    InsertAfter,
+    /// The line's content changes, which is what difftastic reports as an
+    /// aligned pair.
+    Replace,
+}
+
+fn lf_edit() -> impl Strategy<Value = LfEdit> {
+    prop_oneof![
+        6 => Just(LfEdit::Keep),
+        3 => Just(LfEdit::Delete),
+        2 => Just(LfEdit::InsertBefore),
+        2 => Just(LfEdit::InsertAfter),
+        1 => Just(LfEdit::Replace),
+    ]
+}
+
+/// The pair [`diff_lines_are_in_file_order_and_never_repeated`] runs on. Two
+/// arms, because the ordering rule has to hold for both:
+///
+/// - Mostly a base file of *distinct* lines and a head file derived from it by
+///   per-line edits. Distinctness is the point: with a 12-string pool
+///   difftastic has spurious alignments everywhere and reports almost every
+///   change as an aligned pair, and an aligned pair is exactly the anchor the
+///   old ordering rule needed to interleave the two sides at all. Here a
+///   deleted line is reported as a deletion and an inserted one as an
+///   insertion, so pure-insert and pure-delete hunks are the common case —
+///   and since `Replace` is one edit in fourteen, a good share of these files
+///   contain *no aligned pair anywhere*, which is the shape that used to
+///   render as every removal followed by every insertion.
+/// - A minority arm of two independent [`lf_lines`] draws, which keeps the
+///   ambiguous, heavily-repeating files — and the inputs difft 0.70 crashes
+///   on, which exercise the `similar` fallback — in the sample.
+///
+/// Files run to 24 lines rather than 12 so a file can hold several hunks;
+/// interleaving is only observable when there is more than one thing to
+/// interleave.
+fn ordering_pair() -> impl Strategy<Value = (Vec<String>, Vec<String>)> {
+    prop_oneof![
+        3 => prop::collection::vec(lf_edit(), 0..24).prop_map(|edits| {
+            let mut old = Vec::new();
+            let mut new = Vec::new();
+            for (index, edit) in edits.iter().enumerate() {
+                let line = format!("line {index}");
+                old.push(line.clone());
+                match edit {
+                    LfEdit::Keep => new.push(line),
+                    LfEdit::Delete => {}
+                    LfEdit::InsertBefore => {
+                        new.push(format!("inserted before {index}"));
+                        new.push(line);
+                    }
+                    LfEdit::InsertAfter => {
+                        new.push(line);
+                        new.push(format!("inserted after {index}"));
+                    }
+                    LfEdit::Replace => new.push(format!("replaced {index}")),
+                }
+            }
+            (old, new)
+        }),
+        1 => (lf_lines(), lf_lines())
+            .prop_map(|(old, new)| (owned(&old), owned(&new))),
+    ]
+}
+
 /// The pair the fallback properties run on: usually an edit of the base side
 /// (so a mixed diff is the common case), with a minority arm of two fully
 /// independent draws so the shapes the edit arm cannot reach — an absent side,
@@ -561,24 +795,34 @@ proptest! {
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(128))]
+    #![proptest_config(ProptestConfig::with_cases(96))]
     /// A side that does not exist (`None`, a whole-file add or remove) and a
-    /// side that exists but is empty are indistinguishable to the fallback:
+    /// side that exists but is empty are indistinguishable to this module:
     /// it has no file metadata to tell them apart, so it must not pretend to.
+    ///
+    /// Run on both paths, because each has its own `unwrap_or(&[])` and only
+    /// one of them is visible from here with `use_difft: false`. On the
+    /// fallback path this restates `similar_diff`'s line; on the difftastic
+    /// path it pins `try_difft`'s, which writes the missing side to a temp
+    /// file — and, through it, that difftastic answers `created`/`deleted` for
+    /// an absent side and `changed`/`unchanged` for an empty one *without the
+    /// module's output being able to tell*. Nothing else in this file compares
+    /// the two spellings on the engine path.
     #[test]
     fn an_absent_side_diffs_like_an_empty_one(
         side in nul_free_side(),
         on_the_old_side in any::<bool>(),
+        use_difft in any::<bool>(),
     ) {
         let (absent, empty) = if on_the_old_side {
             (
-                compute_with(None, Some(&side), "p.txt", false),
-                compute_with(Some(EMPTY), Some(&side), "p.txt", false),
+                compute_with(None, Some(&side), "p.txt", use_difft),
+                compute_with(Some(EMPTY), Some(&side), "p.txt", use_difft),
             )
         } else {
             (
-                compute_with(Some(&side), None, "p.txt", false),
-                compute_with(Some(&side), Some(EMPTY), "p.txt", false),
+                compute_with(Some(&side), None, "p.txt", use_difft),
+                compute_with(Some(&side), Some(EMPTY), "p.txt", use_difft),
             )
         };
 
@@ -704,16 +948,66 @@ proptest! {
     #![proptest_config(ProptestConfig::with_cases(64))]
     /// `FileDiff` is `Serialize + Deserialize`; the pair must round-trip, so
     /// a diff can be written out and read back without losing a kind, a line
-    /// number or a line of text.
+    /// number, a line of text, the engine that produced it or the suppression
+    /// flag.
+    ///
+    /// Driven by [`round_trip_subject`], which is half diffs the module really
+    /// computed and half hand-built ones. The hand-built half is what makes
+    /// this cover the type rather than one corner of it: computing a diff on
+    /// the fallback path only ever yields `DiffSource::Similar` with
+    /// `suppressed: false`, so `Difftastic { language }`, `Binary` and
+    /// `suppressed: true` were never serialized at all — a `#[serde(skip)]` on
+    /// `source` or on `suppressed` would have gone unnoticed.
     #[test]
-    fn a_file_diff_survives_a_json_round_trip((old, new) in mixed_pair()) {
-        let diff = compute_with(old.as_deref(), new.as_deref(), "round.txt", false);
-
+    fn a_file_diff_survives_a_json_round_trip(diff in round_trip_subject()) {
         let json = serde_json::to_string(&diff).expect("FileDiff serializes");
         let back: FileDiff = serde_json::from_str(&json).expect("FileDiff deserializes");
 
         prop_assert_eq!(back, diff);
     }
+}
+
+/// The same round trip over diffs the module actually produced, one per
+/// `DiffSource` variant and one suppressed — so the hand-built strategy above
+/// cannot drift into serializing a shape the module never emits. Each case
+/// first asserts the shape it is here to cover, so a case that stopped
+/// reaching, say, difftastic's `unchanged` status would fail rather than
+/// quietly round-trip a fallback diff for the fifth time.
+///
+/// Needs `difft` on `PATH` for every case but the last, which is the point of
+/// four of them.
+#[rstest]
+#[case::difftastic_changed(Some("a\nb\n"), Some("a\nc\n"), true, "difftastic", false)]
+#[case::difftastic_created(None, Some("a\nb\n"), true, "difftastic", false)]
+#[case::difftastic_suppressed(Some("a\nb\n"), Some("a\r\nb\r\n"), true, "difftastic", true)]
+#[case::binary(Some("a\0b\n"), Some("c\n"), true, "binary", false)]
+#[case::similar(Some("a\nb\n"), Some("a\nc\n"), false, "similar", false)]
+fn a_computed_diff_of_every_shape_survives_a_json_round_trip(
+    #[case] old: Option<&str>,
+    #[case] new: Option<&str>,
+    #[case] use_difft: bool,
+    #[case] source: &str,
+    #[case] suppressed: bool,
+) {
+    let diff = compute_with(
+        old.map(str::as_bytes),
+        new.map(str::as_bytes),
+        "round.txt",
+        use_difft,
+    );
+
+    let reached = match diff.source {
+        DiffSource::Difftastic { .. } => "difftastic",
+        DiffSource::Similar => "similar",
+        DiffSource::Binary => "binary",
+    };
+    assert_eq!(reached, source, "{diff:#?}");
+    assert_eq!(diff.suppressed, suppressed, "{diff:#?}");
+
+    let json = serde_json::to_string(&diff).expect("FileDiff serializes");
+    let back: FileDiff = serde_json::from_str(&json).expect("FileDiff deserializes");
+
+    assert_eq!(back, diff, "{json}");
 }
 
 // ---------------------------------------------------------------------------
@@ -762,9 +1056,9 @@ proptest! {
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(48))]
     /// The binary check reads the whole side, not a sniff window: a single
-    /// NUL anywhere in a 40 KB file — first byte, last byte, anywhere between
-    /// — still makes the file binary. A check that only inspected a prefix
-    /// would try to diff a binary blob as text.
+    /// NUL anywhere in a [`BIG_FILE_LEN`]-byte file — first byte, last byte,
+    /// anywhere between — still makes the file binary. A check that only
+    /// inspected a prefix would try to diff a binary blob as text.
     #[test]
     fn a_nul_anywhere_in_a_large_file_is_still_binary(
         index in 0usize..BIG_FILE_LEN,
@@ -920,31 +1214,51 @@ proptest! {
     /// `diff.lines` in `Vec` order (`rv/src/ui.rs`), so the order of this
     /// vector *is* the order a reviewer reads the file in:
     ///
+    /// - INTERLEAVING: the vector, read top to bottom, must be a single walk
+    ///   through both files at once — see [`patch_problems`], which replays it
+    ///   as a patch against the two files' actual text.
     /// - Reading top to bottom must walk each file forward: the base-side
     ///   numbers that are present never go backwards, and neither do the
     ///   head-side ones.
     /// - No line of either file may be shown twice: no two `Removed` lines
     ///   share a `left`, no two `Added` lines share a `right`.
     ///
-    /// Neither held on the difftastic path before: difftastic's `chunks` are
-    /// not ordered by line number (a trailing insertion can be reported before
-    /// an earlier edit) and difftastic can report the same entry in two
+    /// None of these held on the difftastic path before: difftastic's `chunks`
+    /// are not ordered by line number (a trailing insertion can be reported
+    /// before an earlier edit) and difftastic can report the same entry in two
     /// chunks, both of which the module used to forward verbatim — see
     /// `difftastic_chunks_reported_out_of_order_are_shown_in_file_order` and
     /// `a_change_difftastic_reports_in_two_chunks_is_shown_once` in
     /// `tests/diff.rs` for the exact inputs. The module now merges the chunk
     /// entries into file order and drops entries it has already emitted.
     ///
-    /// The fallback path satisfies both by construction, so this holds for
-    /// whichever engine answers and no input is skipped.
+    /// The last two bullets are weak on their own, and were the whole of this
+    /// property once: they check each side's numbering *independently*, so
+    /// `-4, -16, +2, +13` — every deletion in the file, then every insertion —
+    /// satisfies both, because the left numbers ascend and the right numbers
+    /// ascend. That is real difft 0.70 output the module used to render, and
+    /// the interleaving bullet is what catches it. See
+    /// `one_sided_difftastic_hunks_interleave_with_each_other` in
+    /// `tests/diff.rs` for the exact inputs.
+    ///
+    /// Driven by [`ordering_pair`], whose main arm is a file of distinct lines
+    /// under per-line edits: unlike two independent draws from a 12-string
+    /// pool, that reaches files whose hunks are *all* pure insertions and pure
+    /// deletions, with no aligned pair anywhere for the two sides to be
+    /// positioned against.
+    ///
+    /// The fallback path satisfies all three by construction, so this holds
+    /// for whichever engine answers and no input is skipped — except for a
+    /// suppressed diff, which has no lines *because* the difference is not one
+    /// lines can carry, and so is no more a patch than it is a diff.
     #[test]
-    fn diff_lines_are_in_file_order_and_never_repeated(old in lf_lines(), new in lf_lines()) {
-        let old_text = joined(&old);
-        let new_text = joined(&new);
+    fn diff_lines_are_in_file_order_and_never_repeated((old, new) in ordering_pair()) {
+        let old_text = old.iter().map(|line| format!("{line}\n")).collect::<String>();
+        let new_text = new.iter().map(|line| format!("{line}\n")).collect::<String>();
         let diff =
             compute_with(Some(old_text.as_bytes()), Some(new_text.as_bytes()), "x.txt", true);
 
-        let mut problems = Vec::new();
+        let mut problems = patch_problems(&diff);
         let mut last_left = 0;
         let mut last_right = 0;
         let mut removed_lefts: Vec<u32> = Vec::new();
