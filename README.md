@@ -117,7 +117,7 @@ files (28)
   …
   added     rv/tests/cli.rs
 
-comments  0 open, 0 awaiting verification, 0 resolved, 0 outdated
+comments  0 open, 0 awaiting verification, 0 resolved, 0 abandoned, 0 outdated
 ```
 
 Every file reads `added` there only because this repository's whole history is
@@ -374,22 +374,18 @@ stack. Known and deliberate gaps:
 - **Line-scoped comments only.** One line, one comment, one line of text. No
   multi-line selections, no multi-line comment bodies, no symbol- or
   block-scoped comments.
-- **No verification or accept flow.** Every comment is `Open` and stays `Open`.
-  Adding a reply does *not* move a comment to `awaiting-verification`, and there
-  is no key to resolve, accept or reopen one. The `## Awaiting verification`,
-  `## Resolved` and `## Outdated` sections render, but nothing in milestone 1
-  puts anything in them. Editing `comments.json` by hand is the only way to
-  change a state today.
-- **No tree-sitter.** No symbol outline, no node-scoped anchors, no changed
-  symbol summaries, no fuzzy symbol picker. The sidebar is a flat file list.
+- **No verification flow.** Comments resolve (`r`, `rv resolve`), abandon
+  (`a`, `rv abandon`) and derive `outdated` when their code moves on — but a
+  reply does not move a comment to `awaiting-verification`, and nothing
+  automated verifies a fix. The human's pass in the TUI is the verification.
+- **No node-scoped anchors.** Symbols index for `n`/`N` and the `/` picker, but
+  a comment still anchors to a line, not a syntax node.
 - **No re-anchoring command.** Anchors carry a content hash and can survive an
   edit, but there is no `rv reanchor` to sweep them after you rewrite history.
 - **Must be run from the workspace root.** `rv` does not walk up the directory
   tree looking for `.jj/`. From a subdirectory it fails with
   `no jj workspace at <dir>`. Pass `--repo <root>` if you need to run it from
   elsewhere.
-- **Comments attribute to the first change in the range**, which for the default
-  `trunk()..@` is usually the working copy. Per-change attribution comes later.
 - **`rv` reviews the last snapshot of `@`, not your files on disk.** Because it
   is strictly read-only it never snapshots the working copy, so edits you made
   since the last jj command are invisible to it — a file you just created will

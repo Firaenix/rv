@@ -39,7 +39,19 @@ use rv_core::diff::FileDiff;
 
 use super::App;
 
-/// A file whose structural diff has not been computed yet.
+/// What the slot can hold for the worker.
+enum Job {
+    /// A file whose structural diff has not been computed yet.
+    Diff(Request),
+    /// The owning [`Refiner`] is being dropped: exit.
+    ///
+    /// Without this, `R` leaked one OS thread per press: `*self = fresh` dropped
+    /// the old refiner, but its worker stayed parked in `Condvar::wait` on a slot
+    /// nothing would ever notify again — the only `notify_one` in the codebase
+    /// goes through the app that had just been replaced.
+    Shutdown,
+}
+
 struct Request {
     file: usize,
     base: Option<Vec<u8>>,
@@ -55,7 +67,7 @@ pub(super) struct Refined {
 
 /// The worker, its slot, and the channel results come back on.
 pub(super) struct Refiner {
-    slot: Arc<(Mutex<Option<Request>>, Condvar)>,
+    slot: Arc<(Mutex<Option<Job>>, Condvar)>,
     results: Receiver<Refined>,
     sender: Sender<Refined>,
     started: bool,
@@ -73,23 +85,52 @@ impl Default for Refiner {
     }
 }
 
+impl Drop for Refiner {
+    /// Wakes the parked worker with a [`Job::Shutdown`] so it exits instead of
+    /// waiting forever on a condvar nothing owns any more.
+    fn drop(&mut self) {
+        if !self.started {
+            return;
+        }
+        let (slot, waiting) = &*self.slot;
+        if let Ok(mut held) = slot.lock() {
+            *held = Some(Job::Shutdown);
+        }
+        waiting.notify_one();
+    }
+}
+
 impl App {
     /// Asks for `file`'s structural diff, replacing whatever was waiting.
+    ///
+    /// This is also the only writer of the `refining` set, so the flag and the
+    /// request cannot disagree: replacing a pending request **un-flags the file
+    /// it belonged to**. The first version flagged in the caller and un-flagged
+    /// only when a result arrived — so a request dropped by replacement orphaned
+    /// its flag, pinning the file to the fast diff forever, polling the event
+    /// loop at 30ms for as long as it was selected, and hanging
+    /// `finish_loading` on a result that could never come.
     pub(super) fn refine(&mut self, file: usize, base: Option<Vec<u8>>, head: Option<Vec<u8>>) {
         let Some(path) = self.review.files.get(file).map(|f| f.path.clone()) else {
             return;
         };
         self.start_refiner();
+        self.refining.insert(file);
         let (slot, waiting) = &*self.refiner.slot;
         if let Ok(mut held) = slot.lock() {
             // Replaced, not queued: the reviewer has moved on from whatever was
-            // in there.
-            *held = Some(Request {
+            // in there — and the file it was for is no longer being refined.
+            let previous = held.replace(Job::Diff(Request {
                 file,
                 base,
                 head,
                 path,
-            });
+            }));
+            if let Some(Job::Diff(dropped)) = previous
+                && dropped.file != file
+            {
+                self.refining.remove(&dropped.file);
+            }
             waiting.notify_one();
         }
     }
@@ -116,8 +157,11 @@ impl App {
                     }
                     guard.take()
                 };
-                let Some(request) = request else {
-                    continue;
+                let request = match request {
+                    Some(Job::Diff(request)) => request,
+                    // The owning refiner is gone; so is the reason to exist.
+                    Some(Job::Shutdown) => return,
+                    None => continue,
                 };
                 let diff = diff::compute(request.base.as_deref(), request.head.as_deref(), &request.path);
                 if sender
@@ -152,6 +196,11 @@ impl App {
             *slot = Some(refined.diff);
         }
         self.refining.remove(&refined.file);
+        // Even when the structural engine fell back internally: `refined` is
+        // "the question was answered", not "the answer was difftastic's", so a
+        // machine with no `difft` re-asks once per file rather than once per
+        // selection.
+        self.refined.insert(refined.file);
         if let Some(number) = line {
             self.resettle_on_line(number);
         }

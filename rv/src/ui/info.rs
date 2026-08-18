@@ -34,7 +34,7 @@ pub(super) fn draw_info(frame: &mut Frame, app: &App, area: Rect) {
         Paragraph::new(lines(&info, width, app.info_scroll(), rows)).block(
             Block::bordered()
                 .border_type(BorderType::Rounded)
-                .title("▸ Change — i or Esc to close"),
+                .title("▸ Change — i hides"),
         ),
         area,
     );

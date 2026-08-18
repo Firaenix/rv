@@ -334,15 +334,17 @@ impl App {
     /// colour rather than in words.
     pub fn highlights(&self, side: Side) -> Option<&Highlights> {
         let file = self.selected_file()?;
-        let session = &self.review.session;
+        // The endpoints the diff on screen was read from — the selected
+        // change's, in the commits view — exactly as the anchor resolves them.
+        // Looking up against the review's endpoints painted a change-scoped
+        // line with the colours of whatever text stands at its number in a
+        // different version of the file.
+        let (base, head) = self.shown_endpoints();
         let (commit, path) = match side {
-            Side::Left => (
-                session.base_commit.as_str(),
-                file.source_path.as_deref().unwrap_or(&file.path),
-            ),
-            Side::Right => (session.head_commit.as_str(), file.path.as_str()),
+            Side::Left => (base, file.source_path.as_deref().unwrap_or(&file.path)),
+            Side::Right => (head, file.path.as_str()),
         };
-        self.highlights.get(&(commit.to_owned(), path.to_owned()))
+        self.highlights.get(&(commit, path.to_owned()))
     }
 
     /// The comment being typed, empty outside [`Mode::Comment`].

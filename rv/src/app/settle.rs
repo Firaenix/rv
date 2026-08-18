@@ -60,6 +60,9 @@ impl App {
             .settle_comment(&id, state, SettledBy::User)
             .with_context(|| format!("could not update the comment at {label}"))?;
         self.reload_comments()?;
+        // The same act must leave the same state on disk whichever hand
+        // performed it: the CLI's resolve refreshes the export, so this does.
+        crate::session::write_markdown(&self.review)?;
 
         self.status = if reopening {
             format!("reopened {label}")

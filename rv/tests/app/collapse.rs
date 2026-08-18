@@ -341,3 +341,39 @@ fn a_refresh_picks_up_comments_another_process_wrote() {
         "the comment another process wrote is not visible after a refresh"
     );
 }
+
+/// A refinement dropped by slot replacement is re-asked when the reviewer
+/// returns to the file — and its flag never outlives its request.
+///
+/// The first version flagged in the caller and un-flagged only when a result
+/// arrived, so a request replaced in the slot orphaned its flag: the file was
+/// pinned to the fast diff forever, the loop polled at 30ms whenever it was
+/// selected, and `finish_loading` hung on a result that could never come.
+#[test]
+fn a_dropped_refinement_is_reasked_and_never_orphans_its_flag() {
+    let workspace = Fixture::new();
+    let review = rv::session::build(workspace.root(), None, None).expect("build the review");
+    let mut app = rv::app::App::open(review, rv::app::DiffEngine::Auto).expect("open");
+
+    // Race through both files fast enough that requests replace each other in
+    // the slot, then settle everything that is still genuinely in flight.
+    for _ in 0..6 {
+        app.on_key(KeyCode::Char(']')).expect("next file");
+        app.on_key(KeyCode::Char('[')).expect("previous file");
+    }
+    app.finish_loading();
+    assert!(!app.refining(), "the selected file's flag survived its answer");
+
+    // Every file the walk touched either has its structural diff or is
+    // re-asked on selection — none is silently pinned to the fast one.
+    for _ in 0..2 {
+        app.on_key(KeyCode::Char(']')).expect("next file");
+        app.finish_loading();
+        let diff = app.selected_diff().expect("a diff");
+        assert!(
+            matches!(diff.source, DiffSource::Difftastic { .. }),
+            "a file stayed pinned to the fast diff: {:?}",
+            diff.source
+        );
+    }
+}

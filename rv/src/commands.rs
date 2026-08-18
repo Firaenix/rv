@@ -39,7 +39,7 @@ pub fn settle(review: &Review, id: &str, state: CommentState, by: SettledBy) -> 
         }
     };
     review.store.settle_comment(id, target, by)?;
-    session::write_markdown(review)?;
+    session::write_markdown_if_current(review)?;
     println!(
         "{said} {id} at {}:{}",
         comment.anchor.file, comment.anchor.line

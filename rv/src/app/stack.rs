@@ -147,6 +147,10 @@ impl App {
             }
         }
         self.focus = Focus::Diff;
+        // The sidebar's cursor follows the jump: left as it was, the next walk
+        // in the Files tab would re-select the pre-jump file from a row that no
+        // longer names the selection.
+        self.resettle_sidebar();
         Ok(())
     }
 

@@ -159,6 +159,17 @@ impl App {
             return Ok(());
         };
         if self.diffs[self.file_index].is_some() {
+            // A fast diff whose refinement was dropped — its request replaced in
+            // the slot while the reviewer scrolled past — is re-asked on return.
+            // Without this, one pass through a long list left every intermediate
+            // file pinned to the fast diff for the rest of the session.
+            let file = self.file_index;
+            if self.engine == DiffEngine::Auto
+                && !self.refining.contains(&file)
+                && !self.refined.contains(&file)
+            {
+                self.request_refinement(file)?;
+            }
             return Ok(());
         }
 
@@ -188,17 +199,42 @@ impl App {
             }
             DiffEngine::Structural => diff::compute(old.as_deref(), new.as_deref(), &head_path),
         });
-        if self.engine == DiffEngine::Auto {
-            let file = self.file_index;
-            self.refining.insert(file);
-            self.refine(file, old.clone(), new.clone());
-        }
         // Parsed from the very blobs the diff was computed from, so the spans a
         // line is painted with describe the text that line came from — and parsed
         // *off* this thread, so a large file draws now and colours in a moment.
         self.parse_highlights(base_commit, base_path, old.as_deref());
         self.parse_highlights(head_commit, head_path, new.as_deref());
+        if self.engine == DiffEngine::Auto {
+            self.refine(self.file_index, old, new);
+        }
         Ok(())
     }
 
+    /// Re-reads `file`'s blobs and asks the refiner for its structural diff.
+    ///
+    /// For a file whose first request was dropped by slot replacement. The blobs
+    /// are re-read rather than kept from the first load: keeping every
+    /// scrolled-past file's bytes alive for a maybe-return would trade a bounded
+    /// re-read on selection for unbounded memory on a large review.
+    fn request_refinement(&mut self, file: usize) -> Result<()> {
+        let Some(entry) = self.review.files.get(file) else {
+            return Ok(());
+        };
+        let base_path = entry.source_path.as_deref().unwrap_or(&entry.path).to_owned();
+        let head_path = entry.path.clone();
+        let base_commit = self.review.session.base_commit.clone();
+        let head_commit = self.review.session.head_commit.clone();
+        let old = self
+            .review
+            .repo
+            .read_blob(&base_commit, &base_path)
+            .with_context(|| format!("could not read {base_path} at the base of the review"))?;
+        let new = self
+            .review
+            .repo
+            .read_blob(&head_commit, &head_path)
+            .with_context(|| format!("could not read {head_path} at the head of the review"))?;
+        self.refine(file, old, new);
+        Ok(())
+    }
 }

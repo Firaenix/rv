@@ -95,9 +95,11 @@ worker's channel back.
 - State what is wrong, why it matters, and (if you have one) the fix you'd
   accept: `"content_hash is computed from the untrimmed line, so re-indenting
   breaks every anchor — hash the trimmed text"` beats `"hashing seems fragile"`.
-- Re-running `rv comment` with the same file, line, side and body **updates**
-  the existing comment rather than duplicating it (the id is seeded from those
-  four things). A different body on the same line is a second comment.
+- Re-running `rv comment` with the same file, line, side and body **usually
+  updates** the existing comment rather than duplicating it — the id is seeded
+  from those four things plus the owning change, so if the stack was rewritten
+  in between you may get a second comment instead. A different body on the same
+  line is always a second comment.
 
 ## Pitfalls
 

@@ -34,8 +34,11 @@ impl App {
         fresh.sidebar_tab = self.sidebar_tab;
         fresh.sidebar_hidden = self.sidebar_hidden;
         fresh.info_dismissed = self.info_dismissed;
-        fresh.collapsed = std::mem::take(&mut self.collapsed);
-        fresh.collapsed_dirs = std::mem::take(&mut self.collapsed_dirs);
+        // Cloned, not taken: `select_file` below can fail, and an error path
+        // that had already emptied the old app's fold state would leave the
+        // reviewer in the un-refreshed review with their folds gone.
+        fresh.collapsed = self.collapsed.clone();
+        fresh.collapsed_dirs = self.collapsed_dirs.clone();
 
         // The file, not the index: a rebased stack lists files in a new order,
         // and index 3 of the new list is not what the reviewer was reading.
@@ -49,6 +52,18 @@ impl App {
             fresh.select_file(index)?;
         }
         fresh.resettle_sidebar();
+        // A commits-tab refresh must show a commits-tab diff: the file was
+        // re-selected in the bookmark's terms above, and leaving it there would
+        // put the branch's diff under a change row — the screen/state
+        // disagreement the tab switch already guards against.
+        if fresh.sidebar_tab == super::SidebarTab::Commits
+            && let Some(crate::tree::NodeKind::File { index }) = fresh
+                .nodes()
+                .get(fresh.sidebar_row())
+                .map(|node| node.kind.clone())
+        {
+            fresh.select_node_file(index)?;
+        }
         fresh.status = format!(
             "refreshed — {} files, {} changes, {} comments",
             fresh.review.files.len(),

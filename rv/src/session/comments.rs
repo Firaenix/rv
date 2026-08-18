@@ -14,7 +14,7 @@ use rv_core::store::Comment;
 use rv_core::store::CommentState;
 
 use super::Review;
-use super::write_markdown;
+use super::write_markdown_if_current;
 
 /// The change a comment on `path` belongs to: the newest change in the range
 /// whose own diff touches it.
@@ -91,7 +91,7 @@ pub fn save_comment(
         .store
         .append_comment(&comment)
         .context("could not save the comment")?;
-    write_markdown(review)?;
+    write_markdown_if_current(review)?;
     Ok(comment)
 }
 

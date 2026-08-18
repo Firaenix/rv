@@ -197,7 +197,15 @@ pub fn write_markdown(review: &Review) -> Result<()> {
         .store
         .comments()
         .context("could not read the review's comments")?;
+    // Replies are folded from the *whole* document before anything is filtered:
+    // an answer to an out-of-range comment still reaches the store.
     fold_replies(review, &mut comments)?;
+    // The same view everywhere: the export lists what `rv status` counts and
+    // the TUI shows. Rendering the whole store made the worker's gate
+    // (`comments.open`) and its work list disagree — an out-of-range comment
+    // sat in `## Open` while status said there was no work. The store keeps
+    // every comment; a wider range renders them again.
+    let mut comments = in_range(review, comments);
     // Every load derives `outdated` — see [`crate::stale::mark_outdated`]. Doing
     // it in `rv status` and not here had the two commands report different states
     // for one review, which is worse than either being wrong: the export is what
@@ -210,6 +218,22 @@ pub fn write_markdown(review: &Review) -> Result<()> {
         .store
         .write_markdown(&document)
         .with_context(|| format!("could not write {}", review.store.markdown_path().display()))
+}
+
+/// [`write_markdown`], unless this `Review` describes a different range than
+/// the one the reviewer opened.
+///
+/// For the writers that refresh the export as a *side effect* — saving a
+/// comment, settling one. Those commands run with whatever `--from`/`--to` the
+/// invoker happened to pass, and rewriting the export against that range
+/// re-points its header and its in-range view away from the review the human
+/// is in. An explicit `rv render` still writes whatever range it was asked
+/// for, because being asked is the difference.
+pub fn write_markdown_if_current(review: &Review) -> Result<()> {
+    match review.store.read_session() {
+        Ok(stored) if stored.revset != review.session.revset => Ok(()),
+        _ => write_markdown(review),
+    }
 }
 
 /// Folds `**Reply:**` blocks found in the current `REVIEW-FEEDBACK.md` back

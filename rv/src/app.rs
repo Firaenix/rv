@@ -219,9 +219,10 @@ pub struct App {
     /// press of `n`.
     symbol_index: crate::index::Index,
     indexed_scope: Option<symbols::Scope>,
-    /// Files showing the fast diff while difftastic is still being asked — see
-    /// [`diffs`].
+    /// Files showing the fast diff while difftastic is still being asked, and
+    /// files whose structural answer has landed — whatever it was. See [`diffs`].
     refining: HashSet<usize>,
+    refined: HashSet<usize>,
     refiner: diffs::Refiner,
     /// Whether `i` has put the change tooltip away, and how far down it is
     /// scrolled.
@@ -353,6 +354,7 @@ impl App {
             symbol_index: crate::index::Index::default(),
             indexed_scope: None,
             refining: HashSet::new(),
+            refined: HashSet::new(),
             refiner: diffs::Refiner::default(),
             info_dismissed: false,
             info_scroll: 0,
