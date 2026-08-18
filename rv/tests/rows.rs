@@ -15,6 +15,7 @@
 use std::collections::HashSet;
 
 use proptest::prelude::*;
+use rv::rows::BodyKind;
 use rv::rows::Plan;
 use rv::rows::Row;
 use rv::rows::plan;
@@ -80,6 +81,22 @@ fn body_rows(plan: &Plan<'_>) -> Vec<String> {
         .iter()
         .filter_map(|row| match row {
             Row::BoxBody { text, .. } => Some(text.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Every body row as `(what it is, what it says)`, in order.
+///
+/// The kind is the whole reason it is here: [`rv::ui`] draws a reply dimmed,
+/// and the only thing that knows a row is reply text rather than comment text
+/// is this model. A test that read the `reply:` prefix out of the text instead
+/// would be asserting on a spelling the renderer must not have to know.
+fn body_rows_by_kind(plan: &Plan<'_>) -> Vec<(BodyKind, String)> {
+    plan.rows
+        .iter()
+        .filter_map(|row| match row {
+            Row::BoxBody { kind, text, .. } => Some((*kind, text.clone())),
             _ => None,
         })
         .collect()
@@ -221,6 +238,65 @@ fn a_reply_renders_inside_the_same_box() {
             .count(),
         1,
         "and it is the same box, not a second one"
+    );
+}
+
+/// The rows of a reply say that they are a reply, so the renderer can dim them
+/// without parsing the text back for a prefix it wrote itself.
+#[test]
+fn a_reply_marks_its_rows_as_reply_text() {
+    let diff = diff_of(&["fn a() {"]);
+    let mut comment = comment_with_body("needs a doc");
+    comment.reply = Some("added one".to_owned());
+
+    let plan = plan(&diff, &|_| vec![&comment], &HashSet::new(), 40);
+
+    assert_eq!(
+        body_rows_by_kind(&plan),
+        vec![
+            (BodyKind::Body, "needs a doc".to_owned()),
+            (BodyKind::Reply, "reply: added one".to_owned()),
+        ],
+        "the body and the reply are not told apart, so nothing can dim one of them"
+    );
+}
+
+/// ...and *every* row of a wrapped reply, not only the one carrying the
+/// `reply:` prefix: a reply that faded back to full contrast halfway down would
+/// read as the reviewer's own words again.
+#[test]
+fn every_wrapped_row_of_a_reply_is_marked_as_reply_text() {
+    let diff = diff_of(&["fn a() {"]);
+    let mut comment = comment_with_body("needs a doc that explains what this function is for");
+    comment.reply = Some(
+        "added one, and it now says what the function is for and what it refuses to do".to_owned(),
+    );
+
+    let plan = plan(&diff, &|_| vec![&comment], &HashSet::new(), 20);
+
+    let rows = body_rows_by_kind(&plan);
+    let replies: Vec<String> = rows
+        .iter()
+        .filter(|(kind, _)| *kind == BodyKind::Reply)
+        .map(|(_, text)| text.clone())
+        .collect();
+    let bodies: Vec<String> = rows
+        .iter()
+        .filter(|(kind, _)| *kind == BodyKind::Body)
+        .map(|(_, text)| text.clone())
+        .collect();
+
+    assert!(
+        replies.len() > 1 && bodies.len() > 1,
+        "the fixture no longer wraps either half, so this proves nothing: {rows:?}"
+    );
+    assert!(
+        replies.join(" ").contains("what it refuses to do"),
+        "the tail of the reply is not marked as reply text: {rows:?}"
+    );
+    assert!(
+        bodies.iter().all(|text| !text.contains("added one")),
+        "the comment's own body was marked as a reply: {rows:?}"
     );
 }
 

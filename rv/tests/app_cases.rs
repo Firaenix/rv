@@ -840,6 +840,18 @@ fn any_body() -> impl Strategy<Value = String> {
 /// `s`, `Tab`, `Enter`, `Esc`, `q` — every one of which has a row below, and
 /// the rows after them are keys the table deliberately leaves inert.
 ///
+/// README's table carries one row more than this one: `Ctrl+C`, which
+/// `on_key_event` answers before the mode is dispatched at all and which the
+/// page lists beside the rest because a reviewer looking for the way out does
+/// not care which function answers them. It is pinned in `rv/tests/app.rs`
+/// (`ctrl_c_quits_instead_of_opening_a_comment`), where a `KeyEvent` with
+/// modifiers can be built; every row here is a bare `KeyCode`.
+///
+/// That README table is itself held to this key set by
+/// `rv/tests/app.rs::the_readme_documents_every_browse_binding`, in both
+/// directions, so a binding cannot ship undocumented and a row cannot outlive
+/// its key.
+///
 /// The start state is a fresh reviewer on `alpha.rs` (five-plus diff lines,
 /// first of five files) with the diff focused and **no comments anywhere in the
 /// review**, so every direction has somewhere to go except `k`/`Up` and `Left`,
@@ -939,6 +951,33 @@ fn browse_keybindings(
             SidebarTab::Files
         },
         "{key:?} left the sidebar listing the wrong thing"
+    );
+}
+
+/// README draws the reviewer as an ASCII mock-up, status bar and all, and that
+/// bar is the keymap a reader meets *first* — before either table, and in the
+/// one place on the page that claims to be a picture of the running program.
+///
+/// So it is held to the real one rather than to a list of keys: [`HELP`] is
+/// asserted equal to `App::status()` on a fresh reviewer by every row of
+/// [`browse_keybindings`] above, and asserted to appear in the page here, which
+/// chains the drawing to the program through the constant. The previous wave
+/// changed `HELP` and left the mock-up showing the old bar, noted that nothing
+/// tested it, and left it to this task; a mock-up that has drifted teaches a
+/// keymap the binary does not have, which is worse than no picture at all.
+///
+/// Substring rather than a whole line, because the mock-up wraps the bar in the
+/// box-drawing characters that make it a picture. What is pinned is the bar's
+/// text, not the frame drawn around it.
+#[test]
+fn the_readme_mockup_draws_the_status_bar_the_reviewer_starts_on() {
+    let readme = fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../README.md"))
+        .expect("read README.md");
+    assert!(
+        readme.contains(HELP),
+        "README's mock-up of the reviewer shows a status bar that is not the \
+         one `App::new` starts on ({HELP:?}), so the first keymap a reader sees \
+         is not this binary's"
     );
 }
 

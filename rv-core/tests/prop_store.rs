@@ -5,8 +5,9 @@
 //! properties here go after the *laws* the module's doc comment claims, with
 //! oracles that are independent of the implementation wherever possible:
 //!
-//! * an in-memory upsert reduction recomputed with a different data structure
-//!   (`HashMap` + insertion-order `Vec`) as the oracle for `comments()`,
+//! * an in-memory upsert-and-delete reduction recomputed with a different data
+//!   structure (`HashMap` + insertion-order `Vec`) as the oracle for
+//!   `comments()`,
 //! * for the interleaving properties, an oracle derived from the operation
 //!   *sequence* rather than read back off disk — a read-back oracle bakes any
 //!   damage an operation did mid-sequence into both sides of the comparison,
@@ -15,12 +16,14 @@
 //! * whole-directory byte snapshots as a conservation oracle ("nothing lost,
 //!   nothing invented") for operations that must not touch other files,
 //! * permutation invariance, idempotence and last-write-wins as algebraic laws,
-//! * and, for the module's headline crash-safety claims, two *forced* failures
+//! * and, for the module's headline crash-safety claims, *forced* failures
 //!   rather than a wait for a real crash: a snapshot write made to fail
 //!   (`comments.json` is the authority on which comments exist, so a comment
-//!   whose snapshot could not be written must not appear in it) and a file
-//!   handle opened before a write and read after it (a rename leaves the old
-//!   inode whole, so the holder sees the complete previous document — a plain
+//!   whose snapshot could not be written must not appear in it), the same
+//!   ordering read backwards on the delete path (a `comments.json` rewrite made
+//!   to fail, after which the snapshot must still be there), and a file handle
+//!   opened before a write and read after it (a rename leaves the old inode
+//!   whole, so the holder sees the complete previous document — a plain
 //!   in-place rewrite does not).
 //!
 //! Two shapes recur because both are places identity gets matched by something
@@ -145,23 +148,60 @@ fn snapshot_ids(root: &Path) -> Vec<String> {
     ids
 }
 
-/// The oracle for `Store::comments()`: last write wins per id, first-insertion
-/// order preserved. Deliberately computed with a different shape than the
-/// store's in-place `iter_mut().find()` — a hash map for the values plus a
-/// separate vector for the order — so it is a recomputation rather than a
-/// restatement.
-fn upsert_reduce(sequence: &[Comment]) -> Vec<Comment> {
-    let mut order: Vec<String> = Vec::new();
-    let mut latest: HashMap<String, Comment> = HashMap::new();
-    for comment in sequence {
-        if latest.insert(comment.id.clone(), comment.clone()).is_none() {
-            order.push(comment.id.clone());
+/// Conservation over `.review/snapshots/`, in both directions: every comment in
+/// `expected` has a snapshot holding exactly its anchor's context lines, and no
+/// other snapshot file exists — no comment without one, no orphan left by a
+/// removal, and nothing invented.
+///
+/// The content oracle is `split('\n')`, the genuine inverse of the `join("\n")`
+/// the store writes, which only works because context lines never contain `\n`
+/// (they come from splitting file text, and [`hostile_line`] keeps the
+/// generated ones that way). The empty-context case is separate because `join`
+/// maps `[]` to `""` while `split` maps `""` back to `[""]`; that asymmetry is
+/// inherent to the format, not a bug.
+fn snapshots_match(
+    root: &Path,
+    expected: &[Comment],
+) -> Result<(), proptest::test_runner::TestCaseError> {
+    let mut expected_ids = ids_of(expected);
+    expected_ids.sort();
+    prop_assert_eq!(
+        snapshot_ids(root),
+        expected_ids,
+        "exactly the comments that exist may have snapshots"
+    );
+    for comment in expected {
+        let path = root.join(".review/snapshots").join(&comment.id);
+        let snapshot = fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("read snapshot {}: {error}", path.display()));
+        if comment.anchor.context.is_empty() {
+            prop_assert_eq!(
+                snapshot.as_str(),
+                "",
+                "no context lines means an empty snapshot"
+            );
+        } else {
+            prop_assert_eq!(
+                snapshot.split('\n').collect::<Vec<_>>(),
+                comment
+                    .anchor
+                    .context
+                    .iter()
+                    .map(String::as_str)
+                    .collect::<Vec<_>>()
+            );
         }
     }
-    order
-        .into_iter()
-        .map(|id| latest.remove(&id).expect("id was recorded"))
-        .collect()
+    Ok(())
+}
+
+/// The oracle for `Store::comments()` over a sequence of appends and nothing
+/// else: last write wins per id, first-insertion order preserved. A thin
+/// specialization of [`expected_comments`], the model that also knows about
+/// removals, so the two can never drift apart.
+fn upsert_reduce(sequence: &[Comment]) -> Vec<Comment> {
+    let appends: Vec<Op> = sequence.iter().cloned().map(Op::Append).collect();
+    expected_comments(&appends)
 }
 
 /// A concrete, boring comment, for the table-driven cases where the content is
@@ -423,27 +463,60 @@ fn exclude_seed() -> impl Strategy<Value = String> {
 }
 
 /// One store operation, so a property can drive an arbitrary interleaving of
-/// everything the module writes.
+/// everything the module writes. Every mutating method on `Store` has a
+/// variant here — `append_comment`, `remove_comment`, `write_session`,
+/// `write_markdown`, `ensure_excluded` — which is what lets the properties
+/// below say "every write the module makes" and mean it.
 #[derive(Clone, Debug)]
 enum Op {
     Append(Comment),
+    Remove(String),
     WriteSession(Session),
     WriteMarkdown(String),
     EnsureExcluded,
 }
 
+/// Ids for [`Op::Remove`] to aim at. Mostly the same pool [`Op::Append`] draws
+/// from, so a removal usually finds its target; sometimes an id that pool never
+/// mints (`id10` is outside `id_pool(4)`, and `gone` is in no pool at all), so
+/// the unknown-id path — a no-op that must neither fail nor disturb anything —
+/// gets exercised in the same sequences.
+///
+/// [`ID_POOL`]'s prefix structure does double duty on the delete path: removing
+/// `id0` must not take `id00` with it, and removing `id` must not empty the
+/// store, so `existing.id != id` is distinguishable from
+/// `!existing.id.starts_with(id)`.
+fn removable_id() -> impl Strategy<Value = String> {
+    prop_oneof![
+        8 => prop::sample::select(id_pool(4)),
+        1 => Just("id10".to_owned()),
+        1 => Just("gone".to_owned()),
+    ]
+}
+
 fn op() -> impl Strategy<Value = Op> {
     prop_oneof![
         4 => comment(prop::sample::select(id_pool(4)), 8).prop_map(Op::Append),
+        3 => removable_id().prop_map(Op::Remove),
         2 => session(8, 2).prop_map(Op::WriteSession),
         2 => hostile_text(20).prop_map(Op::WriteMarkdown),
         2 => Just(Op::EnsureExcluded),
     ]
 }
 
+/// Appends and removals only, in a ratio that makes long append/remove/re-append
+/// histories over a handful of ids the common case rather than a rarity.
+fn append_or_remove() -> impl Strategy<Value = Op> {
+    prop_oneof![
+        3 => comment(prop::sample::select(id_pool(4)), 8).prop_map(Op::Append),
+        2 => removable_id().prop_map(Op::Remove),
+    ]
+}
+
 fn apply(store: &Store, op: &Op) -> Result<(), rv_core::store::Error> {
     match op {
         Op::Append(comment) => store.append_comment(comment),
+        Op::Remove(id) => store.remove_comment(id).map(|_| ()),
         Op::WriteSession(session) => store.write_session(session),
         Op::WriteMarkdown(document) => store.write_markdown(document),
         Op::EnsureExcluded => store.ensure_excluded().map(|_| ()),
@@ -452,26 +525,56 @@ fn apply(store: &Store, op: &Op) -> Result<(), rv_core::store::Error> {
 
 // --- oracles computed from an op *sequence*, never read back from disk -------
 //
-// The point of these four is that they are a model of what the sequence
+// The point of these three is that they are a model of what the sequence
 // implies, evaluated without touching the store. A property whose expectation
 // is a second read through the same code path can only catch a cache; one whose
 // expectation comes from the sequence catches an operation that wrote the
 // wrong bytes, or wrote them into somebody else's file.
 
-/// Every comment the sequence appended, in order.
-fn appended_comments(ops: &[Op]) -> Vec<Comment> {
-    ops.iter()
-        .filter_map(|op| match op {
-            Op::Append(comment) => Some(comment.clone()),
-            _ => None,
-        })
+/// What `comments.json` must hold after the sequence: every `Append` upserted
+/// by id — last write wins, first-insertion order preserved — and every
+/// `Remove` dropping that id's entry, or, when the id is not there, doing
+/// nothing whatsoever, exactly as `remove_comment` documents.
+///
+/// Deliberately computed with a different shape than the store's in-place
+/// `iter_mut().find()` and `retain` — a hash map for the values plus a separate
+/// vector for the order — so it is a recomputation rather than a restatement.
+/// The order vector is what makes the removal clause say something: it records
+/// *where* a surviving comment sits, so a delete that shuffles the survivors,
+/// or one that resurrects a removed id at its old position on re-append, both
+/// diverge from it.
+fn expected_comments(ops: &[Op]) -> Vec<Comment> {
+    let mut order: Vec<String> = Vec::new();
+    let mut latest: HashMap<String, Comment> = HashMap::new();
+    for op in ops {
+        match op {
+            Op::Append(comment) => {
+                if latest.insert(comment.id.clone(), comment.clone()).is_none() {
+                    order.push(comment.id.clone());
+                }
+            }
+            Op::Remove(id) => {
+                if latest.remove(id).is_some() {
+                    order.retain(|surviving| surviving != id);
+                }
+            }
+            Op::WriteSession(_) | Op::WriteMarkdown(_) | Op::EnsureExcluded => {}
+        }
+    }
+    order
+        .into_iter()
+        .map(|id| latest.remove(&id).expect("id was recorded"))
         .collect()
 }
 
-/// What `comments.json` must hold after the sequence: the upsert reduction of
-/// its appends, and nothing else.
-fn expected_comments(ops: &[Op]) -> Vec<Comment> {
-    upsert_reduce(&appended_comments(ops))
+/// Whether the sequence ever wrote `comments.json` at all — which is exactly
+/// "did it append?", since an append always writes the file and a removal only
+/// ever rewrites one that an append already created. A sequence that appends
+/// and then removes everything leaves the file behind holding `[]`, so the
+/// file's *existence* cannot be predicted from [`expected_comments`] being
+/// non-empty.
+fn wrote_comments_file(ops: &[Op]) -> bool {
+    ops.iter().any(|op| matches!(op, Op::Append(_)))
 }
 
 /// What `REVIEW-FEEDBACK.md` must hold: the last document written, or nothing
@@ -661,6 +764,19 @@ proptest! {
     /// in-memory cache, because any damage an op does mid-sequence is baked
     /// into both sides of the comparison. Comparing against the sequence pins
     /// what was written as well as that both handles agree about it.
+    ///
+    /// "Everything" includes the one write whose result is not a file the store
+    /// reads back: `ensure_excluded` is asked, on the fresh handle, whether the
+    /// line still needs adding, and its answer must be "no" exactly when the
+    /// sequence already excluded the directory. That check runs last, since it
+    /// is the one assertion here that writes.
+    ///
+    /// The writing handle is asked about all three readable files *while it is
+    /// still alive*, inside the block, which is the half of the claim the
+    /// reopened handle cannot make: a `write_session` that buffered its bytes
+    /// and flushed them on `Drop` would satisfy every assertion below the block
+    /// and still not be write-through. Only an assertion made before the handle
+    /// is dropped can tell the two apart.
     #[test]
     fn everything_written_is_visible_to_a_freshly_opened_store(
         ops in prop::collection::vec(op(), 1..7),
@@ -673,12 +789,20 @@ proptest! {
             }
             prop_assert_eq!(store.comments().expect("read comments"), expected_comments(&ops));
             prop_assert_eq!(fs::read(store.markdown_path()).ok(), expected_markdown(&ops));
+            prop_assert_eq!(store.read_session().ok(), expected_session(&ops));
         }
 
         let reopened = Store::open(repo.path()).expect("reopen store");
         prop_assert_eq!(reopened.comments().expect("read comments"), expected_comments(&ops));
         prop_assert_eq!(fs::read(reopened.markdown_path()).ok(), expected_markdown(&ops));
         prop_assert_eq!(reopened.read_session().ok(), expected_session(&ops));
+
+        let ran_ensure_excluded = ops.iter().any(|op| matches!(op, Op::EnsureExcluded));
+        prop_assert_eq!(
+            reopened.ensure_excluded().expect("ensure_excluded on the fresh handle"),
+            !ran_ensure_excluded,
+            "a fresh handle must see the exclusion the sequence did (or did not) record"
+        );
     }
 
     /// Hostile text survives `comments.json` byte-identically. JSON has to
@@ -739,14 +863,9 @@ proptest! {
     #![proptest_config(config(20))]
 
     /// Every comment in `comments.json` has a snapshot holding its anchor's
-    /// context lines, and no snapshot exists for an id never appended.
-    ///
-    /// The oracle is `split('\n')`, the genuine inverse of the `join("\n")`
-    /// the store uses — which only works because context lines never contain
-    /// `\n` (they come from splitting file text). The empty-context case is
-    /// checked separately, since `join` maps `[]` to `""` while `split` maps
-    /// `""` back to `[""]`; that asymmetry is inherent to the format, not a
-    /// bug.
+    /// context lines, and no snapshot exists for an id never appended — the
+    /// conservation law [`snapshots_match`] states, over an append-only
+    /// sequence.
     #[test]
     fn each_appended_comment_snapshots_its_context_lines(
         sequence in comment_sequence(1..6),
@@ -757,27 +876,61 @@ proptest! {
             store.append_comment(comment).expect("append comment");
         }
 
-        let stored = store.comments().expect("read comments");
-        for comment in &stored {
-            let path = repo.path().join(".review/snapshots").join(&comment.id);
-            let snapshot = fs::read_to_string(&path)
-                .unwrap_or_else(|error| panic!("read snapshot {}: {error}", path.display()));
-            if comment.anchor.context.is_empty() {
-                prop_assert_eq!(snapshot.as_str(), "",
-                    "no context lines means an empty snapshot");
-            } else {
-                prop_assert_eq!(
-                    snapshot.split('\n').collect::<Vec<_>>(),
-                    comment.anchor.context.iter().map(String::as_str).collect::<Vec<_>>()
-                );
+        snapshots_match(repo.path(), &store.comments().expect("read comments"))?;
+    }
+
+    /// Appends and removals interleaved over a handful of ids: after *every*
+    /// step, `comments()` is exactly what the model says, and at the end the
+    /// snapshots directory holds exactly the surviving comments' context and
+    /// nothing else.
+    ///
+    /// Three separate claims about `remove_comment` ride on this, none of them
+    /// reachable from an append-only sequence:
+    ///
+    /// * the entry goes, and only that entry — the model's order vector pins
+    ///   the survivors' positions as well as their identity, and [`ID_POOL`]'s
+    ///   prefix structure means a delete matching on `starts_with` instead of
+    ///   `==` takes bystanders with it;
+    /// * the snapshot goes with it, so a removal that forgets the second write
+    ///   leaves an orphan that [`snapshots_match`] sees;
+    /// * and the returned `bool` is the truth about whether anything was there,
+    ///   which is the store's answer to "did this id exist?" and is checked
+    ///   against the model *before* the call, including for the ids the append
+    ///   pool never mints.
+    ///
+    /// Checking after every step rather than only at the end is what makes a
+    /// shrunk counterexample point at the operation that broke it instead of at
+    /// the whole history.
+    #[test]
+    fn appends_and_removals_leave_exactly_the_model_comments_and_snapshots(
+        ops in prop::collection::vec(append_or_remove(), 1..10),
+    ) {
+        let repo = repo_root();
+        let store = Store::open(repo.path()).expect("open store");
+
+        let mut so_far: Vec<Op> = Vec::new();
+        for op in &ops {
+            let before = expected_comments(&so_far);
+            so_far.push(op.clone());
+            match op {
+                Op::Remove(id) => {
+                    let present = before.iter().any(|comment| comment.id == *id);
+                    let removed = store.remove_comment(id).expect("remove comment");
+                    prop_assert_eq!(removed, present,
+                        "remove_comment({:?}) reported {:?} with {:?} on disk",
+                        id, removed, ids_of(&before));
+                }
+                _ => apply(&store, op).expect("apply op"),
             }
+            prop_assert_eq!(store.comments().expect("read comments"),
+                expected_comments(&so_far), "after {:?}", op);
         }
 
-        // Conservation in both directions: exactly the ids in comments.json
-        // have snapshots — no comment without one, no orphan on the happy path.
-        let mut expected = ids_of(&stored);
-        expected.sort();
-        prop_assert_eq!(snapshot_ids(repo.path()), expected);
+        snapshots_match(repo.path(), &expected_comments(&ops))?;
+        prop_assert!(
+            stray_temp_files(repo.path()).is_empty(),
+            "stray temp files: {:?}", stray_temp_files(repo.path())
+        );
     }
 
     /// The module's headline crash-safety claim, tested by forcing the failure
@@ -1018,8 +1171,10 @@ proptest! {
     #![proptest_config(config(16))]
 
     /// After an arbitrary interleaving of every operation the module performs,
-    /// each of the four files it touches holds exactly what *its own*
-    /// operations wrote — and the tree contains nothing else.
+    /// each of the files it touches — `comments.json`, `session.toml`,
+    /// `REVIEW-FEEDBACK.md`, `.git/info/exclude` and the per-comment snapshots
+    /// — holds exactly what *its own* operations wrote, and the tree contains
+    /// nothing else.
     ///
     /// This is the isolation law stated positively, with an oracle computed
     /// from the op sequence rather than read back from disk. That distinction
@@ -1073,7 +1228,7 @@ proptest! {
         // are entitled to create exist, and nothing they never mentioned does.
         let mut entitled: BTreeSet<PathBuf> = BTreeSet::new();
         entitled.insert(PathBuf::from(".git/info/exclude"));
-        if !expected.is_empty() {
+        if wrote_comments_file(&ops) {
             entitled.insert(PathBuf::from(".review/comments.json"));
         }
         if expected_session(&ops).is_some() {
@@ -1086,6 +1241,8 @@ proptest! {
             entitled.insert(Path::new(".review/snapshots").join(&comment.id));
         }
         prop_assert_eq!(relative_files(repo.path()), entitled);
+        // And the snapshots hold their own comment's context, not merely exist.
+        snapshots_match(repo.path(), &expected)?;
     }
 
     /// Two live `Store` handles over one root are interchangeable. Writes
@@ -1172,7 +1329,15 @@ proptest! {
 
     /// Each write touches only its own file. `comments.json`, `session.toml`
     /// and `REVIEW-FEEDBACK.md` are independent: rewriting any one of them
-    /// leaves the other two byte-identical.
+    /// leaves the other two byte-identical — including the one write that
+    /// *deletes* rather than adds, which has a second file of its own to
+    /// remove and so has two chances to reach past `comments.json`.
+    ///
+    /// That second chance is the snapshot unlink, and no comparison of sibling
+    /// files can see it: a removal that took the whole snapshots directory with
+    /// it leaves `session.toml` and `REVIEW-FEEDBACK.md` byte-identical. So the
+    /// removal is followed by [`snapshots_match`], which holds the delete to the
+    /// one file it owns.
     #[test]
     fn writing_one_file_never_disturbs_the_others(
         comments in distinct_comments(1..4),
@@ -1212,9 +1377,18 @@ proptest! {
         store.write_markdown(&document).expect("rewrite markdown");
         prop_assert_eq!(fs::read(&comments_path).expect("read comments.json"), comments_bytes,
             "write_markdown touched comments.json");
-        prop_assert_eq!(fs::read(&session_path).expect("read session.toml"), session_bytes,
+        prop_assert_eq!(fs::read(&session_path).expect("read session.toml"), session_bytes.clone(),
             "write_markdown touched session.toml");
         prop_assert_eq!(store.comments().expect("read comments").len(), comments.len() + 1);
+
+        let markdown_bytes = fs::read(&markdown_path).expect("read markdown");
+        prop_assert!(store.remove_comment(&extra.id).expect("remove the extra comment"));
+        prop_assert_eq!(fs::read(&session_path).expect("read session.toml"), session_bytes,
+            "remove_comment touched session.toml");
+        prop_assert_eq!(fs::read(&markdown_path).expect("read markdown"), markdown_bytes,
+            "remove_comment touched REVIEW-FEEDBACK.md");
+        prop_assert_eq!(store.comments().expect("read comments").len(), comments.len());
+        snapshots_match(repo.path(), &store.comments().expect("read comments"))?;
     }
 }
 
@@ -1414,6 +1588,222 @@ fn a_comments_json_the_process_may_not_open_is_an_error_not_silent_emptiness() {
     );
     // And the data really was there to be lost.
     assert_eq!(store.comments().expect("read comments").len(), 1);
+}
+
+// ---------------------------------------------------------------------------
+// removal: the snapshot delete, and the states it has to tolerate
+// ---------------------------------------------------------------------------
+
+/// `remove_comment` deletes the `comments.json` entry first and the snapshot
+/// second, and treats a snapshot that is *already* gone as success rather than
+/// as an IO error: the delete is a step towards "no such comment", and finding
+/// that step already taken is not a failure.
+///
+/// The state is reachable without any crash at all. `.review/` is a scratch
+/// directory deliberately kept out of version control, so nothing restores it:
+/// a stray `rm`, a partial copy between machines, a half-restored backup or a
+/// cleanup script all leave `comments.json` — the authority on which comments
+/// exist — still listing a comment whose snapshot is not there. Without the
+/// `NotFound` arm that reviewer's next delete fails, and fails *after* the
+/// entry has already been rewritten out, so the caller is told the removal
+/// failed while the store has in fact performed it.
+///
+/// The two cases reach the arm by different routes — the snapshot file unlinked
+/// on its own, and the whole snapshots directory gone — because a handler that
+/// happens to tolerate one need not tolerate the other.
+#[rstest]
+#[case::the_snapshot_file_was_deleted(".review/snapshots/id0", true)]
+#[case::the_whole_snapshots_directory_was_deleted(".review/snapshots", false)]
+fn removing_a_comment_whose_snapshot_is_already_gone_still_succeeds(
+    #[case] pruned: &str,
+    #[case] survivor_keeps_its_snapshot: bool,
+) {
+    let repo = repo_root();
+    let store = Store::open(repo.path()).expect("open store");
+    store
+        .append_comment(&fixed_comment("id0"))
+        .expect("append id0");
+    store
+        .append_comment(&fixed_comment("id1"))
+        .expect("append id1");
+
+    // Out of band: nothing the store did, exactly as a stray `rm` leaves it.
+    let pruned = repo.path().join(pruned);
+    if pruned.is_dir() {
+        fs::remove_dir_all(&pruned).expect("prune the snapshots directory");
+    } else {
+        fs::remove_file(&pruned).expect("prune the snapshot file");
+    }
+
+    let removed = store
+        .remove_comment("id0")
+        .expect("a removal whose snapshot is already gone must still succeed");
+
+    assert!(
+        removed,
+        "the comment was in comments.json, so the removal did remove one"
+    );
+    assert_eq!(
+        ids_of(&store.comments().expect("read comments")),
+        vec!["id1".to_owned()],
+        "the entry is gone and the other comment is untouched"
+    );
+    assert!(!repo.path().join(".review/snapshots/id0").exists());
+    assert_eq!(
+        repo.path().join(".review/snapshots/id1").exists(),
+        survivor_keeps_its_snapshot,
+        "the removal must not reach past the snapshot it owns"
+    );
+    assert!(stray_temp_files(repo.path()).is_empty());
+    // And the retry an interrupted delete issues is the ordinary no-op.
+    assert!(
+        !store
+            .remove_comment("id0")
+            .expect("a second removal of the same id must succeed too")
+    );
+}
+
+/// The residue a crash *inside* `remove_comment` leaves, held to the same word
+/// the module uses for the append path's residue: inert.
+///
+/// The delete rewrites `comments.json` first and unlinks the snapshot second,
+/// so the window between the two is a live store whose snapshots directory
+/// holds a file no entry names. `an_orphaned_snapshot_is_harmless_and_a_missing_comments_json_reads_as_empty`
+/// covers the *append* path's version of that state, where `comments.json` does
+/// not exist at all; this is the delete path's version, where it exists and
+/// lists other comments, which is a different code path through `comments()`.
+///
+/// What the store must make of it: the removed comment stays removed rather
+/// than being resurrected from the snapshot that outlived it, the surviving
+/// comment is untouched, the retry an interrupted delete issues reports `false`
+/// and succeeds, and re-adding the same id overwrites the stale snapshot with
+/// the new comment's context instead of adopting it.
+#[test]
+fn a_crash_between_a_removals_two_writes_leaves_an_inert_orphan() {
+    let repo = repo_root();
+    let store = Store::open(repo.path()).expect("open store");
+    store
+        .append_comment(&fixed_comment("id0"))
+        .expect("append id0");
+    store
+        .append_comment(&fixed_comment("id1"))
+        .expect("append id1");
+    let snapshots = repo.path().join(".review/snapshots");
+
+    // Exactly the state a crash between the two writes leaves: the entry
+    // rewritten out of comments.json, the snapshot never unlinked.
+    store.remove_comment("id0").expect("remove id0");
+    fs::write(snapshots.join("id0"), "the context id0 had").expect("plant the orphan");
+
+    assert_eq!(
+        ids_of(&store.comments().expect("read comments")),
+        vec!["id1".to_owned()],
+        "an orphaned snapshot must not resurrect the comment it belonged to"
+    );
+    assert!(
+        !store
+            .remove_comment("id0")
+            .expect("the retry an interrupted delete issues must succeed"),
+        "there is no entry left to remove, so the retry removed nothing"
+    );
+    assert_eq!(
+        fs::read_to_string(snapshots.join("id1")).expect("read the survivor's snapshot"),
+        fixed_comment("id1").anchor.context.join("\n"),
+        "the surviving comment's snapshot is untouched"
+    );
+
+    // And the id can be reused: the stale snapshot is replaced, not adopted.
+    let mut newcomer = fixed_comment("id0");
+    newcomer.anchor.context = vec!["fn b() {}".to_owned(), "// and a second line".to_owned()];
+    store
+        .append_comment(&newcomer)
+        .expect("re-add the id the orphan belongs to");
+
+    assert_eq!(
+        ids_of(&store.comments().expect("read comments")),
+        vec!["id1".to_owned(), "id0".to_owned()],
+        "a re-added comment is a new entry at the end, not a revival of its old slot"
+    );
+    assert_eq!(
+        fs::read_to_string(snapshots.join("id0")).expect("read the reused snapshot"),
+        "fn b() {}\n// and a second line",
+        "a stale orphaned snapshot must be replaced, not kept"
+    );
+    assert!(stray_temp_files(repo.path()).is_empty());
+}
+
+/// True when this process actually cannot create a file in a mode-`0o500`
+/// directory. It can when it runs as root, and on a filesystem that does not
+/// enforce permission bits — in either case the test below would be testing
+/// nothing, so it skips rather than fails. The file-mode twin of
+/// [`permission_bits_bite`], and separate from it because the two ask about
+/// different bits: reading a file versus creating one in a directory.
+#[cfg(unix)]
+fn directory_permission_bits_bite(probe_dir: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+
+    let probe = probe_dir.join(".permission-probe-dir");
+    fs::create_dir(&probe).expect("create the probe directory");
+    fs::set_permissions(&probe, fs::Permissions::from_mode(0o500))
+        .expect("chmod the probe directory");
+    let enforced = fs::write(probe.join("probe"), b"probe").is_err();
+    fs::set_permissions(&probe, fs::Permissions::from_mode(0o700))
+        .expect("restore the probe directory");
+    fs::remove_dir_all(&probe).expect("remove the probe directory");
+    enforced
+}
+
+/// The removal half of the module's crash-safety ordering, forced rather than
+/// waited for, and the mirror of
+/// [`a_comment_whose_snapshot_cannot_be_written_is_never_recorded`]:
+/// `remove_comment` rewrites `comments.json` *before* deleting the snapshot, so
+/// when that rewrite cannot happen the snapshot must still be on disk and the
+/// comment must still be listed — no half-deleted comment, no live entry
+/// pointing at a snapshot that has been unlinked out from under it.
+///
+/// `write_atomic` creates its temp file in the destination's own directory, so
+/// a `.review/` this process may not write to is a rewrite that cannot even
+/// start, while leaving `.review/snapshots/` writable and `comments.json`
+/// readable — which is exactly the shape that tells the two orderings apart. A
+/// removal that deleted the snapshot first would leave `comments.json` claiming
+/// a comment whose context is gone, and the whole-directory comparison sees it.
+#[cfg(unix)]
+#[test]
+fn a_removal_whose_comments_json_cannot_be_written_deletes_nothing() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let repo = repo_root();
+    let store = Store::open(repo.path()).expect("open store");
+    store
+        .append_comment(&fixed_comment("id0"))
+        .expect("append id0");
+    store
+        .append_comment(&fixed_comment("id1"))
+        .expect("append id1");
+    let before = dir_snapshot(&repo.path().join(".review"));
+
+    if !directory_permission_bits_bite(repo.path()) {
+        // Running as root, or on a filesystem that ignores the mode bits.
+        return;
+    }
+    let review = repo.path().join(".review");
+    fs::set_permissions(&review, fs::Permissions::from_mode(0o500)).expect("chmod .review");
+
+    let result = store.remove_comment("id0");
+
+    // Restore before asserting, so a failure still leaves a removable tempdir.
+    fs::set_permissions(&review, fs::Permissions::from_mode(0o700)).expect("restore .review");
+    assert!(
+        result.is_err(),
+        "the comments.json rewrite cannot have succeeded: {result:?}"
+    );
+    assert_eq!(
+        dir_snapshot(&repo.path().join(".review")),
+        before,
+        "a removal that could not rewrite comments.json still changed .review/ — \
+         a snapshot deleted before its entry leaves a comment with no context"
+    );
+    assert!(stray_temp_files(repo.path()).is_empty());
 }
 
 // ---------------------------------------------------------------------------

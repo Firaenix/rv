@@ -1522,6 +1522,126 @@ fn from_the_stack_s_collapses_only_the_selected_box() {
     assert_eq!(app.collapsed().len(), 2, "and now both are folded");
 }
 
+/// From the sidebar's **Comments** tab, `s` folds the comment the browser's
+/// cursor is on — the same rule `d` follows there, and for the same reason: a
+/// key pressed in the browser acts on what the browser is showing.
+///
+/// The browsed comment is deliberately anchored in the *other* file from the
+/// one the diff cursor is in, so the rule this replaces — fold the selected
+/// line's boxes — folds nothing at all here and cannot pass by coincidence.
+#[test]
+fn from_the_comments_tab_s_folds_the_browsed_comment() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    app.on_key(KeyCode::Char(']')).expect("next file");
+    write_comment(&mut app, "on the second file");
+    let id = app.comments()[0].id.clone();
+    app.on_key(KeyCode::Char('['))
+        .expect("back to the first file");
+    assert!(
+        app.comments_for_line(app.line_index()).is_empty(),
+        "the cursor is on a line that has comments, so the line rule would pass by luck"
+    );
+
+    app.on_key(KeyCode::Tab).expect("comments tab");
+    app.on_key(KeyCode::Left).expect("focus the sidebar");
+    app.on_key(KeyCode::Char('s'))
+        .expect("fold the browsed comment");
+
+    assert!(
+        app.collapsed().contains(&id),
+        "`s` in the browser folded something other than the comment it is showing: {:?}",
+        app.collapsed()
+    );
+    assert!(
+        !app.status().contains("no comments"),
+        "it refused and folded anyway: {:?}",
+        app.status()
+    );
+
+    app.on_key(KeyCode::Char('s')).expect("unfold it again");
+    assert!(
+        app.collapsed().is_empty(),
+        "it is a toggle in the browser too: {:?}",
+        app.collapsed()
+    );
+}
+
+/// ...and it is the *browsed* comment rather than the line's, with both on
+/// screen: the cursor sits on the first comment's line while the browser is on
+/// the second.
+#[test]
+fn from_the_comments_tab_s_folds_the_browsed_comment_not_the_selected_lines() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    write_comment(&mut app, "first finding");
+    let first = app.comments()[0].id.clone();
+    app.on_key(KeyCode::Char('j')).expect("next line");
+    write_comment(&mut app, "second finding");
+    let second = app.comments()[1].id.clone();
+    assert_ne!(first, second);
+    app.on_key(KeyCode::Char('k'))
+        .expect("back onto the first comment's line");
+
+    app.on_key(KeyCode::Tab).expect("comments tab");
+    app.on_key(KeyCode::Left).expect("focus the sidebar");
+    app.on_key(KeyCode::Down).expect("browse to the second");
+    app.on_key(KeyCode::Char('s')).expect("fold it");
+
+    assert!(
+        app.collapsed().contains(&second),
+        "the browsed comment is still open: {:?}",
+        app.collapsed()
+    );
+    assert!(
+        !app.collapsed().contains(&first),
+        "the comment on the selected diff line was folded instead: {:?}",
+        app.collapsed()
+    );
+}
+
+/// The **Files** tab keeps the older rule, because a file row selects no
+/// comment: `s` there folds the boxes on the diff line the reviewer left the
+/// cursor on, which is the only comment the screen is showing them.
+#[test]
+fn from_the_files_tab_s_still_folds_the_selected_lines_boxes() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    write_comment(&mut app, "needs a doc");
+    let id = app.comments()[0].id.clone();
+
+    app.on_key(KeyCode::Left).expect("focus the file list");
+    assert_eq!(app.sidebar_tab(), SidebarTab::Files);
+    app.on_key(KeyCode::Char('s')).expect("fold");
+
+    assert!(
+        app.collapsed().contains(&id),
+        "`s` from the file list stopped folding the selected line: {:?}",
+        app.collapsed()
+    );
+}
+
+/// `s` with an empty browser folds nothing and says why — and says it about the
+/// review rather than about a line, because a line is not what the reviewer was
+/// looking at.
+#[test]
+fn from_an_empty_comment_browser_s_says_so() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+
+    app.on_key(KeyCode::Tab).expect("comments tab");
+    app.on_key(KeyCode::Left).expect("focus the sidebar");
+    app.on_key(KeyCode::Char('s')).expect("s");
+
+    assert!(app.collapsed().is_empty(), "{:?}", app.collapsed());
+    assert!(app.status().contains("no comments"), "{:?}", app.status());
+    assert!(
+        !app.status().contains("this line"),
+        "the browser refused with a sentence about a line it is not showing: {:?}",
+        app.status()
+    );
+}
+
 /// Collapse is a *view* preference, held for this session only. It is not
 /// review state: another reviewer opening the same `.review/` has their own
 /// idea of which boxes are in their way, and an export written from a folded
@@ -1705,6 +1825,84 @@ fn the_box_body_keeps_the_default_foreground() {
         Some(Color::Blue),
         "the box's side is not blue:\n{}",
         buffer_text(&buffer)
+    );
+}
+
+/// Writes `reply` under every entry of the export and folds it back into the
+/// store, which is the two halves of the LLM loop: the agent appends to the
+/// document, and the next rewrite of it moves what the agent wrote into
+/// `comments.json`.
+///
+/// Through the document rather than by editing the store, because that is the
+/// only way a reply is ever created — there is no key for one — and a fixture
+/// that invented one would be testing a state the product cannot reach.
+fn reply_through_the_document(workspace: &Fixture, reply: &str) {
+    let replied = insert_reply(&workspace.markdown(), reply);
+    fs::write(
+        workspace.root().join(".review/REVIEW-FEEDBACK.md"),
+        &replied,
+    )
+    .expect("write the replied-to markdown");
+    let review = session::build(workspace.root(), None, None).expect("build the review");
+    session::write_markdown(&review).expect("fold the reply back into the store");
+}
+
+/// A reply is drawn inside the comment's own box, dimmed: it is part of that
+/// conversation, and a reviewer scanning a screen of boxes has to be able to
+/// tell their own words from the agent's answer without reading either.
+///
+/// Asserted on the **style**, not only on the text — the `reply:` prefix has
+/// been on screen since the row model shipped, and a test that greps for it
+/// passes against a reply drawn exactly like the body above it. The body is
+/// checked in the same frame as the control: if everything were dimmed, nothing
+/// would be.
+#[test]
+fn a_reply_renders_dimmed_inside_the_same_box() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    write_comment(&mut app, "needs a doc");
+    reply_through_the_document(&workspace, "added one");
+    drop(app);
+
+    // Reopened, because the store is where the folded reply landed.
+    let app = workspace.app();
+    assert_eq!(
+        app.comments()[0].reply.as_deref(),
+        Some("added one"),
+        "the fixture never got a reply into the store, so this proves nothing"
+    );
+
+    let buffer = frame_at(&app, 100, 24);
+    let text = buffer_text(&buffer);
+    let reply_row = u16::try_from(row_holding(&buffer, "reply: added one")).expect("a small row");
+    let body_row = u16::try_from(row_holding(&buffer, "needs a doc")).expect("a small row");
+
+    assert!(
+        rows_of(&buffer)[usize::from(reply_row)].contains('│'),
+        "the reply is not inside a box:\n{text}"
+    );
+    assert_eq!(
+        reply_row,
+        body_row + 1,
+        "the reply is not under the body it answers:\n{text}"
+    );
+
+    let reply_style = style_of_text(&buffer, reply_row, "reply: added one");
+    assert!(
+        reply_style.add_modifier.contains(Modifier::DIM),
+        "the reply is drawn exactly like the comment it answers:\n{text}"
+    );
+    assert_eq!(
+        reply_style.fg,
+        Some(Color::Reset),
+        "the reply was recoloured rather than dimmed, which costs it the \
+         contrast the body has:\n{text}"
+    );
+    assert!(
+        !style_of_text(&buffer, body_row, "needs a doc")
+            .add_modifier
+            .contains(Modifier::DIM),
+        "the comment's own body is dimmed too, so nothing tells the two apart:\n{text}"
     );
 }
 
@@ -2468,5 +2666,156 @@ fn a_status_line_too_long_for_the_terminal_is_marked() {
     assert!(
         !wide.contains('…') && wide.contains("q quit"),
         "a status line with room to spare was marked anyway: {wide:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// The documented keymap
+// ---------------------------------------------------------------------------
+
+/// Every key this reviewer binds while browsing, spelled the way README's
+/// **Browsing** table spells the `Key` column of its rows.
+///
+/// All but the last are [`rv::app::App::on_key`]'s, read straight out of
+/// `on_key_browse`; `Ctrl+C` is [`rv::app::App::on_key_event`]'s, answered
+/// before the mode is consulted at all, and is in the same table because a
+/// reviewer looking for how to get out does not know or care which function
+/// answers them.
+///
+/// The two tests below hold this list and the table to each other in *both*
+/// directions, so neither a binding that ships undocumented nor a row for a key
+/// nobody wrote survives. Three waves of this milestone shipped keys the README
+/// never mentioned — focus, the tab, the stack, `d`, `s` — which is the drift
+/// this exists to stop. What each key actually does is pinned by
+/// `rv/tests/app_cases.rs`'s `browse_keybindings` table and by the tests above;
+/// this pair is only about whether a user can find out.
+const BROWSE_KEYS: &[&str] = &[
+    "`j` / `↓`",
+    "`k` / `↑`",
+    "`←`",
+    "`→`",
+    "`]`",
+    "`[`",
+    "`Tab`",
+    "`Enter`",
+    "`Esc`",
+    "`c`",
+    "`d`",
+    "`s`",
+    "`q`",
+    "`Ctrl+C`",
+];
+
+/// The README, read from the workspace rather than from the process's working
+/// directory — a test binary's cwd is not something to depend on.
+fn readme() -> String {
+    fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../README.md"))
+        .expect("read README.md")
+}
+
+/// The `Key` column of the markdown table that follows `label`, one entry per
+/// row, without the header row or its underline.
+///
+/// The table is taken as the run of `|` lines after the label, so the tables
+/// under the other labels — `Esc` appears in two of them — cannot leak into the
+/// answer.
+fn table_keys(label: &str) -> Vec<String> {
+    let readme = readme();
+    let (_, body) = readme
+        .split_once(label)
+        .unwrap_or_else(|| panic!("the README has no {label} table"));
+    body.lines()
+        .skip_while(|line| !line.starts_with('|'))
+        .take_while(|line| line.starts_with('|'))
+        .filter_map(|line| line.split('|').nth(1))
+        .map(|cell| cell.trim().to_owned())
+        .filter(|cell| cell != "Key" && !cell.starts_with("---"))
+        .collect()
+}
+
+/// The README under `heading`, up to the next heading of any level.
+fn readme_section(heading: &str) -> String {
+    let readme = readme();
+    let (_, body) = readme
+        .split_once(heading)
+        .unwrap_or_else(|| panic!("the README has no {heading:?} section"));
+    body.lines()
+        .take_while(|line| !line.starts_with('#'))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[test]
+fn the_readme_documents_every_browse_binding() {
+    let documented = table_keys("**Browsing**");
+    for key in BROWSE_KEYS {
+        assert!(
+            documented.iter().any(|row| row == key),
+            "the README's Browsing table has no row for {key}, so a reviewer \
+             cannot find out that it exists: {documented:?}"
+        );
+    }
+}
+
+/// ...and no row for a key that is not one of them: a table that documents a
+/// binding nobody wrote is worse than one that documents none, because a
+/// reviewer will press it and read the result as a bug in the key rather than
+/// in the page.
+#[test]
+fn the_readme_documents_no_binding_that_is_not_bound() {
+    let documented = table_keys("**Browsing**");
+    for row in &documented {
+        assert!(
+            BROWSE_KEYS.contains(&row.as_str()),
+            "the README's Browsing table has a row for {row:?}, which is not one \
+             of this reviewer's keys: {BROWSE_KEYS:?}"
+        );
+    }
+}
+
+/// The comment box is the thing a reviewer meets first and has the most
+/// questions about, and every one of them below is answered somewhere in the
+/// code rather than in the page: that a reply shares its comment's box and is
+/// drawn dimmed, that folding is a preference of this session and reaches no
+/// file, that a delete is permanent and wants a `y`, and that the markdown is
+/// an export written by `rv render` — not a document kept continuously in step,
+/// which is what a reader assumes of a file in their working tree until they
+/// are told otherwise.
+///
+/// # Why two of these are phrases rather than words
+///
+/// A one-word probe passes on a mention, and a mention is not a claim. The
+/// export cases are the ones where that difference bites: this section says
+/// "an LLM reading the export" in its *folding* paragraph, so a page that had
+/// been rewritten to promise `REVIEW-FEEDBACK.md` is kept continuously in step
+/// with the store still contained the word `export` and still passed. That
+/// mutant — the page asserting the exact opposite of the truth — survived the
+/// wave that added these cases, which is the worst shape a documentation test
+/// can have: it reports the drift it exists to catch as covered.
+///
+/// So the two export cases pin the sentence's *claim* — that the file **is** an
+/// export, and that it is **not** kept in step — and are deliberately longer and
+/// more brittle than the rest. A reworded README should fail them; a reworded
+/// README is exactly when someone should be made to reread that paragraph and
+/// decide whether the promise it makes is still true. `bordered` is split out of
+/// `blue` for the smaller version of the same reason: the case was named for two
+/// facts and checked one.
+#[rstest]
+#[case::under_its_line("beneath the line")]
+#[case::the_box_is_blue("blue")]
+#[case::the_box_is_bordered("bordered")]
+#[case::a_reply_shares_the_box("reply")]
+#[case::a_reply_is_dimmed("dimmed")]
+#[case::folding_is_a_session_preference("session")]
+#[case::deletion_is_permanent("permanent")]
+#[case::deletion_is_confirmed("`y`")]
+#[case::the_markdown_is_an_export("is an **export**")]
+#[case::the_export_is_not_kept_in_step("not a document kept continuously in step")]
+#[case::written_by_render("`rv render`")]
+fn the_readme_explains_inline_comments(#[case] phrase: &str) {
+    let section = readme_section("### Inline comments");
+    assert!(
+        section.contains(phrase),
+        "the README's inline-comments section never mentions {phrase:?}:\n{section}"
     );
 }

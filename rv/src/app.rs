@@ -108,8 +108,13 @@ const HELP: &str = "j/k line  [/] file  c comment  enter stack  d delete  s fold
 const DELETE_NEEDS_A_COMMENT: &str =
     "the file list selects files, not comments: tab for those, right for the diff";
 
-/// What `d` says from the sidebar's **Comments** tab when the review has no
-/// comments in it at all.
+/// What `d` and `s` say from the sidebar's **Comments** tab when the review has
+/// no comments in it at all.
+///
+/// Both keys act on the browsed comment from there, so both refuse with a
+/// sentence about the *review* rather than about a line: the browser is not
+/// showing a line, and answering "no comments on this line" would send the
+/// reviewer looking at the diff for the reason.
 const NO_COMMENTS_IN_REVIEW: &str = "no comments in this review yet";
 
 /// What `Enter`, `d` and `s` say when the selected line carries no comments.
@@ -407,11 +412,12 @@ impl App {
     /// not listing comments.
     ///
     /// Gated on the tab for the same reason [`App::selected_comment`] is gated
-    /// on the focus: `d` asks this question to decide what it destroys, and
-    /// answering it with a comment that is not on screen is how a delete hits
-    /// the wrong one. Not gated on the *focus*, though — the browser draws its
-    /// selection whether or not the keys are pointed at it, so the selection is
-    /// real either way.
+    /// on the focus: `d` asks this question to decide what it destroys — and
+    /// `s` to decide what it folds — and answering it with a comment that is
+    /// not on screen is how a delete hits the wrong one. The Files tab has a
+    /// file selected and no comment, which is what the `None` says. Not gated
+    /// on the *focus*, though — the browser draws its selection whether or not
+    /// the keys are pointed at it, so the selection is real either way.
     pub fn browsed_comment(&self) -> Option<&Comment> {
         if self.sidebar_tab != SidebarTab::Comments {
             return None;
@@ -832,8 +838,16 @@ impl App {
     /// Folds comment boxes away, or unfolds them — the view preference `s`
     /// toggles.
     ///
-    /// What it acts on follows the cursor, exactly as `d` does: the selected
-    /// box from inside the stack, the whole line's stack from anywhere else.
+    /// What it acts on follows the cursor, exactly as `d` does, and for the
+    /// same reason: a key acts on what the reviewer is looking at.
+    ///
+    /// * **inside the stack**, the one box the cursor is on;
+    /// * **in the sidebar's Comments tab**, the comment the browser is on —
+    ///   which is the comment on screen there, and need not be on the selected
+    ///   diff line or even in the selected file;
+    /// * **anywhere else** — the diff, and the sidebar's Files tab — the whole
+    ///   of the selected line's stack, because a file row selects no comment
+    ///   and the line the diff is on is the only comment the screen is showing.
     ///
     /// A line whose boxes are in *mixed* states collapses rather than expands.
     /// The reason to press `s` on a line is to get it out of the way, and a
@@ -843,20 +857,33 @@ impl App {
     ///
     /// Nothing here writes: see [`App::collapsed`].
     fn toggle_collapse(&mut self) {
-        let ids: Vec<String> = match self.focus {
-            Focus::Stack => self
+        let ids: Vec<String> = match (self.focus, self.sidebar_tab) {
+            (Focus::Stack, _) => self
                 .selected_comment()
                 .map(|comment| comment.id.clone())
                 .into_iter()
                 .collect(),
-            Focus::Diff | Focus::Sidebar => self
+            (Focus::Sidebar, SidebarTab::Comments) => self
+                .browsed_comment()
+                .map(|comment| comment.id.clone())
+                .into_iter()
+                .collect(),
+            (Focus::Diff | Focus::Sidebar, _) => self
                 .comments_for_line(self.line_index())
                 .iter()
                 .map(|comment| comment.id.clone())
                 .collect(),
         };
         if ids.is_empty() {
-            self.status = NO_COMMENTS.to_owned();
+            // Said about the review from the browser, which is not showing a
+            // line, and about the line everywhere else — the same split `d`
+            // makes, because it is the same question about the same two
+            // cursors.
+            self.status = match (self.focus, self.sidebar_tab) {
+                (Focus::Sidebar, SidebarTab::Comments) => NO_COMMENTS_IN_REVIEW,
+                _ => NO_COMMENTS,
+            }
+            .to_owned();
             return;
         }
 

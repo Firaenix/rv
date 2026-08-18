@@ -42,6 +42,12 @@
 //! that the two never compete for the same cue. A comment that is no longer
 //! open drops to grey and dim, which is the one deliberate exception: it is
 //! still a comment, but not one asking for an answer.
+//!
+//! Dim is the second axis, and it means *not the thing being asked about*: the
+//! comment above, and a `reply:` inside a box, which is the agent's answer
+//! rather than the reviewer's remark. Neither is hidden — a reply is part of
+//! the conversation the box holds — but neither competes with the words that
+//! are still waiting on somebody.
 
 use ratatui::Frame;
 use ratatui::layout::Constraint;
@@ -71,6 +77,7 @@ use crate::app::App;
 use crate::app::Focus;
 use crate::app::Mode;
 use crate::app::SidebarTab;
+use crate::rows::BodyKind;
 use crate::rows::Plan;
 use crate::rows::Row;
 use crate::rows::plan;
@@ -408,7 +415,12 @@ fn draw_row(app: &App, row: &Row<'_>, width: usize) -> Line<'static> {
                 width,
             )
         }
-        Row::BoxBody { comment, text, .. } => {
+        Row::BoxBody {
+            comment,
+            text,
+            kind,
+            ..
+        } => {
             let style = box_style(app, comment);
             let pad = box_width(width).saturating_sub(BOX_PADDING + text.chars().count());
             clip_spans(
@@ -417,7 +429,7 @@ fn draw_row(app: &App, row: &Row<'_>, width: usize) -> Line<'static> {
                     // The body keeps the terminal's own foreground: it is the
                     // part being *read*, and the border already says whose it
                     // is.
-                    Span::raw(text.clone()),
+                    Span::styled(text.clone(), body_style(*kind)),
                     Span::styled(format!("{} │", " ".repeat(pad)), style),
                 ],
                 width,
@@ -491,6 +503,22 @@ fn comment_style(comment: &Comment) -> Style {
         Style::default().fg(Color::Blue)
     } else {
         Style::default().fg(Color::Gray).add_modifier(Modifier::DIM)
+    }
+}
+
+/// How a row of a box's text is drawn: the reviewer's own words at the
+/// terminal's full contrast, an answer folded in from the export dimmed.
+///
+/// Dim rather than a colour, for the same reason focus is not a colour: blue
+/// means *comment* here and a second hue would be a second meaning for it. A
+/// reply is still part of the comment — it shares the box, and the box says
+/// whose it is — so what the reply needs is to be *quieter* than the remark it
+/// answers, which is the one thing a reviewer scanning a screen of boxes is
+/// looking for.
+fn body_style(kind: BodyKind) -> Style {
+    match kind {
+        BodyKind::Body => Style::default(),
+        BodyKind::Reply => Style::default().add_modifier(Modifier::DIM),
     }
 }
 

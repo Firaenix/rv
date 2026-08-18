@@ -1,0 +1,1162 @@
+# rv Viewport Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Make the panes resizable, put the whole keymap behind `?`, colour the code inside the green and red, let the sidebar be a directory tree, and make the mouse work.
+
+**Architecture:** One pure `layout()` function computes every rectangle; `draw` paints from it and `hit` reads from it, so a click can never land somewhere different from what was drawn. Highlight spans are produced in `rv-core` as plain data from tree-sitter and mapped to styles in `rv`, keeping the terminal-free boundary. Every new piece of state is session-only — nothing here reaches `.review/`.
+
+**Tech Stack:** Rust 2024, ratatui 0.30, crossterm 0.29, tree-sitter 0.26 + tree-sitter-highlight, rstest + proptest (dev).
+
+**Spec:** `docs/superpowers/specs/2026-08-18-rv-viewport-design.md`
+
+## Global Constraints
+
+- **`rv-core` MUST NOT depend on `ratatui`, `crossterm`, or `tui-textarea`.** `rv-core/tests/constraints.rs` enforces this and fails the build. Highlight spans are plain data; the mapping to colours lives in `rv`.
+- **`jj_lib` appears only in `rv-core/src/vcs.rs`.** Same enforcement.
+- **Never read the user's jj config** — no `config_path`, no `ConfigSource::User`, no `ConfigSource::Repo`. Same enforcement.
+- **`App::on_key` and `App::on_mouse` stay terminal-free.** They take crossterm event *values* and return `Action`; neither may touch a terminal or a `Frame`. This is what makes the state machine testable without a pty, and every wave so far has depended on it.
+- **The terminal is restored on every exit path including panic.** The existing hook does this; do not disturb it.
+- **`rv` writes only under `.review/`** plus the one line in `.git/info/exclude`, always through the store's atomic helper.
+- **One side rule.** Anything that asks "which side does this diff line belong to" calls `rv::app::anchored_side(kind)` — `Side::Left` for `LineKind::Removed`, `Side::Right` otherwise. This project shipped one bug where the pane and the anchor disagreed, and nearly shipped a second where a jump ignored the side; a third copy of that logic is how it comes back.
+- **One layout.** After Task 1 no file computes a `Rect` outside `layout()`. If you need a rectangle, get it from the `Layout`.
+- **One binding table.** After Task 3 no key is dispatched that is not in `BINDINGS`, and no entry is in `BINDINGS` that is not dispatched.
+- **Every new preference is session-only.** No config file, no persistence, nothing new in `.review/`.
+- **Never mutate a file in this repository to show a test can fail.** Vendor a copy into the scratch directory and mutate that. A coordinator once read a source file while another agent had it temporarily mutated, mistook the mutation for a shipped bug, and reported it up the chain before checking against git.
+- Commits use jj: `jj describe -m "…" && jj new`, with the repo's two trailer lines.
+
+### Interfaces that already exist
+
+```rust
+// rv/src/app.rs
+pub enum Focus { Sidebar, Diff, Stack }
+pub enum SidebarTab { Files, Comments }
+pub enum Mode { Browse, Comment, ConfirmDelete { id: String, label: String } }
+pub enum Action { Continue, Quit }
+impl App {
+    pub fn on_key(&mut self, key: KeyCode) -> Result<Action>;
+    pub fn on_key_event(&mut self, event: KeyEvent) -> Result<Action>;   // intercepts Ctrl+C
+    pub fn focus(&self) -> Focus;
+    pub fn sidebar_tab(&self) -> SidebarTab;
+    pub fn files(&self) -> &[FileChange];
+    pub fn file_index(&self) -> usize;
+    pub fn line_index(&self) -> usize;
+    pub fn comments(&self) -> &[Comment];
+    pub fn comments_for_line(&self, index: usize) -> Vec<&Comment>;
+    pub fn collapsed(&self) -> &HashSet<String>;
+    pub fn comment_index(&self) -> usize;
+    pub fn selected_comment(&self) -> Option<&Comment>;
+    pub fn mode(&self) -> Mode;
+    pub fn status(&self) -> &str;
+    pub fn buffer(&self) -> &str;
+}
+pub fn anchored_side(kind: LineKind) -> Side;
+
+// rv/src/rows.rs — the row model the diff pane already renders from
+pub enum Row<'a> { Diff { index: usize, line: &'a DiffLine }, BoxTop { .. }, BoxBody { .. }, BoxCollapsed { .. }, BoxBottom { .. } }
+pub struct Plan<'a> { pub rows: Vec<Row<'a>> }
+pub fn plan<'a>(diff: &'a FileDiff, comments_for: &dyn Fn(usize) -> Vec<&'a Comment>, collapsed: &HashSet<String>, width: usize) -> Plan<'a>;
+pub fn window(rows: usize, anchor: usize, height: usize) -> Range<usize>;
+```
+
+Read these in the tree before planning anything. Where this plan disagrees with the tree, **the tree wins and you say so in your report.**
+
+---
+
+## Task 1: One layout, two consumers
+
+**Files:** Create `rv/src/layout.rs`, `rv/tests/layout.rs`; modify `rv/src/lib.rs`, `rv/src/ui.rs`
+
+**Produces:**
+
+```rust
+pub struct Split { ratio: u16 }
+impl Split {
+    pub const DEFAULT: u16 = 30;
+    pub const MIN_SIDEBAR: u16 = 12;
+    pub const MIN_DIFF: u16 = 20;
+    pub fn new(ratio: u16) -> Self;
+    pub fn ratio(self) -> u16;
+    pub fn nudged(self, delta: i16) -> Self;          // clamped to 5..=80
+    pub fn sidebar_width(self, total: u16) -> u16;    // honours the minimums, or halves when it cannot
+}
+
+pub struct Layout {
+    pub sidebar: Rect, pub divider: Rect, pub diff: Rect,
+    pub bar: Rect,              // along the BOTTOM, under both panes
+    pub popup: Option<Rect>,
+    pub toast: Option<Rect>,    // floating, top-centre
+}
+pub struct Chrome { pub bar_rows: u16, pub help_open: bool, pub toast: bool }
+pub enum Target { SidebarRow(usize), DiffRow(usize), Divider, Bar, Popup }
+
+pub fn layout(area: Rect, split: Split, chrome: Chrome) -> Layout;
+pub fn hit(layout: &Layout, column: u16, row: u16) -> Option<Target>;
+```
+
+**The bar moves to the bottom in this task.** It is drawn above the panes today; every terminal multiplexer puts it below, and so does the spec. There is no `Target::Toast` — the toast is drawn over the panes but is never a click target.
+
+`SidebarRow` and `DiffRow` are indices **within the pane's inner area**, so row 0 is the first row under the pane's top border. The caller adds its own scroll offset.
+
+- [ ] **Step 1: Write the failing tests** in `rv/tests/layout.rs`
+
+```rust
+#[test]
+fn the_bar_sits_along_the_bottom_under_both_panes() {
+    let l = layout(Rect::new(0, 0, 100, 24), Split::new(30), Chrome { bar_rows: 1, help_open: false, toast: false });
+    assert_eq!(l.bar.height, 1);
+    assert_eq!(l.bar.bottom(), 24, "the bar is the last row of the area");
+    assert_eq!(l.bar.width, 100, "it spans both panes");
+    assert_eq!(l.sidebar.bottom(), l.bar.y, "the panes stop where the bar starts");
+    assert_eq!(l.diff.bottom(), l.bar.y);
+    assert_eq!(l.sidebar.y, 0, "and start at the top of the area");
+}
+
+#[test]
+fn the_panes_tile_the_area_with_a_divider_between_them() {
+    let l = layout(Rect::new(0, 0, 100, 24), Split::new(30), Chrome { bar_rows: 1, help_open: false, toast: false });
+    assert_eq!(l.bar.height, 1);
+    assert_eq!(l.sidebar.x, 0);
+    assert_eq!(l.divider.width, 1, "the divider is one column");
+    assert_eq!(l.sidebar.right(), l.divider.x, "no gap before the divider");
+    assert_eq!(l.divider.right(), l.diff.x, "no gap after it");
+    assert_eq!(l.diff.right(), 100, "the panes reach the right edge");
+    assert_eq!(l.sidebar.height, l.diff.height, "the panes are the same height");
+}
+
+#[rstest]
+#[case(100, 30)]
+#[case(40, 30)]
+#[case(24, 50)]
+fn the_sidebar_honours_its_minimum_or_the_area_halves(#[case] width: u16, #[case] ratio: u16) {
+    let l = layout(Rect::new(0, 0, width, 24), Split::new(ratio), Chrome { bar_rows: 1, help_open: false, toast: false });
+    let sidebar = l.sidebar.width;
+    let diff = l.diff.width;
+    assert!(sidebar > 0 && diff > 0, "neither pane vanishes at width {width}");
+    if width >= Split::MIN_SIDEBAR + Split::MIN_DIFF + 1 {
+        assert!(sidebar >= Split::MIN_SIDEBAR, "sidebar keeps its floor when there is room");
+        assert!(diff >= Split::MIN_DIFF, "the diff keeps its floor when there is room");
+    }
+}
+
+#[test]
+fn nudging_the_split_stays_inside_its_bounds() {
+    let mut split = Split::new(Split::DEFAULT);
+    for _ in 0..100 { split = split.nudged(2); }
+    assert!(split.ratio() <= 80, "cannot be dragged past the right bound");
+    for _ in 0..200 { split = split.nudged(-2); }
+    assert!(split.ratio() >= 5, "cannot be dragged past the left bound");
+}
+
+#[test]
+fn a_click_on_the_divider_reports_the_divider() {
+    let l = layout(Rect::new(0, 0, 100, 24), Split::new(30), Chrome { bar_rows: 1, help_open: false, toast: false });
+    assert_eq!(hit(&l, l.divider.x, 5), Some(Target::Divider));
+}
+
+#[test]
+fn a_click_in_a_pane_reports_the_row_under_the_pointer() {
+    let l = layout(Rect::new(0, 0, 100, 24), Split::new(30), Chrome { bar_rows: 1, help_open: false, toast: false });
+    let first = l.diff.y + 1;                       // +1 for the pane's top border
+    assert_eq!(hit(&l, l.diff.x + 3, first), Some(Target::DiffRow(0)));
+    assert_eq!(hit(&l, l.diff.x + 3, first + 4), Some(Target::DiffRow(4)));
+    assert_eq!(hit(&l, l.sidebar.x + 1, first + 2), Some(Target::SidebarRow(2)));
+}
+
+#[test]
+fn a_click_outside_everything_reports_nothing() {
+    let l = layout(Rect::new(0, 0, 100, 24), Split::new(30), Chrome { bar_rows: 1, help_open: false, toast: false });
+    assert_eq!(hit(&l, 200, 200), None);
+}
+
+#[test]
+fn the_popup_takes_priority_over_whatever_is_beneath_it() {
+    let l = layout(Rect::new(0, 0, 100, 24), Split::new(30), Chrome { bar_rows: 1, help_open: true, toast: false });
+    let popup = l.popup.expect("the popup has a rect when it is open");
+    assert_eq!(hit(&l, popup.x + 2, popup.y + 2), Some(Target::Popup));
+}
+```
+
+- [ ] **Step 2: Run to verify they fail**
+
+Run: `cargo test -p rv --test layout` — expect FAIL, unresolved import `rv::layout`.
+
+- [ ] **Step 3: Implement `layout.rs`**
+
+Compute the bar, then split the remainder into sidebar / one-column divider / diff. `sidebar_width` applies the ratio, then clamps to the minimums, and when `total` cannot satisfy both minimums it splits what there is evenly rather than starving one pane. Use saturating arithmetic everywhere — a `u16` subtraction that underflows is the classic ratatui panic and this project has already killed one such mutant.
+
+`hit` tests the popup first, then the divider, then each pane, converting a row inside a pane to a zero-based index by subtracting the pane's `y` and its top border.
+
+- [ ] **Step 4: Make `ui.rs` render from it**
+
+Delete the inline `Layout::vertical`/`horizontal` calls in `ui::draw` and take the rectangles from `layout()`. Behaviour must not change: the same panes at the same places, and the whole existing suite still green.
+
+- [ ] **Step 5: Add the round-trip property**
+
+```rust
+proptest! {
+    #[test]
+    fn every_painted_cell_hits_the_pane_that_painted_it(
+        width in 8u16..120, height in 4u16..40, ratio in 5u16..80,
+    ) {
+        let area = Rect::new(0, 0, width, height);
+        let l = layout(area, Split::new(ratio), Chrome { bar_rows: 1, help_open: false, toast: false });
+        for (rect, name) in [(l.sidebar, "sidebar"), (l.diff, "diff")] {
+            for row in rect.y + 1..rect.bottom() {
+                for column in rect.x..rect.right() {
+                    let target = hit(&l, column, row);
+                    prop_assert!(target.is_some(), "{name} cell ({column},{row}) hits nothing");
+                }
+            }
+        }
+        prop_assert_eq!(hit(&l, l.divider.x, l.divider.y), Some(Target::Divider));
+    }
+}
+```
+
+Prove it can fail: vendor a copy, make `hit` off-by-one on the pane's top border, and show the property failing 3/3 with an unmutated control.
+
+- [ ] **Step 6: Commit**
+
+```bash
+jj describe -m "feat(rv): one layout function that drawing and hit-testing share" && jj new
+```
+
+---
+
+## Task 2: Resizable panes
+
+**Files:** Modify `rv/src/app.rs`, `rv/src/ui.rs`, `rv/tests/app.rs`
+
+**Consumes:** `Split`, `layout` (Task 1). **Produces:** `App::split() -> Split`; `<` and `>` resize.
+
+- [ ] **Step 1: Write the failing tests**
+
+```rust
+#[test]
+fn angle_brackets_resize_the_panes() {
+    let mut app = workspace().app();
+    let start = app.split().ratio();
+    app.on_key(KeyCode::Char('>')).expect(">");
+    assert!(app.split().ratio() > start, "the sidebar grew");
+    app.on_key(KeyCode::Char('<')).expect("<");
+    assert_eq!(app.split().ratio(), start, "and shrank back");
+}
+
+#[test]
+fn resizing_never_leaves_the_bounds_however_long_you_hold_it() {
+    let mut app = workspace().app();
+    for _ in 0..200 { app.on_key(KeyCode::Char('>')).expect(">"); }
+    assert!(app.split().ratio() <= 80);
+    for _ in 0..400 { app.on_key(KeyCode::Char('<')).expect("<"); }
+    assert!(app.split().ratio() >= 5);
+}
+
+#[test]
+fn a_resized_pane_actually_renders_at_its_new_width() {
+    let mut app = workspace().app();
+    let before = frame_at(&app, 100, 24);
+    for _ in 0..5 { app.on_key(KeyCode::Char('>')).expect(">"); }
+    let after = frame_at(&app, 100, 24);
+    assert_ne!(before, after, "the frame reflects the resize");
+}
+
+#[test]
+fn the_split_is_not_written_anywhere() {
+    let workspace = workspace();
+    let mut app = workspace.app();
+    let tree = workspace_tree(&workspace);
+    app.on_key(KeyCode::Char('>')).expect(">");
+    assert_eq!(workspace_tree(&workspace), tree, "resizing is a view preference, not review state");
+}
+```
+
+Use the helpers the tree actually has — `workspace()`, `frame_at`, `workspace_tree` — rather than inventing new ones.
+
+- [ ] **Step 2-4: Run (expect FAIL), implement, run (expect PASS)**
+
+Hold `split: Split` in `App`, add the accessor, bind `<` and `>` in `on_key_browse` through the binding table once Task 3 lands (until then, plain match arms).
+
+- [ ] **Step 5: Commit**
+
+```bash
+jj describe -m "feat(rv): resize the panes with < and >" && jj new
+```
+
+---
+
+## Task 3: One binding table, and the `?` popup
+
+**Files:** Modify `rv/src/app.rs`, `rv/src/ui.rs`, `rv/tests/app.rs`, `rv/tests/app_cases.rs`
+
+**Produces:**
+
+```rust
+pub struct Binding { pub keys: &'static str, pub group: Group, pub what: &'static str }
+pub enum Group { Move, Focus, Comment, View, Quit }
+pub const BINDINGS: &[Binding];
+impl App { pub fn help_open(&self) -> bool; }
+```
+
+- [ ] **Step 1: Write the failing tests**
+
+```rust
+#[test]
+fn question_mark_opens_the_help_and_esc_closes_it() {
+    let mut app = workspace().app();
+    app.on_key(KeyCode::Char('?')).expect("?");
+    assert!(app.help_open());
+    let frame = buffer_text(&frame_at(&app, 100, 24));
+    assert!(frame.contains("comment"), "the popup lists what the keys do");
+    app.on_key(KeyCode::Esc).expect("esc");
+    assert!(!app.help_open());
+}
+
+#[test]
+fn q_closes_the_help_rather_than_quitting() {
+    let mut app = workspace().app();
+    app.on_key(KeyCode::Char('?')).expect("?");
+    let action = app.on_key(KeyCode::Char('q')).expect("q");
+    assert_eq!(action, Action::Continue, "q in help closes the help");
+    assert!(!app.help_open());
+    assert_eq!(app.on_key(KeyCode::Char('q')).expect("q"), Action::Quit, "and quits once it is closed");
+}
+
+#[rstest]
+#[case(KeyCode::Char('c'))]
+#[case(KeyCode::Char('d'))]
+#[case(KeyCode::Char('j'))]
+#[case(KeyCode::Enter)]
+fn keys_are_inert_while_the_help_is_open(#[case] key: KeyCode) {
+    let workspace = workspace();
+    let mut app = workspace.app();
+    write_comment(&mut app, "a finding");
+    let before = workspace_tree(&workspace);
+    app.on_key(KeyCode::Char('?')).expect("?");
+    let mode = app.mode();
+    app.on_key(key).expect("key");
+    assert_eq!(app.mode(), mode, "{key:?} did nothing while help was open");
+    assert_eq!(workspace_tree(&workspace), before, "and wrote nothing");
+}
+
+#[test]
+fn every_binding_the_handler_dispatches_appears_in_the_popup() {
+    let mut app = workspace().app();
+    app.on_key(KeyCode::Char('?')).expect("?");
+    let frame = buffer_text(&frame_at(&app, 120, 40));
+    for binding in rv::app::BINDINGS {
+        assert!(frame.contains(binding.keys), "the popup lists {}", binding.keys);
+    }
+}
+
+#[test]
+fn the_whole_keymap_fits_at_80x24_without_scrolling() {
+    // 80x24 is what a reviewer over ssh actually has, and a keymap you must
+    // scroll to read is a keymap you will not read. This is what forces the
+    // column layout: twenty bindings in one list need twenty rows and do not
+    // fit beside their own borders and headings.
+    let mut app = workspace().app();
+    app.on_key(KeyCode::Char('?')).expect("?");
+    let frame = buffer_text(&frame_at(&app, 80, 24));
+    for binding in rv::app::BINDINGS {
+        assert!(frame.contains(binding.keys), "{} is on screen at 80x24", binding.keys);
+    }
+    assert!(!frame.contains("more"), "nothing is hidden behind a scroll indicator");
+}
+
+#[test]
+fn a_binding_that_does_nothing_here_is_dimmed_rather_than_hidden() {
+    // `d` means nothing in the Files tab. A reviewer learning the tool should
+    // see that the key exists and why it is inert, not wonder whether they
+    // misread the manual.
+    let mut app = workspace().app();
+    app.on_key(KeyCode::Left).expect("focus the sidebar");
+    app.on_key(KeyCode::Char('?')).expect("?");
+    let frame = frame_at(&app, 100, 30);
+    assert!(buffer_text(&frame).contains('d'), "the binding is still listed");
+    assert!(is_dim(&frame, cell_of_binding(&frame, "d")), "and shown as inactive here");
+}
+
+#[test]
+fn the_help_renders_in_a_pane_too_small_for_it() {
+    let mut app = workspace().app();
+    app.on_key(KeyCode::Char('?')).expect("?");
+    let _ = frame_at(&app, 20, 6);   // must not panic
+}
+```
+
+- [ ] **Step 2-4: Run (expect FAIL), implement, run (expect PASS)**
+
+Define `BINDINGS` once. `on_key_browse` must dispatch from it — a match whose arms are the table's keys, so a binding cannot exist without an entry. The popup renders the table grouped by `Group`, scrollable with `j`/`k` when it does not fit. While `help_open`, `on_key` handles only `?`, `Esc`, `q`, `j`, `k` and ignores everything else.
+
+- [ ] **Step 5: Prove the anti-drift guarantee**
+
+Vendor a copy, add a key to `on_key_browse` without adding it to `BINDINGS`, and show the "every binding appears" test failing — or, better, show that the shape of the code makes it impossible and say why in your report.
+
+- [ ] **Step 6: Commit**
+
+```bash
+jj describe -m "feat(rv): a ? popup generated from the binding table" && jj new
+```
+
+---
+
+## Task 4: Syntax highlighting
+
+**Files:** Create `rv-core/src/highlight.rs`, `rv-core/tests/highlight.rs`; modify `rv-core/src/lib.rs`, `rv-core/Cargo.toml`, workspace `Cargo.toml`
+
+**Produces:**
+
+```rust
+pub struct Span { pub line: u32, pub start: u32, pub end: u32, pub capture: Capture }
+pub enum Capture { Keyword, Function, Type, String, Number, Comment, Punctuation, Variable, Constant, Other }
+pub struct Highlights { spans: Vec<Span>, language: Option<&'static str> }
+impl Highlights {
+    pub fn of(source: &[u8], path: &str) -> Highlights;   // never fails; unknown language yields none
+    pub fn language(&self) -> Option<&'static str>;
+    pub fn line(&self, line: u32) -> &[Span];             // spans on that 1-based line, in column order
+}
+```
+
+`rv-core` gains `tree-sitter` and `tree-sitter-rust`. **It must not gain ratatui** — `Capture` is plain data and `rv` maps it to colours.
+
+- [ ] **Step 1: Write the failing tests**
+
+```rust
+#[test]
+fn rust_keywords_and_types_are_captured() {
+    let source = b"fn parse(s: &str) -> Result<Ast> {\n    let raw = s.trim();\n}\n";
+    let highlights = Highlights::of(source, "parse.rs");
+    assert_eq!(highlights.language(), Some("rust"));
+    let first = highlights.line(1);
+    assert!(first.iter().any(|s| s.capture == Capture::Keyword), "fn is a keyword");
+    assert!(first.iter().any(|s| s.capture == Capture::Function), "parse is a function name");
+    assert!(highlights.line(2).iter().any(|s| s.capture == Capture::Keyword), "let is a keyword");
+}
+
+#[test]
+fn spans_never_overlap_and_stay_inside_their_line() {
+    let source = b"fn a() { let x = \"s\"; }\n";
+    let highlights = Highlights::of(source, "a.rs");
+    let line = highlights.line(1);
+    let text_len = 23u32;
+    for pair in line.windows(2) {
+        assert!(pair[0].end <= pair[1].start, "spans are disjoint and ordered");
+    }
+    for span in line {
+        assert!(span.start < span.end && span.end <= text_len, "a span stays inside its line");
+    }
+}
+
+#[rstest]
+#[case("notes.txt")]
+#[case("Makefile")]
+#[case("archive.tar.gz")]
+fn a_file_with_no_grammar_reports_none_rather_than_guessing(#[case] path: &str) {
+    let highlights = Highlights::of(b"anything at all\n", path);
+    assert_eq!(highlights.language(), None);
+    assert!(highlights.line(1).is_empty());
+}
+
+#[test]
+fn source_that_does_not_parse_still_returns_something() {
+    let highlights = Highlights::of(b"fn (((( unterminated\n", "broken.rs");
+    let _ = highlights.line(1);   // must not panic; tree-sitter recovers
+}
+
+#[test]
+fn invalid_utf8_is_not_a_panic() {
+    let _ = Highlights::of(&[0xff, 0xfe, b'\n'], "weird.rs");
+}
+```
+
+- [ ] **Step 2-4: Run (expect FAIL), implement, run (expect PASS)**
+
+Use `tree-sitter-highlight` with the Rust grammar's `highlights.scm`, mapping its capture names onto `Capture`. Detect the language by extension only — no content sniffing, because guessing wrong is worse than rendering plain. Clamp every span to its line's length before returning it, so a consumer indexing by column cannot panic on a bad span.
+
+- [ ] **Step 5: Add properties**
+
+Totality over arbitrary bytes and arbitrary paths; spans always disjoint, ordered, and within the line; the same source highlighted twice gives identical spans. Prove each can fail against a vendored mutant.
+
+- [ ] **Step 6: Commit**
+
+```bash
+jj describe -m "feat(rv-core): tree-sitter highlight spans as plain data" && jj new
+```
+
+---
+
+## Task 5: Paint the highlighting
+
+**Files:** Modify `rv/src/ui.rs`, `rv/src/app.rs`, `rv/tests/app.rs`, `rv/tests/app_cases.rs`
+
+**Consumes:** `Highlights` (Task 4), `layout` (Task 1), `anchored_side`.
+
+- [ ] **Step 1: Write the failing tests**
+
+```rust
+#[test]
+fn an_added_line_has_a_green_wash_and_coloured_code() {
+    let mut app = rust_workspace().app();
+    let frame = frame_at(&app, 100, 24);
+    let added = row_of_first_added_line(&frame);
+    assert!(bg_of(&frame, added).is_some(), "the line carries a background tint");
+    let foregrounds = distinct_foregrounds(&frame, added);
+    assert!(foregrounds.len() > 1, "the code is syntax coloured, not one colour: {foregrounds:?}");
+}
+
+#[test]
+fn a_removed_line_takes_its_colours_from_the_base_blob() {
+    // A rewrite that does NOT move: same path, same line number on both sides,
+    // opposite sides. A rename cannot catch a side-blind lookup, because a rename
+    // already encodes the side in the path.
+    let mut app = rewrite_workspace().app();
+    let frame = frame_at(&app, 100, 24);
+    assert_eq!(
+        text_of_row(&frame, row_of_first_removed_line(&frame)).trim_start_matches(|c: char| !c.is_alphanumeric()),
+        BASE_SIDE_FIRST_TOKEN,
+        "the removed half shows the base blob's text, so its spans must come from there"
+    );
+}
+
+#[test]
+fn the_selected_line_is_not_drawn_with_reversed_video() {
+    let app = rust_workspace().app();
+    let frame = frame_at(&app, 100, 24);
+    let selected = row_of_selected_line(&frame);
+    assert!(!style_of_row(&frame, selected).add_modifier.contains(Modifier::REVERSED),
+        "reversing swaps the tint and the syntax colours into each other");
+}
+
+#[test]
+fn a_file_with_no_grammar_renders_plain_and_says_so() {
+    let app = text_workspace().app();
+    let frame = buffer_text(&frame_at(&app, 100, 24));
+    assert!(frame.contains("no highlighting"), "the title says why the code is plain");
+}
+```
+
+- [ ] **Step 2-4: Run (expect FAIL), implement, run (expect PASS)**
+
+Cache `Highlights` per `(commit, path)` in `App`, parsed lazily on first render of that file, beside the existing diff cache. A diff line looks up its spans **on its own side** via `anchored_side`. Map `Capture` to the 16 ANSI colours. Tint by kind: `Added` dim green background, `Removed` dim red, `Context` none. Selection becomes a brighter background rather than `REVERSED`.
+
+- [ ] **Step 5: Commit**
+
+```bash
+jj describe -m "feat(rv): syntax colours inside the green and red" && jj new
+```
+
+---
+
+## Task 6: The sidebar as a tree
+
+**Files:** Create `rv/src/tree.rs`, `rv/tests/tree.rs`; modify `rv/src/app.rs`, `rv/src/ui.rs`, `rv/tests/app.rs`
+
+**Produces:**
+
+```rust
+pub struct Node { pub label: String, pub depth: usize, pub kind: NodeKind }
+pub enum NodeKind {
+    Commit { change_id: String, collapsed: bool },
+    Dir { collapsed: bool },
+    File { index: usize },
+}
+
+pub struct Group<'a> { pub change_id: &'a str, pub description: &'a str, pub paths: &'a [&'a str] }
+
+/// The bookmark view: every changed file, as a directory tree or a flat list.
+pub fn build(paths: &[&str], collapsed: &HashSet<String>, tree: bool) -> Vec<Node>;
+
+/// The commits view: each change holds the files it touched, and `tree` chooses
+/// whether those files are a directory tree or a flat list beneath it.
+pub fn build_grouped(groups: &[Group<'_>], collapsed: &HashSet<String>, tree: bool) -> Vec<Node>;
+```
+
+**`NodeKind::Commit` is defined now even though the commits view itself lands with the navigation work.** A third node kind costs almost nothing while the tree is being written and is a retrofit afterwards. Implement `build_grouped` and test it; wiring `1`/`2` to it is not this plan's job.
+
+A commit node is a directory in every respect that matters here: it collapses with `s`, it holds children, and it aggregates its subtree's gradient. One tree with three node kinds, not two widgets — a separate commits list would mean a second selection model, a second collapse rule and a second place to compute the gradient, and those would drift.
+
+- [ ] **Step 1: Write the failing tests**
+
+```rust
+#[test]
+fn a_single_child_chain_collapses_into_one_row() {
+    let nodes = build(&["docs/superpowers/specs/a.md", "docs/superpowers/specs/b.md"], &HashSet::new());
+    let dirs: Vec<&str> = nodes.iter().filter(|n| matches!(n.kind, NodeKind::Dir { .. })).map(|n| n.label.as_str()).collect();
+    assert_eq!(dirs, ["docs/superpowers/specs"], "one row, not three");
+}
+
+#[test]
+fn the_tree_lists_exactly_the_files_the_flat_list_does() {
+    let paths = ["a.rs", "src/b.rs", "src/deep/c.rs", "d.rs"];
+    let nodes = build(&paths, &HashSet::new());
+    let mut files: Vec<usize> = nodes.iter().filter_map(|n| match n.kind { NodeKind::File { index } => Some(index), _ => None }).collect();
+    files.sort_unstable();
+    assert_eq!(files, [0, 1, 2, 3], "a tree that loses a file is worse than no tree");
+}
+
+#[test]
+fn a_collapsed_directory_hides_its_files_but_stays_visible() {
+    let collapsed = HashSet::from(["src".to_owned()]);
+    let nodes = build(&["a.rs", "src/b.rs", "src/c.rs"], &collapsed);
+    assert!(nodes.iter().any(|n| n.label == "src"), "the directory row remains");
+    assert!(!nodes.iter().any(|n| n.label.ends_with("b.rs")), "its children are hidden");
+    assert!(nodes.iter().any(|n| n.label.ends_with("a.rs")), "siblings are unaffected");
+}
+
+#[test]
+fn t_toggles_the_sidebar_between_a_list_and_a_tree() {
+    let mut app = workspace().app();
+    let list = buffer_text(&frame_at(&app, 100, 24));
+    app.on_key(KeyCode::Char('t')).expect("t");
+    let tree = buffer_text(&frame_at(&app, 100, 24));
+    assert_ne!(list, tree, "the sidebar changed shape");
+}
+
+#[test]
+fn a_commit_holds_its_files_the_way_a_directory_holds_its_own() {
+    let groups = [
+        Group { change_id: "ytskpxpw", description: "close the alias bypass", paths: &["rv-core/tests/constraints.rs"] },
+        Group { change_id: "zmomvwzm", description: "enforce the constraints", paths: &["rv-core/src/store.rs", "rv-core/tests/store.rs"] },
+    ];
+    let nodes = build_grouped(&groups, &HashSet::new(), true);
+
+    let commits: Vec<&str> = nodes.iter().filter_map(|n| match &n.kind {
+        NodeKind::Commit { change_id, .. } => Some(change_id.as_str()), _ => None }).collect();
+    assert_eq!(commits, ["ytskpxpw", "zmomvwzm"], "one node per change, in order");
+    assert!(nodes.iter().all(|n| matches!(n.kind, NodeKind::Commit { .. }) || n.depth > 0),
+        "everything else hangs beneath a commit");
+}
+
+#[test]
+fn collapsing_a_commit_hides_its_files_and_leaves_its_siblings_alone() {
+    let groups = [
+        Group { change_id: "aaaa", description: "first", paths: &["a.rs"] },
+        Group { change_id: "bbbb", description: "second", paths: &["b.rs"] },
+    ];
+    let nodes = build_grouped(&groups, &HashSet::from(["aaaa".to_owned()]), false);
+    assert!(nodes.iter().any(|n| matches!(&n.kind, NodeKind::Commit { change_id, .. } if change_id == "aaaa")),
+        "the commit row remains");
+    assert!(!nodes.iter().any(|n| n.label.ends_with("a.rs")), "its files are hidden");
+    assert!(nodes.iter().any(|n| n.label.ends_with("b.rs")), "the other change is untouched");
+}
+
+#[test]
+fn a_file_touched_by_two_commits_appears_under_each() {
+    let groups = [
+        Group { change_id: "aaaa", description: "first", paths: &["shared.rs"] },
+        Group { change_id: "bbbb", description: "second", paths: &["shared.rs"] },
+    ];
+    let nodes = build_grouped(&groups, &HashSet::new(), false);
+    let count = nodes.iter().filter(|n| n.label.ends_with("shared.rs")).count();
+    assert_eq!(count, 2, "each change shows what it touched, not what is unique to it");
+}
+```
+
+- [ ] **Step 2-4: Run (expect FAIL), implement, run (expect PASS)**
+
+`s` on a directory row toggles it, reusing the project's existing verb for *collapse the thing under the cursor*. In the Comments tab `t` sets a status saying it applies to the file list.
+
+- [ ] **Step 5: Add the conservation property** — for arbitrary path sets, the tree's file indices are exactly `0..paths.len()`. Prove it can fail.
+
+- [ ] **Step 6: Commit**
+
+```bash
+jj describe -m "feat(rv): a collapsible directory tree in the sidebar" && jj new
+```
+
+---
+
+## Task 7: Mouse
+
+**Files:** Modify `rv/src/app.rs`, `rv/src/ui.rs`, `rv/tests/app.rs`, `rv/tests/app_cases.rs`
+
+**Produces:** `App::on_mouse(MouseEvent) -> Result<Action>`, terminal-free like `on_key`.
+
+- [ ] **Step 1: Write the failing tests**
+
+```rust
+#[test]
+fn clicking_a_diff_line_selects_it_and_focuses_the_diff() {
+    let mut app = workspace().app();
+    app.on_key(KeyCode::Left).expect("focus the sidebar");
+    app.on_mouse(click(60, 6)).expect("click in the diff");
+    assert_eq!(app.focus(), Focus::Diff);
+    assert!(app.line_index() > 0, "the clicked line is selected");
+}
+
+#[test]
+fn scrolling_moves_the_view_without_moving_the_selection() {
+    let mut app = workspace().app();
+    let selected = app.line_index();
+    app.on_mouse(scroll_down(60, 6)).expect("scroll");
+    assert_eq!(app.line_index(), selected, "scrolling is looking, not choosing");
+}
+
+#[test]
+fn dragging_the_divider_resizes_and_changes_nothing_else() {
+    let mut app = workspace().app();
+    let before = (app.file_index(), app.line_index(), app.focus());
+    let divider = divider_column(&app, 100);
+    app.on_mouse(press(divider, 6)).expect("press");
+    app.on_mouse(drag(divider + 10, 6)).expect("drag");
+    app.on_mouse(release(divider + 10, 6)).expect("release");
+    assert!(app.split().ratio() > Split::DEFAULT, "the split followed the pointer");
+    assert_eq!((app.file_index(), app.line_index(), app.focus()), before, "nothing else moved");
+}
+
+#[test]
+fn no_gesture_deletes_anything() {
+    let workspace = workspace();
+    let mut app = workspace.app();
+    write_comment(&mut app, "a finding");
+    let before = workspace_tree(&workspace);
+    for event in [click(60, 6), click(10, 4), scroll_up(60, 6), press(40, 6), drag(50, 6), release(50, 6)] {
+        app.on_mouse(event).expect("gesture");
+    }
+    assert_eq!(workspace_tree(&workspace), before, "the mouse cannot destroy review state");
+}
+
+#[test]
+fn clicking_a_comment_box_selects_that_comment() {
+    let mut app = workspace().app();
+    write_comment(&mut app, "a finding");
+    let row = row_of_first_box(&app, 100, 24);
+    app.on_mouse(click(60, row)).expect("click the box");
+    assert_eq!(app.focus(), Focus::Stack);
+    assert_eq!(app.selected_comment().expect("selected").body, "a finding");
+}
+```
+
+Write the `click`/`press`/`drag`/`release`/`scroll_*` helpers as thin `MouseEvent` constructors at the top of the test file.
+
+- [ ] **Step 2-4: Run (expect FAIL), implement, run (expect PASS)**
+
+`App` remembers the last rendered `Layout` so `on_mouse` can consult `hit`; `ui::draw` stores it. Enable mouse reporting in `App::run` and disable it on every exit path including the panic hook — a terminal left in reporting mode prints escape noise on every click after rv exits, which is exactly the class of damage the existing panic hook was written to prevent.
+
+- [ ] **Step 5: Commit**
+
+```bash
+jj describe -m "feat(rv): click, scroll and drag" && jj new
+```
+
+---
+
+## Task 8: The change gradient
+
+**Files:** Create `rv/src/gradient.rs`, `rv/tests/gradient.rs`; modify `rv/src/app.rs`, `rv/src/ui.rs`, `rv/src/tree.rs`, `rv/tests/app.rs`
+
+**Consumes:** `rv_core::diff::compute_with` (the in-process `similar` path), `Node` (Task 6).
+
+**Produces:**
+
+```rust
+pub struct Stat { pub added: u32, pub removed: u32 }
+impl Stat {
+    pub fn total(self) -> u32;
+    pub fn added_ratio(self) -> Option<f32>;   // None when nothing changed
+}
+
+pub struct Rgb(pub u8, pub u8, pub u8);
+pub const ADDED: Rgb;
+pub const REMOVED: Rgb;
+
+/// The seam the two halves meet at: a step brighter than the lighter endpoint in
+/// Oklab `L`, capped short of white. Relative rather than absolute, so it reads
+/// as a highlight on a dark terminal and does not vanish on a light one.
+pub fn pivot() -> Rgb;
+
+/// The colour for column `column` of a `width`-wide row at the given ratio.
+/// Green on the left, red on the right, meeting at a tight `pivot()` seam:
+/// each half only ever desaturates toward the pivot, so no cell is a mixture
+/// of the two hues.
+pub fn column_colour(ratio: f32, column: u16, width: u16) -> Rgb;
+
+pub fn oklab_mix(a: Rgb, b: Rgb, t: f32) -> Rgb;
+```
+
+- [ ] **Step 1: Write the failing tests** in `rv/tests/gradient.rs`
+
+```rust
+#[test]
+fn a_pure_addition_is_green_all_the_way_across() {
+    for column in 0..40 {
+        assert_eq!(column_colour(1.0, column, 40), ADDED, "column {column} is green");
+    }
+}
+
+#[test]
+fn a_pure_deletion_is_red_all_the_way_across() {
+    for column in 0..40 {
+        assert_eq!(column_colour(0.0, column, 40), REMOVED);
+    }
+}
+
+#[test]
+fn an_even_split_changes_hand_at_the_middle() {
+    assert_eq!(column_colour(0.5, 0, 40), ADDED, "the left end is fully green");
+    assert_eq!(column_colour(0.5, 39, 40), REMOVED, "the right end is fully red");
+}
+
+#[test]
+fn the_boundary_is_blended_rather_than_a_hard_edge() {
+    let middle: Vec<Rgb> = (17..23).map(|column| column_colour(0.5, column, 40)).collect();
+    let distinct: std::collections::HashSet<_> = middle.iter().map(|c| (c.0, c.1, c.2)).collect();
+    assert!(distinct.len() > 2, "the boundary interpolates: {middle:?}");
+}
+
+#[test]
+fn the_seam_is_the_brightest_part_of_the_row() {
+    // The whole point of pivoting through a light neutral: green and red sit at
+    // opposite ends of Oklab's `a` axis, so blending them directly crosses a
+    // dull mid-grey exactly where the eye is trying to read the boundary. The
+    // seam must be brighter than both ends, not darker.
+    let luma = |c: Rgb| 0.2126 * c.0 as f32 + 0.7152 * c.1 as f32 + 0.0722 * c.2 as f32;
+    let seam = luma(column_colour(0.5, 20, 40));
+    assert!(seam > luma(ADDED), "the seam is lighter than the green end");
+    assert!(seam > luma(REMOVED), "and lighter than the red end");
+}
+
+#[test]
+fn no_cell_is_ever_a_mixture_of_the_two_hues() {
+    // Each half desaturates toward the pivot and back, so a cell is green-ish or
+    // red-ish or neutral — never olive, never brown.
+    for column in 0..40 {
+        let Rgb(r, g, _) = column_colour(0.5, column, 40);
+        let muddy = r > 90 && g > 90 && r.abs_diff(g) < 25 && (r as u16 + g as u16) < 380;
+        assert!(!muddy, "column {column} is mud: {:?}", column_colour(0.5, column, 40));
+    }
+}
+
+#[test]
+fn the_seam_is_tight_enough_to_still_read_as_a_proportion() {
+    // A wide blend destroys the thing the bar is drawing: you can no longer see
+    // where two thirds ends and one third begins.
+    let flat_green = (0..40).filter(|c| column_colour(0.66, *c, 40) == ADDED).count();
+    let flat_red = (0..40).filter(|c| column_colour(0.66, *c, 40) == REMOVED).count();
+    assert!(flat_green + flat_red >= 34, "at most a few columns are in the seam");
+    assert!(flat_green > flat_red, "and two thirds still reads as two thirds");
+}
+
+#[rstest]
+#[case(0.0)]
+#[case(0.5)]
+#[case(1.0)]
+fn a_one_column_row_still_produces_a_colour(#[case] ratio: f32) {
+    let _ = column_colour(ratio, 0, 1);
+}
+
+#[test]
+fn a_file_with_no_line_changes_has_no_ratio() {
+    assert_eq!(Stat { added: 0, removed: 0 }.added_ratio(), None);
+    assert_eq!(Stat { added: 3, removed: 1 }.added_ratio(), Some(0.75));
+}
+```
+
+- [ ] **Step 2: Run to verify they fail**
+
+Run: `cargo test -p rv --test gradient` — expect FAIL, unresolved import `rv::gradient`.
+
+- [ ] **Step 3: Implement the colour maths**
+
+Oklab: sRGB → linear → LMS → cube root → Oklab, lerp, and back. Clamp on the way out; `f32` rounding can push a channel a hair past 255 and a wrapping cast would produce a black cell in the middle of the gradient.
+
+`pivot()` takes the lighter of `ADDED` and `REMOVED`, raises its Oklab `L` by a fixed step capped just short of white, and drops chroma to near zero. Relative, not absolute — pure white flares on a dark terminal and disappears on a light one.
+
+`column_colour` maps the column to a position and blends over a window of `min(4, width / 4)` columns centred on `ratio * width`. **Within the window it interpolates in two halves — `ADDED → pivot()` on the left of centre, `pivot() → REMOVED` on the right** — so no cell is ever a mix of green and red. Outside the window it returns the flat end colours, which is what keeps the proportion readable.
+
+A degenerate width (0 or 1) and a ratio at either extreme must still produce a colour rather than dividing by zero; the tests above pin both.
+
+- [ ] **Step 4: Compute the stats**
+
+In `session::build` or `App::new`, diff every file once through `rv_core::diff::compute_with(old, new, path, false)` — the in-process `similar` path, **never the difftastic path**, because a subprocess per file before the first frame is seconds of startup on a large review. Count `Added` and `Removed` lines into a `Stat` per file. Report the total startup cost of this step in your report, measured on this repository.
+
+- [ ] **Step 5: Paint the rows**
+
+Sidebar rows draw each cell's background from `column_colour`, at whatever depth the terminal supports: truecolour when `COLORTERM` advertises it, the 256-colour cube otherwise, and a hard split with no blend at 16 colours. A directory row in the tree aggregates its subtree's stats. A file with no line changes renders neutral.
+
+- [ ] **Step 6: Test it end to end**
+
+```rust
+#[test]
+fn the_sidebar_tints_a_row_by_the_shape_of_its_change() {
+    let app = mixed_workspace().app();       // one file mostly added, one mostly removed
+    let frame = frame_at(&app, 100, 24);
+    let added_row = sidebar_row_for(&frame, "added.rs");
+    let removed_row = sidebar_row_for(&frame, "removed.rs");
+    assert_ne!(bg_of(&frame, added_row, 2), bg_of(&frame, removed_row, 2),
+        "the two files are tinted differently");
+}
+
+#[test]
+fn a_pure_rename_is_left_neutral() {
+    let app = rename_workspace().app();
+    let frame = frame_at(&app, 100, 24);
+    assert_eq!(bg_of(&frame, sidebar_row_for(&frame, "b.rs"), 2), None,
+        "a gradient over zero changed lines would be inventing a ratio");
+}
+
+#[test]
+fn the_colours_do_not_move_as_you_browse() {
+    let mut app = mixed_workspace().app();
+    let before = sidebar_backgrounds(&frame_at(&app, 100, 24));
+    for _ in 0..3 { app.on_key(KeyCode::Char(']')).expect("next file"); }
+    assert_eq!(sidebar_backgrounds(&frame_at(&app, 100, 24)), before,
+        "stats are computed once at startup, never lazily recoloured");
+}
+```
+
+- [ ] **Step 7: Add a property**
+
+For arbitrary ratios and widths, every column produces a colour, the leftmost column is green whenever the ratio is above zero, the rightmost is red whenever it is below one, and no column's channels are ever outside `0..=255`. Prove it can fail against a vendored mutant that skips the clamp.
+
+- [ ] **Step 8: Commit**
+
+```bash
+jj describe -m "feat(rv): tint each file row by the shape of its change" && jj new
+```
+
+---
+
+## Task 9: The powerline status bar
+
+**Files:** Create `rv/src/statusbar.rs`, `rv/tests/statusbar.rs`; modify `rv/src/ui.rs`, `rv/tests/app_cases.rs`
+
+**Consumes:** `Layout::bar` (Task 1, already at the bottom), `Stat` (Task 8).
+
+**Produces:**
+
+```rust
+pub struct Segment { pub text: String, pub role: Role }
+pub enum Role { Mode, Position, Scope, Comments, Hint }
+pub fn segments(app: &App) -> Vec<Segment>;
+pub fn render(segments: &[Segment], width: u16, ascii: bool) -> Line<'static>;
+```
+
+- [ ] **Step 1: Write the failing tests**
+
+```rust
+#[test]
+fn the_bar_names_the_mode_the_file_and_the_scope() {
+    let app = workspace().app();
+    let text = buffer_text_of_row(&frame_at(&app, 100, 24), 23);
+    assert!(text.contains("BROWSE"), "the mode is visible: {text}");
+    assert!(text.contains("a.rs"), "and the selected file");
+    assert!(text.contains("trunk()"), "and what is being reviewed");
+}
+
+#[test]
+fn the_mode_segment_changes_with_the_mode() {
+    let mut app = workspace().app();
+    app.on_key(KeyCode::Char('c')).expect("c");
+    let text = buffer_text_of_row(&frame_at(&app, 100, 24), 23);
+    assert!(text.contains("COMMENT"), "typing is visibly a different mode: {text}");
+}
+
+#[test]
+fn rv_ascii_replaces_the_powerline_glyphs() {
+    let bar = render(&sample_segments(), 80, false);
+    let plain = render(&sample_segments(), 80, true);
+    assert!(line_text(&bar).contains('\u{e0b0}'), "arrows by default");
+    assert!(!line_text(&plain).contains('\u{e0b0}'), "RV_ASCII=1 uses no patched glyphs");
+    assert!(line_text(&plain).contains("BROWSE"), "and loses no information");
+}
+
+#[rstest]
+#[case(20)]
+#[case(40)]
+#[case(200)]
+fn the_bar_fills_its_width_exactly_and_never_overflows(#[case] width: u16) {
+    let rendered = render(&sample_segments(), width, false);
+    assert_eq!(line_width(&rendered), width as usize, "exactly {width} columns");
+}
+
+#[test]
+fn a_bar_too_narrow_for_everything_drops_segments_rather_than_truncating_mid_word() {
+    let rendered = line_text(&render(&sample_segments(), 24, false));
+    assert!(rendered.contains("BROWSE"), "the mode survives first: {rendered}");
+    assert!(!rendered.contains("trunk()"), "the scope is dropped whole, not cut in half");
+}
+```
+
+- [ ] **Step 2-4: Run (expect FAIL), implement, run (expect PASS)**
+
+Segments are dropped in priority order when the width is short — hint, then scope, then position, then comments; the mode is never dropped, because it is the one that tells you what the next keystroke does. Read `RV_ASCII` once at startup, not per frame.
+
+- [ ] **Step 5: Commit**
+
+```bash
+jj describe -m "feat(rv): a powerline status bar along the bottom" && jj new
+```
+
+---
+
+## Task 10: Focus colours the border
+
+**Files:** Modify `rv/src/ui.rs`, `rv/src/gradient.rs`, `rv/tests/app.rs`
+
+- [ ] **Step 1: Write the failing tests**
+
+```rust
+#[test]
+fn the_focused_pane_border_is_the_accent_and_the_other_is_not() {
+    let mut app = workspace().app();
+    let frame = frame_at(&app, 100, 24);
+    let diff_border = border_colour(&frame, diff_pane_corner(&app, 100, 24));
+    let sidebar_border = border_colour(&frame, sidebar_corner(&app, 100, 24));
+    assert_eq!(diff_border, Some(ACCENT), "the diff has focus at launch");
+    assert_ne!(sidebar_border, Some(ACCENT), "the sidebar does not");
+
+    app.on_key(KeyCode::Left).expect("focus the sidebar");
+    let frame = frame_at(&app, 100, 24);
+    assert_eq!(border_colour(&frame, sidebar_corner(&app, 100, 24)), Some(ACCENT));
+    assert_ne!(border_colour(&frame, diff_pane_corner(&app, 100, 24)), Some(ACCENT));
+}
+
+#[test]
+fn the_accent_is_none_of_the_colours_that_already_mean_something() {
+    // green is an addition, red a removal, blue a comment, orange an alert.
+    for taken in [gradient::ADDED, gradient::REMOVED, ui::COMMENT_BLUE, ui::ALERT_ORANGE] {
+        assert_ne!(ACCENT, taken, "the focus accent must be unambiguous");
+    }
+}
+
+#[test]
+fn the_title_marker_survives_the_colour() {
+    // Redundant on purpose: a 16-colour terminal, or a reader who does not
+    // separate magenta from red, still needs to know where the keys go.
+    let app = workspace().app();
+    assert!(buffer_text(&frame_at(&app, 100, 24)).contains('▸'));
+}
+```
+
+- [ ] **Step 2-4: Run (expect FAIL), implement, run (expect PASS)**
+
+Borders become rounded. The accent is magenta, defined once beside the other palette constants in `gradient.rs` so the whole palette is declared in one place.
+
+- [ ] **Step 5: Commit**
+
+```bash
+jj describe -m "feat(rv): colour the focused pane's border" && jj new
+```
+
+---
+
+## Task 11: Alerts that float and fade
+
+**Files:** Modify `rv/src/app.rs`, `rv/src/ui.rs`, `rv/tests/app.rs`, `rv/tests/app_cases.rs`
+
+**Produces:**
+
+```rust
+pub struct Alert { pub message: String, pub raised: Instant }
+impl App {
+    pub fn alert(&mut self, message: impl Into<String>, now: Instant);
+    pub fn expire_alerts(&mut self, now: Instant);
+    pub fn alerts(&self) -> &[Alert];
+    pub fn next_deadline(&self, now: Instant) -> Option<Duration>;   // what the event loop waits for
+}
+```
+
+**Nothing inside `App` calls `Instant::now()`.** The event loop supplies the time; a test supplies whatever it likes. Every state machine in this project has stayed testable by refusing ambient input, and a clock is ambient input.
+
+- [ ] **Step 1: Write the failing tests**
+
+```rust
+#[test]
+fn an_alert_appears_then_leaves_on_its_own() {
+    let mut app = workspace().app();
+    let t0 = Instant::now();
+    app.alert("src/old.rs is no longer in this range", t0);
+    assert_eq!(app.alerts().len(), 1);
+    assert!(buffer_text(&frame_at(&app, 100, 24)).contains("no longer in this range"));
+
+    app.expire_alerts(t0 + Duration::from_secs(2));
+    assert_eq!(app.alerts().len(), 1, "still up at two seconds");
+
+    app.expire_alerts(t0 + Duration::from_secs(6));
+    assert!(app.alerts().is_empty(), "gone by six");
+    assert!(!buffer_text(&frame_at(&app, 100, 24)).contains("no longer in this range"));
+}
+
+#[test]
+fn the_toast_takes_no_key_and_steals_no_focus() {
+    let mut app = workspace().app();
+    let focus = app.focus();
+    let line = app.line_index();
+    app.alert("something went wrong", Instant::now());
+    app.on_key(KeyCode::Char('j')).expect("j");
+    assert_eq!(app.focus(), focus, "focus is untouched");
+    assert_eq!(app.line_index(), line + 1, "and j still moved the line");
+    assert_eq!(app.alerts().len(), 1, "the key did not dismiss it either");
+}
+
+#[test]
+fn the_border_dims_as_the_deadline_approaches() {
+    let mut app = workspace().app();
+    let t0 = Instant::now();
+    app.alert("careful", t0);
+    let bright = toast_border_colour(&frame_at_time(&app, 100, 24, t0));
+    let faded = toast_border_colour(&frame_at_time(&app, 100, 24, t0 + Duration::from_millis(4600)));
+    assert_ne!(bright, faded, "the toast fades rather than vanishing abruptly");
+    assert!(luma(faded) < luma(bright), "and it fades down, not up");
+}
+
+#[test]
+fn the_event_loop_is_told_when_to_wake_up() {
+    let mut app = workspace().app();
+    let t0 = Instant::now();
+    assert_eq!(app.next_deadline(t0), None, "an idle rv waits for a key, forever");
+    app.alert("careful", t0);
+    let wait = app.next_deadline(t0).expect("a live alert gives the loop a timeout");
+    assert!(wait <= Duration::from_secs(5), "and the timeout is bounded by the deadline");
+}
+
+#[test]
+fn several_alerts_stack_without_overlapping() {
+    let mut app = workspace().app();
+    let t0 = Instant::now();
+    app.alert("first", t0);
+    app.alert("second", t0);
+    let text = buffer_text(&frame_at(&app, 100, 24));
+    assert!(text.contains("first") && text.contains("second"));
+}
+```
+
+- [ ] **Step 2-4: Run (expect FAIL), implement, run (expect PASS)**
+
+`ui::draw` needs the current time to pick the fade step; give it a `now: Instant` parameter rather than calling the clock inside the renderer, for the same reason. The fade is an Oklab lightness ramp using Task 8's `oklab_mix`, in four steps over the final second; at 16 colours the toast disappears at its deadline without fading, because a fade that degrades into a flicker is worse than none.
+
+Then raise alerts where the code currently swallows or merely statuses a real failure — an unreadable blob, a jump whose anchored file has left the range, a stale export. Ordinary confirmations stay in the status bar; the toast is for what went wrong.
+
+- [ ] **Step 5: Change the event loop**
+
+`event::read()` becomes `event::poll(timeout)` where the timeout is `app.next_deadline(Instant::now())`, and `None` means block as before. Call `expire_alerts` each pass. Verify by hand on a pty that a toast raised with no further input still disappears — an alert that needs a keystroke to expire is the bug this step exists to prevent, and no unit test can see it.
+
+- [ ] **Step 6: Commit**
+
+```bash
+jj describe -m "feat(rv): alerts that float at the top and fade out" && jj new
+```
+
+---
+
+## Task 12: Document it
+
+**Files:** Modify `README.md`, `rv/tests/app_cases.rs`
+
+- [ ] Document `<`/`>`, `?`, `t`, and the mouse gestures; state that **Shift-drag** selects text natively, because mouse reporting is on and a reader will otherwise think copy is gone. Note that syntax highlighting covers the grammars rv ships and that other files render plain. Say what the sidebar's colour bar measures — **lines of text, not semantic change** — so a reader is not surprised when a reindentation shows a gradient while the pane calls it no semantic change. Extend the existing README-versus-code test to cover every new binding.
+- [ ] Run `cargo test --workspace`; expect green, clippy and fmt clean.
+- [ ] Commit.
+
+---
+
+## Self-review
+
+Spec coverage: §3 → Task 1; §4 → Tasks 1-2 and the drag in 7; §5 → Task 3; §6 → Tasks 4-5; §7's tree and commit nodes → Task 6, §7's change gradient → Task 8; §8 → Task 7; §9's status bar → Task 9, its focus border → Task 10, its alerts → Task 11; §10's test list is distributed across the tasks that own each behaviour. §10's non-goals are respected — no config file, no themes, no rv-side selection, no destructive gesture, no horizontal scrolling, no third pane.
+
+Ordering: Task 1 has no dependencies and everything visual depends on it; Task 4 is independent of 1-3 and can run alongside; Task 5 needs 1 and 4; Task 6 needs 1; Task 7 needs 1, 2 and 6; Task 8 needs 6, because a directory row aggregates its subtree; Task 9 needs all. Tasks 2, 3, 5, 6, 7 and 8 all touch `rv/src/app.rs` and must not run concurrently with each other.
+
+Type consistency: `Split` and `Layout` are defined in Task 1 and consumed by 2, 5, 6, 7 and 8; `Capture`/`Highlights` in Task 4 and consumed only by Task 5; `Node` in Task 6 and consumed by Task 8's directory aggregation; `Target` in Task 1 and consumed only by Task 7; `Stat`/`Rgb` in Task 8 and consumed only by its own renderer.
+
+One thing to watch when implementing Task 8 alongside Task 5: both paint the same cells with backgrounds. The diff pane's tint marks *added or removed*, and the sidebar's gradient marks *how much was added versus removed*. They never appear in the same pane, but they should read as one palette — use the same green and the same red for both, defined once in `gradient.rs` and imported by the diff renderer, rather than two near-identical pairs that drift apart.

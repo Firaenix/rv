@@ -116,24 +116,34 @@ alphabet), so you can paste one straight back into a jj command.
 
 ## The reviewer
 
-A bare `rv` opens the terminal UI: a status line over a file sidebar and a diff
-pane.
+A bare `rv` opens the terminal UI: a status line over a sidebar and a diff
+pane, with your comments drawn in the diff itself, under the lines they are
+about.
 
 ```
-┌────────────────────────────────────────────────────────────┐
-│ j/k line  [/] file  c comment  q quit                      │
-├──────────────────────┬─────────────────────────────────────┤
-│ Files (27)           │ rv-core/src/anchor.rs — difftastic  │
-│ +  Cargo.lock        │    47 +    let start = index.satu…  │
-│ +  rv-core/src/an…   │    48 +    let end = (index + 5)…   │
-└──────────────────────┴─────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│ j/k line  [/] file  c comment  enter stack  d delete  s fold  q quit │
+├──────────────────────┬───────────────────────────────────────────────┤
+│ Files (27)           │ ▸ rv-core/src/anchor.rs — difftastic (Rust)   │
+│ +  Cargo.lock        │    47 +    let start = index.satu…            │
+│ +  rv-core/src/an…   │    48 +    let end = (index + 5)…             │
+│ ~  rv/src/ui.rs      │        ╭─ 8d985355 · open ────────────────╮   │
+│                      │        │ lines.len() - 1 underflows       │   │
+│                      │        │ reply: fixed with unwrap_or(0)   │   │
+│                      │        ╰──────────────────────────────────╯   │
+└──────────────────────┴───────────────────────────────────────────────┘
 ```
 
 The sidebar marks each file by how it changed: `+` added, `-` removed, `~`
-modified, `->` renamed. The diff pane's title says where its lines came from —
-`difftastic (Rust)`, `fallback`, or `binary` — so a degraded diff is never
-mistaken for a structural one. Diffs are computed lazily, for the selected file
-only, and cached, so stepping back to a file does not re-run difftastic.
+modified, `->` renamed. `Tab` switches it from that file list to a list of every
+comment in the review, and `Enter` on one of those rows opens the code it is
+about. The diff pane's title says where its lines came from — `difftastic
+(Rust)`, `fallback`, or `binary` — so a degraded diff is never mistaken for a
+structural one. Diffs are computed lazily, for the selected file only, and
+cached, so stepping back to a file does not re-run difftastic.
+
+The pane the next keystroke lands in is marked with a `▸` on its title and a
+bold border, never with colour: blue means *comment* here and nothing else.
 
 ### Keybindings
 
@@ -141,12 +151,26 @@ only, and cached, so stepping back to a file does not re-run difftastic.
 
 | Key | Action |
 | --- | --- |
-| `j` / `↓` | Next diff line |
-| `k` / `↑` | Previous diff line |
-| `]` | Next file |
-| `[` | Previous file |
+| `j` / `↓` | Next line, file or comment — whichever the focused pane is listing |
+| `k` / `↑` | The previous one |
+| `←` | Focus the pane to the left: the diff hands over to the sidebar, a comment stack to the diff |
+| `→` | Focus the diff from the sidebar |
+| `]` | Next file, from whichever pane the cursor is in |
+| `[` | Previous file, likewise |
+| `Tab` | Switch the sidebar between **Files** and **Comments** |
+| `Enter` | Step into the selected line's comment stack — or, from the Comments tab, jump to the code that comment is about |
+| `Esc` | Leave the comment stack |
 | `c` | Comment on the highlighted line |
+| `d` | Delete a comment, after a `y`/`n` confirmation |
+| `s` | Fold a comment box away, or unfold it |
 | `q` | Quit |
+| `Ctrl+C` | Quit from anywhere, including out of a half-typed comment |
+
+Which comment `d` and `s` act on follows the cursor: the box you are on inside a
+stack, the comment the browser is showing on the **Comments** tab, and otherwise
+the selected diff line's — the newest of them for `d`, all of them together for
+`s`. The **Files** tab selects a file rather than a comment, so `d` there
+deletes nothing and says so, while `s` still folds the line the diff is on.
 
 **Typing a comment**
 
@@ -167,6 +191,42 @@ anchors to the base revision, added and context lines to the head. The line
 number shown in the pane is always the one the anchor stores. If the highlighted
 line has no number on that side, `rv` refuses to save rather than anchoring it
 somewhere approximate, and says so in the status line.
+
+### Inline comments
+
+A saved comment is drawn **beneath the line it is anchored to**, in a blue
+bordered box indented to the diff's gutter, titled with the comment's id and its
+state. Several comments on one line stack under it, oldest first. The boxes are
+part of the diff pane: `j` and `k` step past them, and the pane scrolls to keep
+whichever one you are steering on screen.
+
+`Enter` steps the cursor *into* the stack under the selected line, where `j` and
+`k` move between the boxes rather than between the lines; `Esc` or `←` steps
+back out. The selected box is drawn brighter and bold, so `d` and `s` visibly
+have a target.
+
+A reply — the block a coding agent appends to `REVIEW-FEEDBACK.md`, folded back
+in on the next write — renders **inside the same box**, beneath the comment
+body, prefixed `reply:` and dimmed. It is part of the same conversation, and
+dimming it is what tells your own words from the answer to them at a glance.
+
+`s` folds a box down to a single row and unfolds it again. **Folding is a view
+preference of this session only.** It is never written to `.review/`, so nothing
+another reviewer — or an LLM reading the export — sees depends on how you
+arranged your screen; reopening `rv` gives you every box back. A comment that is
+no longer open starts folded, and greyed, since it is not one asking for an
+answer.
+
+**Deleting a comment is permanent.** `d` asks first — the status line reads
+`delete comment at <path>:<line>? (y/n)` — and only a lowercase `y` goes
+through; every other key keeps the comment. What `y` removes is the comment and
+its snapshot, out of `comments.json`, with nothing that undoes it.
+
+`REVIEW-FEEDBACK.md` is an **export**, not a document kept continuously in step
+with the store. `rv render` writes it, and so does every comment you save in the
+TUI; nothing else does — delete a comment and the document still carries its
+entry until the next write. `comments.json` is what says which comments exist
+right now.
 
 ## The `.review/` directory
 

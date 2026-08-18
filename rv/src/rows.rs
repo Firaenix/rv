@@ -26,6 +26,28 @@ use rv_core::store::Comment;
 /// than opening a second one.
 const REPLY_PREFIX: &str = "reply: ";
 
+/// Which half of a comment's conversation a body row belongs to.
+///
+/// The renderer draws a reply dimmed, and this is what tells it which rows
+/// those are. It is here rather than in [`crate::ui`] because the two facts
+/// that decide it — that the reply is wrapped into rows of its own, and that
+/// [`REPLY_PREFIX`] is written onto the first of them — are both this module's,
+/// and a renderer that recovered them by looking for the prefix in the text
+/// would be reading back a spelling this module could change under it. It would
+/// also mark a *comment* whose body happens to start `reply: ` as an answer to
+/// itself.
+///
+/// [`Copy`] because it is a tag: every caller wants it by value, out of a
+/// borrowed row.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BodyKind {
+    /// The reviewer's own words.
+    Body,
+    /// The answer folded back in from the export — every wrapped row of it, not
+    /// only the one carrying the prefix.
+    Reply,
+}
+
 /// One drawable row.
 ///
 /// `line` on the box variants is the index of the diff line the box hangs
@@ -39,11 +61,12 @@ pub enum Row<'a> {
     BoxTop { line: usize, comment: &'a Comment },
     /// One wrapped line of a comment's body or reply. `text` is the row's
     /// content with no border or indent: the drawing code owns the frame it
-    /// sits in.
+    /// sits in, and `kind` is how it knows which of the two it is drawing.
     BoxBody {
         line: usize,
         comment: &'a Comment,
         text: String,
+        kind: BodyKind,
     },
     /// The bottom border of an expanded comment box.
     BoxBottom { line: usize, comment: &'a Comment },
@@ -96,6 +119,7 @@ pub fn plan<'a>(
                     line: index,
                     comment,
                     text,
+                    kind: BodyKind::Body,
                 });
             }
             if let Some(reply) = comment.reply.as_deref() {
@@ -104,6 +128,7 @@ pub fn plan<'a>(
                         line: index,
                         comment,
                         text,
+                        kind: BodyKind::Reply,
                     });
                 }
             }
