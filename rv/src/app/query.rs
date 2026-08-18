@@ -74,6 +74,12 @@ impl App {
     }
 
     /// Which row of the file list the cursor is on — see the field.
+    /// The changes the review covers, oldest first.
+    #[must_use]
+    pub fn changes(&self) -> &[rv_core::model::ChangeRef] {
+        &self.review.session.changes
+    }
+
     pub fn sidebar_row(&self) -> usize {
         self.sidebar_row
     }

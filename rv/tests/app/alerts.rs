@@ -192,7 +192,7 @@ fn a_jump_to_a_file_that_left_the_range_raises_an_alert() {
     assert!(later.alerts().is_empty(), "{:?}", later.alerts().len());
 
     later.on_key(KeyCode::Left).expect("the sidebar");
-    later.on_key(KeyCode::Tab).expect("the comment browser");
+    to_comments(&mut later);
     later.on_key(KeyCode::Enter).expect("jump");
 
     assert!(
@@ -225,7 +225,7 @@ fn the_same_failure_twice_is_one_toast() {
     let mut later = workspace.app_from("@-");
 
     later.on_key(KeyCode::Left).expect("the sidebar");
-    later.on_key(KeyCode::Tab).expect("the comment browser");
+    to_comments(&mut later);
     for _ in 0..3 {
         later.on_key(KeyCode::Enter).expect("jump");
     }
@@ -260,7 +260,7 @@ fn an_alert_raised_before_the_clock_is_known_is_stamped_by_the_first_pass() {
     let mut later = workspace.app_from("@-");
 
     later.on_key(KeyCode::Left).expect("the sidebar");
-    later.on_key(KeyCode::Tab).expect("the comment browser");
+    to_comments(&mut later);
     later.on_key(KeyCode::Enter).expect("jump");
     assert_eq!(later.alerts().len(), 1);
     assert_eq!(

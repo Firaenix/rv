@@ -32,6 +32,7 @@ pub(super) fn draw_sidebar(frame: &mut Frame, app: &App, area: Rect) {
     let focused = app.focus() == Focus::Sidebar;
     match app.sidebar_tab() {
         SidebarTab::Files => files::draw_files(frame, app, area, focused),
+        SidebarTab::Commits => files::draw_commits(frame, app, area, focused),
         SidebarTab::Comments => draw_comment_browser(frame, app, area, focused),
     }
 }

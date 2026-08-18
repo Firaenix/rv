@@ -104,7 +104,7 @@ fn from_the_comments_tab_s_folds_the_browsed_comment() {
         "the cursor is on a line that has comments, so the line rule would pass by luck"
     );
 
-    app.on_key(KeyCode::Tab).expect("comments tab");
+    to_comments(&mut app);
     app.on_key(KeyCode::Left).expect("focus the sidebar");
     app.on_key(KeyCode::Char('s'))
         .expect("fold the browsed comment");
@@ -144,7 +144,7 @@ fn from_the_comments_tab_s_folds_the_browsed_comment_not_the_selected_lines() {
     app.on_key(KeyCode::Char('k'))
         .expect("back onto the first comment's line");
 
-    app.on_key(KeyCode::Tab).expect("comments tab");
+    to_comments(&mut app);
     app.on_key(KeyCode::Left).expect("focus the sidebar");
     app.on_key(KeyCode::Down).expect("browse to the second");
     app.on_key(KeyCode::Char('s')).expect("fold it");
@@ -190,7 +190,7 @@ fn from_an_empty_comment_browser_s_says_so() {
     let workspace = Fixture::new();
     let mut app = workspace.app();
 
-    app.on_key(KeyCode::Tab).expect("comments tab");
+    to_comments(&mut app);
     app.on_key(KeyCode::Left).expect("focus the sidebar");
     app.on_key(KeyCode::Char('s')).expect("s");
 

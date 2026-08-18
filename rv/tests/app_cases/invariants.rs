@@ -1,10 +1,10 @@
 //! Totality and state invariants under fuzz.
 
-use std::cell::RefCell;
 use crossterm::event::KeyCode;
 use proptest::prelude::*;
 use rv::app::Action;
 use rv::app::Mode;
+use std::cell::RefCell;
 
 use crate::support::*;
 

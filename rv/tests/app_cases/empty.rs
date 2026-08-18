@@ -1,6 +1,5 @@
 //! A review that changed no files.
 
-use std::cell::RefCell;
 use crossterm::event::KeyCode;
 use proptest::prelude::*;
 use ratatui::layout::Rect;
@@ -9,6 +8,7 @@ use rv::app::Mode;
 use rv::session;
 use rv_core::diff;
 use rv_core::diff::FileDiff;
+use std::cell::RefCell;
 
 use crate::support::*;
 

@@ -289,7 +289,9 @@ impl App {
             Command::Resolve | Command::Abandon => self.settle_target().is_some(),
             // Two things under one key, so two ways for it to have a target.
             Command::Fold => self.sidebar_fold_key().is_some() || !self.fold_targets().is_empty(),
-            Command::ToggleTree | Command::CycleSort => self.sidebar_tab == SidebarTab::Files,
+            Command::ToggleTree | Command::CycleSort => {
+                self.sidebar_tab != SidebarTab::Comments
+            }
         }
     }
 
@@ -297,7 +299,9 @@ impl App {
     fn can_move_forward(&self) -> bool {
         match self.focus {
             Focus::Sidebar => match self.sidebar_tab {
-                SidebarTab::Files => self.sidebar_row + 1 < self.sidebar_nodes().len(),
+                SidebarTab::Files | SidebarTab::Commits => {
+                    self.sidebar_row + 1 < self.nodes().len()
+                }
                 SidebarTab::Comments => self.browser_index + 1 < self.comments.len(),
             },
             Focus::Diff => self.cursor_row() + 1 < self.row_count(),
@@ -309,7 +313,7 @@ impl App {
     fn can_move_back(&self) -> bool {
         match self.focus {
             Focus::Sidebar => match self.sidebar_tab {
-                SidebarTab::Files => self.sidebar_row > 0,
+                SidebarTab::Files | SidebarTab::Commits => self.sidebar_row > 0,
                 SidebarTab::Comments => self.browser_index > 0,
             },
             Focus::Diff => self.cursor_row() > 0,

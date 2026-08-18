@@ -71,8 +71,30 @@ const FOLDED: &str = "▸  ";
 /// · natural` is twenty-eight, so putting the order up there would truncate
 /// away exactly the thing it is there to say.
 pub(super) fn draw_files(frame: &mut Frame, app: &App, area: Rect, focused: bool) {
+    let title = format!("Files ({})", app.files().len());
+    draw_nodes(frame, app, area, focused, &app.sidebar_nodes(), title);
+}
+
+/// The same list, one level up: the stack's changes, each holding the files it
+/// touched. `t` and `o` mean here what they mean there — the files under a
+/// change are a tree or a list, ordered the same way — because they are the
+/// same rows drawn from the same model.
+pub(super) fn draw_commits(frame: &mut Frame, app: &App, area: Rect, focused: bool) {
+    let title = format!("Commits ({})", app.changes().len());
+    draw_nodes(frame, app, area, focused, &app.commit_nodes(), title);
+}
+
+/// One list of [`Node`]s, with its counts column, its change bars and its
+/// selection.
+fn draw_nodes(
+    frame: &mut Frame,
+    app: &App,
+    area: Rect,
+    focused: bool,
+    nodes: &[Node],
+    title: String,
+) {
     let width = usize::from(area.width.saturating_sub(BORDER_ROWS));
-    let nodes = app.sidebar_nodes();
     let heads: Vec<String> = nodes.iter().map(|node| head(app, node)).collect();
     // One counts column for the whole list, as wide as its widest entry, so the
     // names line up down the pane. Zero when nothing in the review changed a
@@ -97,7 +119,7 @@ pub(super) fn draw_files(frame: &mut Frame, app: &App, area: Rect, focused: bool
         })
         .collect();
     let list = List::new(items)
-        .block(pane(format!("Files ({})", app.files().len()), focused).title_bottom(shape(app)))
+        .block(pane(title, focused).title_bottom(shape(app)))
         .highlight_style(selection_style(focused));
 
     let mut state = list_state(app, area, nodes.len(), app.sidebar_row());

@@ -62,7 +62,7 @@ fn jumping_to_any_comment_lands_on_a_line_that_shows_it() {
 
         for (row, id) in ids.iter().enumerate() {
             rewind(app);
-            press(app, KeyCode::Tab);
+            to_comments(app);
             press(app, KeyCode::Left);
             press_n(app, KeyCode::Down, row);
             prop_assert_eq!(

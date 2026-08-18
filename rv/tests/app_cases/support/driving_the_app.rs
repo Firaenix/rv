@@ -44,15 +44,16 @@ pub fn rewind(app: &mut App) {
     app.on_key(KeyCode::Esc).expect("leave comment mode");
     app.on_key(KeyCode::Left).expect("out of the stack");
     app.on_key(KeyCode::Left).expect("onto the sidebar");
-    if app.sidebar_tab() != SidebarTab::Comments {
-        app.on_key(KeyCode::Tab).expect("onto the comment browser");
-    }
+    to_comments(app);
     for _ in 0..=app.comments().len() {
         // Bounded for the same reason the line loop below is: this presses the
         // very key the browser's clamp is about.
         app.on_key(KeyCode::Up).expect("first comment");
     }
-    app.on_key(KeyCode::Tab).expect("back to the file list");
+    // Round the cycle rather than one press back: `Tab` goes forward only, and
+    // the cycle is Files → Commits → Comments, so one press from the browser
+    // lands on the file list only because it is the next one along.
+    to_files(app);
     // The file list's shape and order are session preferences a generated `t`
     // or `o` will have moved, and both change what `j` walks in that pane: a
     // sorted list puts a different file under the cursor, and a tree puts rows
@@ -276,4 +277,41 @@ pub fn run_cases<S: Strategy>(cases: u32, strategy: S, test: impl Fn(S::Value) -
     if let Err(error) = runner.run(&strategy, test) {
         panic!("{error}");
     }
+}
+
+/// Presses `Tab` until the sidebar is showing the review's comments.
+///
+/// The cycle is Files → Commits → Comments; a test that wants the browser wants
+/// it whatever the cycle's length is this week.
+pub fn to_comments(app: &mut App) {
+    for _ in 0..8 {
+        if app.sidebar_tab() == SidebarTab::Comments {
+            return;
+        }
+        app.on_key(KeyCode::Tab).expect("switch the sidebar tab");
+    }
+    panic!("the comments tab is not in the Tab cycle");
+}
+
+/// The same, for the tab that lists the stack's changes.
+pub fn to_commits(app: &mut App) {
+    for _ in 0..8 {
+        if app.sidebar_tab() == SidebarTab::Commits {
+            return;
+        }
+        app.on_key(KeyCode::Tab).expect("switch the sidebar tab");
+    }
+    panic!("the commits tab is not in the Tab cycle");
+}
+
+/// The same, for the file list — which is also where `t` and `o` mean
+/// something, so `rewind` resets them from here.
+pub fn to_files(app: &mut App) {
+    for _ in 0..8 {
+        if app.sidebar_tab() == SidebarTab::Files {
+            return;
+        }
+        app.on_key(KeyCode::Tab).expect("switch the sidebar tab");
+    }
+    panic!("the files tab is not in the Tab cycle");
 }

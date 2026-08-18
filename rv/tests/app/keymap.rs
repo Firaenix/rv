@@ -90,10 +90,12 @@ fn every_binding_is_a_key_the_readme_lists() {
 /// the same one leading, which is the spelling the whole keymap is held to.
 fn readme_spelling(keys: &str) -> String {
     keys.split(' ')
-        .map(|token| match token.strip_prefix('(').and_then(|t| t.strip_suffix(')')) {
-            Some(alias) => format!("(`{alias}`)"),
-            None => format!("`{token}`"),
-        })
+        .map(
+            |token| match token.strip_prefix('(').and_then(|t| t.strip_suffix(')')) {
+                Some(alias) => format!("(`{alias}`)"),
+                None => format!("`{token}`"),
+            },
+        )
         .collect::<Vec<_>>()
         .join(" ")
 }

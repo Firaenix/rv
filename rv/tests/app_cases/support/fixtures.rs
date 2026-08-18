@@ -299,7 +299,7 @@ pub fn shared_browser() -> &'static Fixture {
 #[fixture]
 pub fn browser_app() -> App {
     let mut app = shared_browser().app();
-    press(&mut app, KeyCode::Tab);
+    to_comments(&mut app);
     press(&mut app, KeyCode::Left);
     assert_eq!(app.sidebar_tab(), SidebarTab::Comments);
     assert_eq!(app.focus(), Focus::Sidebar);

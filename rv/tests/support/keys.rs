@@ -2,6 +2,7 @@
 
 use crossterm::event::KeyCode;
 use rv::app::App;
+use rv::app::SidebarTab;
 use rv_core::diff::DiffLine;
 
 /// Presses every character of `text` in order.
@@ -32,4 +33,29 @@ pub fn write_comment(app: &mut App, body: &str) {
     app.on_key(KeyCode::Char('c')).expect("enter comment mode");
     type_text(app, body);
     app.on_key(KeyCode::Enter).expect("save the comment");
+}
+
+/// Presses `Tab` until the sidebar is showing the review's comments.
+///
+/// The cycle is Files → Commits → Comments; a test that wants the browser wants
+/// it whatever the cycle's length is this week.
+pub fn to_comments(app: &mut App) {
+    for _ in 0..8 {
+        if app.sidebar_tab() == SidebarTab::Comments {
+            return;
+        }
+        app.on_key(KeyCode::Tab).expect("switch the sidebar tab");
+    }
+    panic!("the comments tab is not in the Tab cycle");
+}
+
+/// The same, for the tab that lists the stack's changes.
+pub fn to_commits(app: &mut App) {
+    for _ in 0..8 {
+        if app.sidebar_tab() == SidebarTab::Commits {
+            return;
+        }
+        app.on_key(KeyCode::Tab).expect("switch the sidebar tab");
+    }
+    panic!("the commits tab is not in the Tab cycle");
 }

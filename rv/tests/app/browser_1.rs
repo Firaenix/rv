@@ -14,7 +14,7 @@ use crate::support::*;
 /// Walks the sidebar's comment browser to row `index` and presses `Enter`,
 /// exactly the way a reviewer does — no test-only entry point into the jump.
 fn jump_to_row(app: &mut App, index: usize) {
-    app.on_key(KeyCode::Tab).expect("comments tab");
+    to_comments(app);
     app.on_key(KeyCode::Left).expect("focus the sidebar");
     for _ in 0..index {
         app.on_key(KeyCode::Down).expect("next row");
@@ -23,15 +23,21 @@ fn jump_to_row(app: &mut App, index: usize) {
 }
 
 #[test]
-fn tab_switches_the_sidebar_between_files_and_comments() {
+fn tab_cycles_the_sidebar_through_its_three_lists() {
     let workspace = Fixture::new();
     let mut app = workspace.app();
     assert_eq!(app.sidebar_tab(), SidebarTab::Files, "files by default");
 
     app.on_key(KeyCode::Tab).expect("tab");
+    assert_eq!(app.sidebar_tab(), SidebarTab::Commits);
+    app.on_key(KeyCode::Tab).expect("tab");
     assert_eq!(app.sidebar_tab(), SidebarTab::Comments);
-    app.on_key(KeyCode::Tab).expect("tab back");
-    assert_eq!(app.sidebar_tab(), SidebarTab::Files);
+    app.on_key(KeyCode::Tab).expect("tab round");
+    assert_eq!(
+        app.sidebar_tab(),
+        SidebarTab::Files,
+        "the cycle does not come back round"
+    );
 }
 
 /// From any focus, and without disturbing anything else: `Tab` is about what
@@ -51,7 +57,7 @@ fn tab_switches_the_tab_from_any_focus(#[case] approach: &[KeyCode]) {
 
     app.on_key(KeyCode::Tab).expect("tab");
 
-    assert_eq!(app.sidebar_tab(), SidebarTab::Comments);
+    assert_eq!(app.sidebar_tab(), SidebarTab::Commits);
     assert_eq!(app.focus(), focus, "tab moved the cursor to another pane");
     assert_eq!((app.file_index(), app.line_index()), (file, line));
     assert_eq!(app.mode(), Mode::Browse);
@@ -65,7 +71,7 @@ fn the_comment_browser_lists_every_comment_in_the_review() {
     app.on_key(KeyCode::Char(']')).expect("next file");
     write_comment(&mut app, "second finding");
 
-    app.on_key(KeyCode::Tab).expect("comments tab");
+    to_comments(&mut app);
     app.on_key(KeyCode::Left).expect("focus the sidebar");
 
     assert_eq!(
@@ -255,7 +261,7 @@ fn d_from_the_comment_browser_deletes_behind_the_same_confirmation() {
     app.on_key(KeyCode::Char('j')).expect("next line");
     write_comment(&mut app, "second finding");
 
-    app.on_key(KeyCode::Tab).expect("comments tab");
+    to_comments(&mut app);
     app.on_key(KeyCode::Left).expect("focus the sidebar");
     app.on_key(KeyCode::Down).expect("select the second");
     app.on_key(KeyCode::Char('d')).expect("ask");
@@ -283,7 +289,7 @@ fn d_from_the_comment_browser_can_be_declined() {
     let mut app = workspace.app();
     write_comment(&mut app, "needs a doc");
 
-    app.on_key(KeyCode::Tab).expect("comments tab");
+    to_comments(&mut app);
     app.on_key(KeyCode::Left).expect("focus the sidebar");
     app.on_key(KeyCode::Char('d')).expect("ask");
     app.on_key(KeyCode::Char('n')).expect("decline");
@@ -315,7 +321,7 @@ fn d_from_an_empty_comment_browser_says_so() {
     let workspace = Fixture::new();
     let mut app = workspace.app();
 
-    app.on_key(KeyCode::Tab).expect("comments tab");
+    to_comments(&mut app);
     app.on_key(KeyCode::Left).expect("focus the sidebar");
     app.on_key(KeyCode::Char('d')).expect("d");
 
@@ -328,7 +334,7 @@ fn the_comment_browser_renders_path_line_and_state() {
     let workspace = Fixture::new();
     let mut app = workspace.app();
     write_comment(&mut app, "needs a doc");
-    app.on_key(KeyCode::Tab).expect("comments tab");
+    to_comments(&mut app);
 
     let buffer = frame_at(&app, 100, 24);
     let text = buffer_text(&buffer);
@@ -356,7 +362,7 @@ fn the_comment_browser_renders_path_line_and_state() {
 fn an_empty_comment_browser_says_so() {
     let workspace = Fixture::new();
     let mut app = workspace.app();
-    app.on_key(KeyCode::Tab).expect("comments tab");
+    to_comments(&mut app);
 
     let text = buffer_text(&frame_at(&app, 100, 24));
 

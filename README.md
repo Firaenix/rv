@@ -170,7 +170,7 @@ everywhere.
 | `→` (`l`) | Focus the diff from the sidebar |
 | `]` | Next file, from whichever pane the cursor is in |
 | `[` | Previous file, likewise |
-| `Tab` | Switch the sidebar between **Files** and **Comments** |
+| `Tab` | Cycle the sidebar through **Files**, **Commits** and **Comments** |
 | `Enter` | Step into the selected line's comment stack — or, from the Comments tab, jump to the code that comment is about |
 | `Esc` | Leave the comment stack |
 | `c` | Comment on the highlighted line |

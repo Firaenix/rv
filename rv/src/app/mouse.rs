@@ -116,11 +116,11 @@ impl App {
         self.focus = Focus::Sidebar;
         match self.sidebar_tab {
             SidebarTab::Comments => self.browser_index = index,
-            SidebarTab::Files => {
+            SidebarTab::Files | SidebarTab::Commits => {
                 self.sidebar_row = index;
                 // `get` rather than `[index]`: a panic in a mouse handler is a
                 // review lost to a mis-click.
-                let file = match self.sidebar_nodes().get(index).map(|node| &node.kind) {
+                let file = match self.nodes().get(index).map(|node| &node.kind) {
                     Some(NodeKind::File { index }) => Some(*index),
                     // The same verb `s` has on the same row.
                     Some(NodeKind::Dir { .. } | NodeKind::Commit { .. }) => None,

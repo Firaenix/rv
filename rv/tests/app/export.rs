@@ -96,10 +96,7 @@ fn e_exports_a_review_with_no_comments() {
     app.on_key(KeyCode::Char('e')).expect("export");
 
     assert!(
-        workspace
-            .root()
-            .join(".review/REVIEW-FEEDBACK.md")
-            .exists(),
+        workspace.root().join(".review/REVIEW-FEEDBACK.md").exists(),
         "an empty review exported nothing at all"
     );
 }

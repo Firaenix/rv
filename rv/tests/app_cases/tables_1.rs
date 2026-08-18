@@ -146,7 +146,7 @@ fn browse_keybindings(
     assert_eq!(
         app.sidebar_tab(),
         if key == KeyCode::Tab {
-            SidebarTab::Comments
+            SidebarTab::Commits
         } else {
             SidebarTab::Files
         },

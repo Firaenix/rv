@@ -25,6 +25,8 @@ pub enum Mode {
 pub enum SidebarTab {
     /// The review's changed files.
     Files,
+    /// The review's changes, each holding the files it touched.
+    Commits,
     /// Every comment in the review, wherever it is anchored.
     Comments,
 }

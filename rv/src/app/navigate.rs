@@ -33,7 +33,7 @@ impl App {
     pub(super) fn move_forward(&mut self) -> Result<()> {
         match self.focus {
             Focus::Sidebar => match self.sidebar_tab {
-                SidebarTab::Files => self.move_sidebar(true)?,
+                SidebarTab::Files | SidebarTab::Commits => self.move_sidebar(true)?,
                 SidebarTab::Comments => {
                     let last = self.comments.len().saturating_sub(1);
                     self.browser_index = self.browser_index.saturating_add(1).min(last);
@@ -55,7 +55,7 @@ impl App {
     pub(super) fn move_back(&mut self) -> Result<()> {
         match self.focus {
             Focus::Sidebar => match self.sidebar_tab {
-                SidebarTab::Files => self.move_sidebar(false)?,
+                SidebarTab::Files | SidebarTab::Commits => self.move_sidebar(false)?,
                 SidebarTab::Comments => {
                     self.browser_index = self.browser_index.saturating_sub(1);
                 }
@@ -76,7 +76,7 @@ impl App {
         // The keyboard takes the view back from the wheel: a selection the
         // reviewer is moving has to be one they can see.
         self.sidebar_scroll = None;
-        let nodes = self.sidebar_nodes();
+        let nodes = self.nodes();
         let Some(last) = nodes.len().checked_sub(1) else {
             return Ok(());
         };
@@ -86,7 +86,7 @@ impl App {
             self.sidebar_row.saturating_sub(1)
         };
         if let NodeKind::File { index } = nodes[self.sidebar_row].kind {
-            self.select_file(index)?;
+            self.select_node_file(index)?;
         }
         Ok(())
     }

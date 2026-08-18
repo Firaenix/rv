@@ -23,6 +23,7 @@ mod browser_2;
 mod clipping;
 mod comment_1;
 mod comment_2;
+mod commits;
 mod cursor;
 mod delete;
 mod export;

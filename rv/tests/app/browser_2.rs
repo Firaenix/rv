@@ -13,7 +13,7 @@ fn the_browsed_row_is_highlighted_when_the_sidebar_has_focus() {
     let workspace = Fixture::new();
     let mut app = workspace.app();
     write_comment(&mut app, "needs a doc");
-    app.on_key(KeyCode::Tab).expect("comments tab");
+    to_comments(&mut app);
 
     let reversed = |app: &App| {
         let buffer = frame_at(app, 100, 24);

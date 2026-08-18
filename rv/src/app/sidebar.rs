@@ -19,9 +19,15 @@ impl App {
     /// announce itself would cost the reviewer the keymap they read off it.
     pub(super) fn switch_tab(&mut self) {
         self.sidebar_tab = match self.sidebar_tab {
-            SidebarTab::Files => SidebarTab::Comments,
+            SidebarTab::Files => SidebarTab::Commits,
+            SidebarTab::Commits => SidebarTab::Comments,
             SidebarTab::Comments => SidebarTab::Files,
         };
+        // The two node tabs share one cursor — they are never both on screen —
+        // so it has to be clamped onto whichever list just appeared.
+        self.sidebar_row = self
+            .sidebar_row
+            .min(self.nodes().len().saturating_sub(1));
         // A parked view is a row of *the list that was showing*; the other tab
         // is a different list of a different length.
         self.sidebar_scroll = None;
@@ -39,7 +45,7 @@ impl App {
     /// `t`: flips the file list between a flat list of whole paths and a
     /// directory tree.
     pub(super) fn toggle_tree(&mut self) {
-        if self.sidebar_tab != SidebarTab::Files {
+        if self.sidebar_tab == SidebarTab::Comments {
             self.status = VIEW_KEYS_ARE_FOR_THE_FILE_LIST.to_owned();
             return;
         }
@@ -50,7 +56,7 @@ impl App {
     /// `o`: cycles the file list's order. See [`crate::tree::Sort`], whose
     /// `next` is what "cycles" means, declared beside the orders themselves.
     pub(super) fn cycle_sort(&mut self) {
-        if self.sidebar_tab != SidebarTab::Files {
+        if self.sidebar_tab == SidebarTab::Comments {
             self.status = VIEW_KEYS_ARE_FOR_THE_FILE_LIST.to_owned();
             return;
         }
@@ -67,6 +73,14 @@ impl App {
     /// clamped onto the list.
     pub(super) fn resettle_sidebar(&mut self) {
         self.sidebar_scroll = None;
+        if self.sidebar_tab == SidebarTab::Commits {
+            // A commits row is a (change, file) pair, not a bookmark file, so
+            // there is no file index to look up. Clamp and leave the cursor
+            // where the reviewer put it.
+            let rows = self.nodes().len();
+            self.sidebar_row = self.sidebar_row.min(rows.saturating_sub(1));
+            return;
+        }
         let nodes = self.sidebar_nodes();
         let selected = self.file_index;
         self.sidebar_row = nodes
@@ -81,10 +95,10 @@ impl App {
     /// Only from the file list: `s` means *fold the thing under the cursor*,
     /// and everywhere else that thing is a comment.
     pub(super) fn sidebar_fold_key(&self) -> Option<String> {
-        if self.focus != Focus::Sidebar || self.sidebar_tab != SidebarTab::Files {
+        if self.focus != Focus::Sidebar || self.sidebar_tab == SidebarTab::Comments {
             return None;
         }
-        match &self.sidebar_nodes().get(self.sidebar_row)?.kind {
+        match &self.nodes().get(self.sidebar_row)?.kind {
             NodeKind::Dir { key, .. } => Some(key.clone()),
             NodeKind::Commit { change_id, .. } => Some(change_id.clone()),
             NodeKind::File { .. } => None,
@@ -100,7 +114,7 @@ impl App {
         if !self.collapsed_dirs.remove(&key) {
             self.collapsed_dirs.insert(key);
         }
-        let rows = self.sidebar_nodes().len();
+        let rows = self.nodes().len();
         self.sidebar_row = self.sidebar_row.min(rows.saturating_sub(1));
         // The list is a different length, so a parked view is an address in it
         // that no longer means what it did.

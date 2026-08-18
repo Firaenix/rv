@@ -122,7 +122,7 @@ fn the_file_lists_cursor_follows_the_file_that_is_selected() {
 fn the_view_keys_say_they_are_about_the_file_list() {
     let workspace = Fixture::nested();
     let mut app = workspace.app();
-    app.on_key(KeyCode::Tab).expect("the comments tab");
+    to_comments(&mut app);
     let tree = app.tree_view();
     let sort = app.sort();
 

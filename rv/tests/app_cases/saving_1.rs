@@ -305,7 +305,7 @@ fn a_jump_tells_the_two_halves_of_a_rewrite_apart() {
 
     for (row, expected, kind) in [(0, removed, LineKind::Removed), (1, added, LineKind::Added)] {
         rewind(&mut app);
-        press(&mut app, KeyCode::Tab);
+        to_comments(&mut app);
         press(&mut app, KeyCode::Left);
         press_n(&mut app, KeyCode::Down, row);
         press(&mut app, KeyCode::Enter);
