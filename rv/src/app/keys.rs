@@ -47,6 +47,9 @@ impl App {
         if self.help_open {
             return Ok(self.on_key_help(key));
         }
+        if self.info_open {
+            return Ok(self.on_key_info(key));
+        }
         match self.mode {
             Mode::Browse => self.on_key_browse(key),
             Mode::Comment => self.on_key_comment(key),
@@ -70,6 +73,29 @@ impl App {
             _ => {}
         }
         Action::Continue
+    }
+
+    /// `i`, `Esc` and `q` close the change popup; `j`/`k` scroll it. Everything
+    /// else is inert while it is up, for the same reason it is inert under the
+    /// keymap: a reviewer reading about a change must not act on one by accident.
+    fn on_key_info(&mut self, key: KeyCode) -> Action {
+        match key {
+            KeyCode::Char('i' | 'q') | KeyCode::Esc => self.info_open = false,
+            KeyCode::Char('j') | KeyCode::Down => self.info_scroll = self.info_scroll.saturating_add(1),
+            KeyCode::Char('k') | KeyCode::Up => self.info_scroll = self.info_scroll.saturating_sub(1),
+            _ => {}
+        }
+        Action::Continue
+    }
+
+    /// Opens the change popup, or puts it away.
+    fn toggle_info(&mut self) {
+        if self.change_under_cursor().is_none() {
+            self.status = "no change under the cursor — tab to the commits list".to_owned();
+            return;
+        }
+        self.info_open = !self.info_open;
+        self.info_scroll = 0;
     }
 
     /// Moves the keymap by `delta` rows, which only ever moves anything on a
@@ -121,6 +147,7 @@ impl App {
             Command::ToggleSidebar => self.toggle_sidebar(),
             Command::ToggleTree => self.toggle_tree(),
             Command::CycleSort => self.cycle_sort(),
+            Command::Info => self.toggle_info(),
             Command::Help => {
                 self.help_open = true;
                 // Opened at the top, always: the geometry it was last scrolled

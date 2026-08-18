@@ -20,6 +20,7 @@ pub fn areas(width: u16, height: u16, split: Split) -> rv::layout::Layout {
         Chrome {
             bar_rows: 1,
             help_open: false,
+            info_open: false,
             toast: false,
             sidebar_hidden: false,
         },

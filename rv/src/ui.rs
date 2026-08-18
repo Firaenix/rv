@@ -56,6 +56,7 @@ mod comment_box;
 mod diff;
 mod files;
 mod help;
+mod info;
 mod list;
 mod pane;
 mod sidebar;
@@ -139,7 +140,13 @@ pub fn draw(frame: &mut Frame, app: &App, now: Instant) {
         toast::draw_toast(frame, &alerts, area, now);
     }
     if let Some(area) = rects.popup {
-        help::draw_help(frame, app, area);
+        // One rectangle, and never both at once: `?` is inert while `i` is up and
+        // the other way round, so the two cannot contend for it.
+        if app.change_info().is_some() {
+            info::draw_info(frame, app, area);
+        } else {
+            help::draw_help(frame, app, area);
+        }
     }
 }
 
@@ -193,6 +200,7 @@ fn chrome(app: &App, toast: bool) -> Chrome {
             Mode::Comment => COMMENT_ROWS,
         },
         help_open: app.help_open(),
+        info_open: app.change_info().is_some(),
         toast,
         sidebar_hidden: app.sidebar_hidden(),
     }
@@ -213,6 +221,7 @@ pub fn default_layout() -> Layout {
         Chrome {
             bar_rows: 1,
             help_open: false,
+            info_open: false,
             toast: false,
             sidebar_hidden: false,
         },

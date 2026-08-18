@@ -39,6 +39,7 @@ pub const BROWSE_KEYS: &[&str] = &[
     "`a`",
     "`s`",
     "`e`",
+    "`i`",
     "`z`",
     "`t`",
     "`o`",

@@ -245,6 +245,13 @@ pub const BINDINGS: &[Binding] = &[
         command: Command::CycleSort,
     },
     Binding {
+        keys: "i",
+        group: Group::View,
+        what: "change in full",
+        codes: &[KeyCode::Char('i')],
+        command: Command::Info,
+    },
+    Binding {
         keys: "?",
         group: Group::View,
         what: "this keymap",
@@ -289,6 +296,7 @@ pub(super) enum Command {
     ToggleSidebar,
     ToggleTree,
     CycleSort,
+    Info,
     Help,
     Quit,
 }
@@ -338,6 +346,7 @@ impl App {
             Command::ToggleTree | Command::CycleSort => {
                 self.sidebar_tab != SidebarTab::Comments
             }
+            Command::Info => self.change_under_cursor().is_some(),
         }
     }
 

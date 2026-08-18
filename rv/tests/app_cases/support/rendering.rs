@@ -79,6 +79,7 @@ pub fn diff_area(width: u16, height: u16, mode: Mode) -> Rect {
         Chrome {
             bar_rows,
             help_open: false,
+            info_open: false,
             toast: false,
             sidebar_hidden: false,
         },

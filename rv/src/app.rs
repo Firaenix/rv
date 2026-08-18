@@ -44,6 +44,7 @@ mod status;
 mod symbols;
 
 pub use alerts::Alert;
+pub use commits::ChangeInfo;
 
 pub use anchor::anchored_side;
 pub use bindings::BINDINGS;
@@ -218,6 +219,9 @@ pub struct App {
     /// press of `n`.
     symbol_index: crate::index::Index,
     indexed_scope: Option<symbols::Scope>,
+    /// Whether `i` has the change under the cursor open, and how far down it.
+    info_open: bool,
+    info_scroll: usize,
     /// Whether the reviewer has put the sidebar away with `z`.
     ///
     /// What they asked for, not what they get: a terminal narrow enough hides
@@ -334,6 +338,8 @@ impl App {
             commit_diffs: HashMap::new(),
             symbol_index: crate::index::Index::default(),
             indexed_scope: None,
+            info_open: false,
+            info_scroll: 0,
             sidebar_hidden: false,
             commits: commits::Commits::default(),
         };

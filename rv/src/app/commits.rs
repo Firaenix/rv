@@ -36,6 +36,15 @@ pub(super) struct CommitIndex {
     stats: Vec<Stat>,
 }
 
+/// Everything `i` shows about one change.
+pub struct ChangeInfo {
+    pub change_id: String,
+    pub commit_id: String,
+    pub description: String,
+    pub files: Vec<(String, Stat)>,
+    pub stat: Stat,
+}
+
 impl CommitIndex {
     /// One change's files, or nothing for a change that is not in the stack.
     pub(super) fn files_of(&self, change: usize) -> &[FileChange] {
@@ -47,6 +56,18 @@ impl CommitIndex {
         self.endpoints
             .get(change)
             .map(|(from, to)| (from.as_str(), to.as_str()))
+    }
+
+    /// The row number for one change's `position`th file.
+    pub(super) fn pair_of(&self, change: usize, position: usize) -> Option<usize> {
+        self.pairs
+            .iter()
+            .position(|pair| *pair == (change, position))
+    }
+
+    /// What one file row's change cost.
+    pub(super) fn stat_of(&self, pair: usize) -> Stat {
+        self.stats.get(pair).copied().unwrap_or_default()
     }
 
     /// Which change and which of its files the `pair`th file row addresses.
@@ -281,6 +302,51 @@ impl App {
             .iter()
             .map(|file| file.path.clone())
             .collect()
+    }
+
+    /// Everything `i` shows about the change the cursor is in.
+    #[must_use]
+    pub fn change_info(&self) -> Option<ChangeInfo> {
+        if !self.info_open {
+            return None;
+        }
+        let index = self.commit_index();
+        let change = self.change_under_cursor_index()?;
+        let entry = self.review.session.changes.get(change)?;
+        let files: Vec<(String, Stat)> = index
+            .files_of(change)
+            .iter()
+            .enumerate()
+            .map(|(position, file)| {
+                let pair = index.pair_of(change, position).unwrap_or(usize::MAX);
+                (file.path.clone(), index.stat_of(pair))
+            })
+            .collect();
+        let stat = files
+            .iter()
+            .fold(Stat::default(), |total, (_, stat)| total + *stat);
+        Some(ChangeInfo {
+            change_id: entry.change_id.clone(),
+            commit_id: entry.commit_id.clone(),
+            description: entry.description.clone(),
+            files,
+            stat,
+        })
+    }
+
+    /// Which change the sidebar cursor is on or inside.
+    fn change_under_cursor_index(&self) -> Option<usize> {
+        let nodes = self.nodes();
+        let row = self.sidebar_row().min(nodes.len().saturating_sub(1));
+        nodes[..=row].iter().rev().find_map(|node| match &node.kind {
+            tree::NodeKind::Commit { change_id, .. } => self
+                .review
+                .session
+                .changes
+                .iter()
+                .position(|change| &change.change_id == change_id),
+            _ => None,
+        })
     }
 
     /// The change the sidebar cursor is on or inside, as

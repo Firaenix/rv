@@ -553,38 +553,35 @@ fn a_narrow_commit_row_drops_the_subject_before_an_id() {
     }
 }
 
-/// The description is under the list, where a narrow row cannot carry it.
+/// The subject is on the row, and the border says which key shows the rest.
 ///
-/// It was on the status bar first, which is exactly where a reviewer could not
-/// find it: the bar drops segments by rank when the row is short, and a long
-/// subject is the widest thing on it — so the one segment that had to survive was
-/// the first to go. The border under the rows was carrying only the shape and the
-/// order, and it is directly under the thing it describes.
+/// It lived on the border for one wave and the verdict from using it was that a
+/// border is not a place to read — the text is cut off wherever the sidebar is
+/// narrow, which is everywhere. A clipped subject on the row costs nothing now
+/// that `i` shows the whole message, and the border says so.
 #[test]
-fn the_change_under_the_cursor_is_described_under_the_list() {
+fn a_commit_row_carries_its_subject_and_the_border_points_at_i() {
     let workspace = two_changes();
     let mut app = workspace.app();
     to_commits(&mut app);
     app.on_key(KeyCode::Left).expect("focus the sidebar");
     down_to_a_file(&mut app);
 
-    let (_, _, subject) = app.change_under_cursor().expect("a change");
-    let frame = frame_at(&app, 100, 24);
-    let border = sidebar_shape(&frame);
+    let frame = frame_at(&app, 200, 24);
+    let rows = sidebar_text(&frame, 200, 24, Split::default());
     assert!(
-        border.contains(&subject),
-        "the description is not under the list: {border:?}"
+        rows.contains("a second change"),
+        "the subject is not on any row:\n{rows}"
     );
 
-    // And the file list still says its shape and its order there.
-    to_comments(&mut app);
-    to_commits(&mut app);
-    to_comments(&mut app);
-    to_files(&mut app);
-    let files = sidebar_shape(&frame_at(&app, 100, 24));
+    let border = sidebar_shape(&frame);
     assert!(
-        files.contains("list") && files.contains("natural"),
-        "the file list lost its shape and order: {files:?}"
+        border.contains("i info"),
+        "the border does not say which key shows the rest: {border:?}"
+    );
+    assert!(
+        border.contains("list") && border.contains("natural"),
+        "the border lost the shape and the order: {border:?}"
     );
 }
 
@@ -628,5 +625,121 @@ fn a_directory_row_is_quieter_than_the_files_under_it() {
         !dim(&file.label),
         "a file is dimmed too, so the tiers are not distinguishable: {:?}",
         file.label
+    );
+}
+
+/// `i` shows the change in full: both whole ids, the description including its
+/// body, and every file it touched.
+///
+/// A sidebar row holds two eight-character ids and as much subject as fits. This
+/// is where the rest lives, which is what makes a clipped row acceptable.
+#[test]
+fn i_shows_the_change_in_full() {
+    let workspace = Fixture::new();
+    workspace.write("c.rs", "fn c() {\n    let c = 3;\n}\n");
+    workspace.jj(&[
+        "describe",
+        "-m",
+        "a second change\n\nwith a body that a row could never hold",
+    ]);
+    workspace.jj(&["new"]);
+
+    let mut app = workspace.app();
+    to_commits(&mut app);
+    app.on_key(KeyCode::Left).expect("focus the sidebar");
+    while app
+        .change_under_cursor()
+        .is_none_or(|(_, _, subject)| subject != "a second change")
+    {
+        app.on_key(KeyCode::Down).expect("next row");
+    }
+    let change = app
+        .changes()
+        .iter()
+        .find(|change| change.description.starts_with("a second change"))
+        .expect("the change")
+        .clone();
+
+    app.on_key(KeyCode::Char('i')).expect("open the change");
+    let text = buffer_text(&frame_at(&app, 100, 30));
+
+    assert!(
+        text.contains(&change.change_id),
+        "the whole change id is not shown:\n{text}"
+    );
+    assert!(
+        text.contains(&change.commit_id),
+        "the whole commit id is not shown:\n{text}"
+    );
+    assert!(
+        text.contains("with a body that a row could never hold"),
+        "the description's body is not shown:\n{text}"
+    );
+    assert!(
+        text.contains("c.rs"),
+        "the files it touched are not shown:\n{text}"
+    );
+
+    app.on_key(KeyCode::Char('i')).expect("close it again");
+    let closed = buffer_text(&frame_at(&app, 100, 30));
+    assert!(
+        !closed.contains("with a body that a row could never hold"),
+        "`i` is a one-way door:\n{closed}"
+    );
+}
+
+/// Esc closes it too, and while it is up the keys that would act on a change are
+/// inert — a reviewer reading about a change must not act on one by accident.
+#[test]
+fn the_change_popup_is_modal() {
+    let workspace = two_changes();
+    let mut app = workspace.app();
+    to_commits(&mut app);
+    app.on_key(KeyCode::Left).expect("focus the sidebar");
+    down_to_a_file(&mut app);
+    let before = app.sidebar_row();
+
+    app.on_key(KeyCode::Char('i')).expect("open");
+    app.on_key(KeyCode::Char('d')).expect("a key that would act");
+    assert_eq!(app.sidebar_row(), before, "a key reached past the popup");
+
+    app.on_key(KeyCode::Esc).expect("close");
+    assert!(
+        app.change_info().is_none(),
+        "Esc did not close the change popup"
+    );
+}
+
+/// The two ids are picked out in two colours, because they are two different
+/// things: a change follows its rewrites, a hash names one snapshot.
+#[test]
+fn the_change_and_the_commit_are_not_the_same_colour() {
+    let workspace = two_changes();
+    let mut app = workspace.app();
+    to_commits(&mut app);
+
+    let change = app
+        .changes()
+        .iter()
+        .find(|change| change.description.starts_with("a second change"))
+        .expect("the change")
+        .clone();
+    let short_change: String = change.change_id.chars().take(8).collect();
+    let short_commit: String = change.commit_id.chars().take(8).collect();
+
+    let frame = frame_at(&app, 160, 24);
+    let row = sidebar_row_for(&frame, &short_change);
+    let column = |needle: &str| {
+        let text = rows_of(&frame)[usize::from(row)].clone();
+        text.char_indices()
+            .position(|(byte, _)| text[byte..].starts_with(needle))
+            .expect("the id is on the row")
+    };
+    let ink = |at: usize| frame[(u16::try_from(at).expect("a small column"), row)].style().fg;
+
+    assert_ne!(
+        ink(column(&short_change)),
+        ink(column(&short_commit)),
+        "both ids are picked out in one colour, so the row reads as one long id"
     );
 }

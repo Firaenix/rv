@@ -183,6 +183,7 @@ everywhere.
 | `r` | Resolve a comment — press it again to reopen |
 | `a` | Abandon a comment, dropping it without fixing it — again to reopen |
 | `s` | Fold a comment box away, or a directory in the file list — again to unfold |
+| `i` | Show the change under the cursor in full: both ids, its whole description, and every file it touched — `i`, `Esc` or `q` closes it |
 | `z` | Hide the sidebar, or bring it back — the `‹` in the bottom-left corner does the same by pointer |
 | `e` | Export the review to `.review/REVIEW-FEEDBACK.md`, same as `rv render` |
 | `t` | Switch the file list between a flat list and a tree |

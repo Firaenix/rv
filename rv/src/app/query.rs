@@ -108,6 +108,12 @@ impl App {
         self.symbol_index.len()
     }
 
+    /// How far down the `i` popup is scrolled.
+    #[must_use]
+    pub fn info_scroll(&self) -> usize {
+        self.info_scroll
+    }
+
     /// Whether the reviewer has put the sidebar away.
     #[must_use]
     pub fn sidebar_hidden(&self) -> bool {

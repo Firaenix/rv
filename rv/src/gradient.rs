@@ -40,6 +40,15 @@ pub const ALERT: Rgb = Rgb(224, 132, 44);
 /// The focused pane. The only thing in this interface that is magenta.
 pub const FOCUS: Rgb = Rgb(209, 96, 196);
 
+/// The prefix of a **commit hash** you can select it by.
+///
+/// A second hue because the two ids on a commit row are two different things — a
+/// change follows its rewrites, a hash names one snapshot — and one colour for
+/// both made the row read as a single long id. Teal because green, red and blue
+/// are already spoken for in this pane, and [`FOCUS`]'s magenta belongs to the
+/// change id beside it.
+pub const HASH: Rgb = Rgb(64, 178, 181);
+
 /// Ink for text over a light tint, and its opposite. Pure black and pure white
 /// rather than something softer: over a background that swings from a dark
 /// green through a near-white seam to a dark red, the extremes are the only

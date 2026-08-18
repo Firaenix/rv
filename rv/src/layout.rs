@@ -61,12 +61,20 @@ pub(super) const BOTTOM_BORDER: u16 = 1;
 /// the keymap, small enough that the panes stay visible around it — a reviewer
 /// reading about a key wants to see what it would act on.
 ///
-/// Eight rather than seven since the keymap grew past twenty rows: at seven a
-/// 24-row terminal gave the popup fourteen content rows, which the groups could
-/// not be dealt into two columns without splitting one — so the popup fell back
-/// to a single scrolling column and hid the last three keys. A keymap you must
-/// scroll to read is a keymap you will not read.
-const POPUP_TENTHS: u16 = 8;
+/// Raised twice as the keymap grew, and by the same argument each time: **a
+/// keymap you must scroll to read is a keymap you will not read**, which outranks
+/// keeping the panes visible around it.
+///
+/// At seven tenths a 24-row terminal gave the popup fourteen content rows and the
+/// groups could not be dealt into two columns without splitting one; at eight,
+/// sixteen rows, and twenty-two bindings in five groups need seventeen. Nine
+/// leaves a two-row, four-column frame of the panes showing, which is enough to
+/// see what a key would act on.
+///
+/// The alternative was abbreviating the manual — `previous symbol` to
+/// `prev symbol` — to make three narrower columns fit. A keymap that has to be
+/// decoded is worth less than two rows of visible diff.
+const POPUP_TENTHS: u16 = 9;
 
 /// The same for a toast, which is one line of text and its border.
 const TOAST_TENTHS: u16 = 6;
@@ -177,6 +185,8 @@ pub struct Chrome {
     pub bar_rows: u16,
     /// Whether the `?` popup is up.
     pub help_open: bool,
+    /// Whether the `i` change popup is up.
+    pub info_open: bool,
     /// Whether an alert is floating over the panes.
     pub toast: bool,
     /// Whether the reviewer has put the sidebar away with `z`.
@@ -279,8 +289,7 @@ pub fn layout(area: Rect, split: Split, chrome: Chrome) -> Layout {
         diff,
         chevron,
         bar,
-        popup: chrome
-            .help_open
+        popup: (chrome.help_open || chrome.info_open)
             .then(|| centered(area, POPUP_TENTHS))
             .filter(non_empty),
         toast: chrome.toast.then(|| floating(area)).filter(non_empty),

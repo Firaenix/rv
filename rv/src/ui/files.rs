@@ -85,7 +85,6 @@ pub(super) fn draw_files(frame: &mut Frame, app: &App, area: Rect, focused: bool
 /// same rows drawn from the same model.
 pub(super) fn draw_commits(frame: &mut Frame, app: &App, area: Rect, focused: bool) {
     let title = format!("Commits ({})", app.changes().len());
-    let width = usize::from(area.width.saturating_sub(BORDER_ROWS));
     draw_nodes_titled(
         frame,
         app,
@@ -93,7 +92,7 @@ pub(super) fn draw_commits(frame: &mut Frame, app: &App, area: Rect, focused: bo
         focused,
         &app.commit_nodes(),
         title,
-        under_the_commits(app, width),
+        under_the_commits(app),
     );
 }
 
@@ -177,33 +176,19 @@ fn shape(app: &App) -> String {
     )
 }
 
-/// What the commits list says along its bottom border: the change the cursor is
-/// on or inside, and its description.
+/// The commits list's bottom border: its shape and order, and the key that shows
+/// a change in full.
 ///
-/// A change row has room for two ids or two ids and a subject, never reliably
-/// both — a 22-column sidebar cannot hold thirty characters. So the subject goes
-/// *here*, on a border that was carrying only the shape and the order, directly
-/// under the rows it describes.
-///
-/// It was on the status bar first, which is where a reviewer could not find it:
-/// the bar drops segments by rank when the row is short, and a long subject is
-/// the widest thing on it, so the one segment that had to survive was the first
-/// to go.
-fn under_the_commits(app: &App, width: usize) -> String {
-    let Some((change, commit, subject)) = app.change_under_cursor() else {
-        return shape(app);
-    };
-    let full = format!(" {change} {commit} · {subject} ");
-    if full.chars().count() <= width {
-        return full;
-    }
-    // The subject is what this line is for, so the ids give way to it rather than
-    // the other way round: they are already on the row above.
-    let subject_only = format!(" {subject} ");
-    if subject_only.chars().count() <= width {
-        subject_only
+/// The description itself is *on the row*, after the hash. It lived here for one
+/// wave and the reviewer's verdict was that a border is not a place to read: the
+/// text is cut off wherever the sidebar is narrow, which is everywhere. A clipped
+/// subject on the row costs nothing now that `i` shows the whole message.
+fn under_the_commits(app: &App) -> String {
+    let shape = shape(app);
+    if app.change_under_cursor().is_some() {
+        format!("{shape}· i info ")
     } else {
-        clip(&subject_only, width)
+        shape
     }
 }
 
@@ -367,7 +352,10 @@ fn name_spans(node: &Node, name: &str, lead: usize) -> Vec<Span<'static>> {
     // first, and `head` built the row as `<indent><mark><change> <commit> <subject>`.
     let mut spans = vec![Span::raw(name.chars().take(lead).collect::<String>())];
     let mut at = lead;
-    for id in [short_change, short_commit] {
+    for (id, ink) in [
+        (short_change, gradient::FOCUS),
+        (short_commit, gradient::HASH),
+    ] {
         if at >= name.chars().count() {
             break;
         }
@@ -375,9 +363,7 @@ fn name_spans(node: &Node, name: &str, lead: usize) -> Vec<Span<'static>> {
         if !bright.is_empty() {
             spans.push(Span::styled(
                 bright,
-                Style::default()
-                    .fg(colour(gradient::FOCUS))
-                    .add_modifier(Modifier::BOLD),
+                Style::default().fg(colour(ink)).add_modifier(Modifier::BOLD),
             ));
         }
         if !dim.is_empty() {

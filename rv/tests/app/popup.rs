@@ -294,6 +294,7 @@ fn the_popup_covers_what_is_beneath_it() {
         Chrome {
             bar_rows: 1,
             help_open: true,
+            info_open: false,
             toast: false,
             sidebar_hidden: false,
         },
