@@ -137,61 +137,19 @@ fn stray_temp_files(dir: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
-/// The names of the files in `.review/snapshots/`.
-fn snapshot_ids(root: &Path) -> Vec<String> {
-    let mut ids: Vec<String> = fs::read_dir(root.join(".review/snapshots"))
-        .expect("read snapshots dir")
-        .filter_map(|entry| entry.ok())
-        .map(|entry| entry.file_name().to_string_lossy().into_owned())
-        .collect();
-    ids.sort();
-    ids
-}
-
-/// Conservation over `.review/snapshots/`, in both directions: every comment in
-/// `expected` has a snapshot holding exactly its anchor's context lines, and no
-/// other snapshot file exists — no comment without one, no orphan left by a
-/// removal, and nothing invented.
-///
-/// The content oracle is `split('\n')`, the genuine inverse of the `join("\n")`
-/// the store writes, which only works because context lines never contain `\n`
-/// (they come from splitting file text, and [`hostile_line`] keeps the
-/// generated ones that way). The empty-context case is separate because `join`
-/// maps `[]` to `""` while `split` maps `""` back to `[""]`; that asymmetry is
-/// inherent to the format, not a bug.
+/// The store writes no snapshots: `anchor.context` in `comments.json` is the
+/// one copy of the excerpt, and a byte-for-byte duplicate under
+/// `.review/snapshots/` — which earlier versions wrote and nothing ever read —
+/// protected nothing (storage spec §1). Conservation is therefore an *absence*
+/// oracle now: whatever sequence of saves ran, the directory was never created.
 fn snapshots_match(
     root: &Path,
-    expected: &[Comment],
+    _expected: &[Comment],
 ) -> Result<(), proptest::test_runner::TestCaseError> {
-    let mut expected_ids = ids_of(expected);
-    expected_ids.sort();
-    prop_assert_eq!(
-        snapshot_ids(root),
-        expected_ids,
-        "exactly the comments that exist may have snapshots"
+    prop_assert!(
+        !root.join(".review/snapshots").exists(),
+        "a snapshot directory appeared for bytes comments.json already holds"
     );
-    for comment in expected {
-        let path = root.join(".review/snapshots").join(&comment.id);
-        let snapshot = fs::read_to_string(&path)
-            .unwrap_or_else(|error| panic!("read snapshot {}: {error}", path.display()));
-        if comment.anchor.context.is_empty() {
-            prop_assert_eq!(
-                snapshot.as_str(),
-                "",
-                "no context lines means an empty snapshot"
-            );
-        } else {
-            prop_assert_eq!(
-                snapshot.split('\n').collect::<Vec<_>>(),
-                comment
-                    .anchor
-                    .context
-                    .iter()
-                    .map(String::as_str)
-                    .collect::<Vec<_>>()
-            );
-        }
-    }
     Ok(())
 }
 
@@ -862,7 +820,7 @@ proptest! {
 }
 
 // ---------------------------------------------------------------------------
-// snapshots and the write ordering that makes a crash safe
+// one comment file, and the legacy snapshots earlier versions wrote
 // ---------------------------------------------------------------------------
 
 proptest! {
@@ -870,7 +828,7 @@ proptest! {
 
     /// Every comment in `comments.json` has a snapshot holding its anchor's
     /// context lines, and no snapshot exists for an id never appended — the
-    /// conservation law [`snapshots_match`] states, over an append-only
+    /// absence law [`snapshots_match`] states, over an append-only
     /// sequence.
     #[test]
     fn each_appended_comment_snapshots_its_context_lines(
@@ -939,49 +897,6 @@ proptest! {
         );
     }
 
-    /// The module's headline crash-safety claim, tested by forcing the failure
-    /// rather than waiting for a crash: the snapshot is written *before*
-    /// `comments.json`, so if the snapshot write cannot succeed the comment
-    /// must not be recorded at all. A directory planted at the snapshot's path
-    /// makes the rename fail exactly where an interrupted write would have
-    /// stopped.
-    ///
-    /// The reverse ordering — `comments.json` first — would leave the store
-    /// claiming a comment whose snapshot never existed, which the doc says can
-    /// never happen.
-    #[test]
-    fn a_comment_whose_snapshot_cannot_be_written_is_never_recorded(
-        existing in distinct_comments(0..4),
-        doomed in comment(Just("doomed".to_owned()), 12),
-    ) {
-        let repo = repo_root();
-        let store = Store::open(repo.path()).expect("open store");
-        for comment in &existing {
-            store.append_comment(comment).expect("append comment");
-        }
-        let before = store.comments().expect("read comments");
-        let before_bytes = fs::read(repo.path().join(".review/comments.json")).ok();
-
-        // A directory cannot be replaced by a rename of a regular file, so
-        // write_atomic's persist step fails here.
-        fs::create_dir(repo.path().join(".review/snapshots").join(&doomed.id))
-            .expect("plant a directory where the snapshot file would go");
-
-        let result = store.append_comment(&doomed);
-        prop_assert!(result.is_err(), "the snapshot write cannot have succeeded");
-
-        let after = store.comments().expect("read comments");
-        prop_assert!(
-            !after.iter().any(|c| c.id == doomed.id),
-            "comments.json recorded a comment whose snapshot was never written"
-        );
-        prop_assert_eq!(after, before, "a failed append must not disturb prior comments");
-        prop_assert_eq!(fs::read(repo.path().join(".review/comments.json")).ok(), before_bytes);
-        prop_assert!(
-            stray_temp_files(repo.path()).is_empty(),
-            "a failed write must still clean up its temp file"
-        );
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1243,11 +1158,8 @@ proptest! {
         if expected_markdown(&ops).is_some() {
             entitled.insert(PathBuf::from(".review/REVIEW-FEEDBACK.md"));
         }
-        for comment in &expected {
-            entitled.insert(Path::new(".review/snapshots").join(&comment.id));
-        }
         prop_assert_eq!(relative_files(repo.path()), entitled);
-        // And the snapshots hold their own comment's context, not merely exist.
+        // And no snapshot directory appears for bytes comments.json holds.
         snapshots_match(repo.path(), &expected)?;
     }
 
@@ -1474,8 +1386,10 @@ proptest! {
         store.write_session(&session).expect("write session");
         store.write_markdown(&document).expect("write markdown");
 
-        // The tree a crash between the two writes leaves behind.
+        // The tree an earlier version's crash left behind: legacy orphans in a
+        // directory current versions never create.
         let snapshots = repo.path().join(".review/snapshots");
+        fs::create_dir_all(&snapshots).expect("create the legacy dir");
         for (id, body) in &orphans {
             fs::write(snapshots.join(id), body).expect("plant an orphaned snapshot");
         }
@@ -1496,9 +1410,20 @@ proptest! {
         store.append_comment(&newcomer).expect("append after a crash");
         prop_assert_eq!(store.comments().expect("read comments"), vec![newcomer.clone()]);
 
-        let written = fs::read_to_string(snapshots.join(&newcomer.id)).expect("read new snapshot");
-        prop_assert_eq!(written, newcomer.anchor.context.join("\n"),
-            "a stale orphaned snapshot must be replaced, not kept");
+        // The one copy of the context is the stored anchor's: the legacy orphan
+        // is neither adopted nor replaced, because nothing reads it.
+        if reuse {
+            let orphan = fs::read_to_string(snapshots.join(&newcomer.id))
+                .expect("the legacy orphan is still on disk");
+            // The generator may plant one id twice; the file holds the last body.
+            let planted = orphans
+                .iter()
+                .rev()
+                .find(|(id, _)| *id == newcomer.id)
+                .map(|(_, body)| body.clone())
+                .expect("the reused id was planted");
+            prop_assert_eq!(orphan, planted, "the orphan's bytes are not rv's to rewrite");
+        }
     }
 }
 
@@ -1600,30 +1525,18 @@ fn a_comments_json_the_process_may_not_open_is_an_error_not_silent_emptiness() {
 // removal: the snapshot delete, and the states it has to tolerate
 // ---------------------------------------------------------------------------
 
-/// `remove_comment` deletes the `comments.json` entry first and the snapshot
-/// second, and treats a snapshot that is *already* gone as success rather than
-/// as an IO error: the delete is a step towards "no such comment", and finding
-/// that step already taken is not a failure.
+/// `remove_comment` tolerates the legacy snapshot it tidies being already gone.
 ///
-/// The state is reachable without any crash at all. `.review/` is a scratch
-/// directory deliberately kept out of version control, so nothing restores it:
-/// a stray `rm`, a partial copy between machines, a half-restored backup or a
-/// cleanup script all leave `comments.json` — the authority on which comments
-/// exist — still listing a comment whose snapshot is not there. Without the
-/// `NotFound` arm that reviewer's next delete fails, and fails *after* the
-/// entry has already been rewritten out, so the caller is told the removal
-/// failed while the store has in fact performed it.
-///
-/// The two cases reach the arm by different routes — the snapshot file unlinked
-/// on its own, and the whole snapshots directory gone — because a handler that
-/// happens to tolerate one need not tolerate the other.
+/// Current versions never write `.review/snapshots/` — the store's one comment
+/// file is `comments.json` — but a `.review/` from an earlier version may still
+/// hold them, and `remove_comment` deletes a removed comment's leftover. A
+/// leftover that is *already* gone (a stray `rm`, a partial copy between
+/// machines) is a step already taken, not a failure — and the directory not
+/// existing at all is the ordinary case now, not an error.
 #[rstest]
-#[case::the_snapshot_file_was_deleted(".review/snapshots/id0", true)]
-#[case::the_whole_snapshots_directory_was_deleted(".review/snapshots", false)]
-fn removing_a_comment_whose_snapshot_is_already_gone_still_succeeds(
-    #[case] pruned: &str,
-    #[case] survivor_keeps_its_snapshot: bool,
-) {
+#[case::the_legacy_file_was_deleted(true)]
+#[case::no_legacy_directory_exists(false)]
+fn removing_a_comment_whose_legacy_snapshot_is_gone_still_succeeds(#[case] plant: bool) {
     let repo = repo_root();
     let store = Store::open(repo.path()).expect("open store");
     store
@@ -1632,36 +1545,29 @@ fn removing_a_comment_whose_snapshot_is_already_gone_still_succeeds(
     store
         .append_comment(&fixed_comment("id1"))
         .expect("append id1");
-
-    // Out of band: nothing the store did, exactly as a stray `rm` leaves it.
-    let pruned = repo.path().join(pruned);
-    if pruned.is_dir() {
-        fs::remove_dir_all(&pruned).expect("prune the snapshots directory");
-    } else {
-        fs::remove_file(&pruned).expect("prune the snapshot file");
+    if plant {
+        // A leftover for the *other* comment only, as a partial prune leaves it.
+        let snapshots = repo.path().join(".review/snapshots");
+        fs::create_dir_all(&snapshots).expect("create the legacy dir");
+        fs::write(snapshots.join("id1"), "legacy").expect("plant id1's leftover");
     }
 
     let removed = store
         .remove_comment("id0")
-        .expect("a removal whose snapshot is already gone must still succeed");
+        .expect("a removal with no legacy snapshot must still succeed");
 
-    assert!(
-        removed,
-        "the comment was in comments.json, so the removal did remove one"
-    );
+    assert!(removed, "the comment was in comments.json");
     assert_eq!(
         ids_of(&store.comments().expect("read comments")),
         vec!["id1".to_owned()],
         "the entry is gone and the other comment is untouched"
     );
-    assert!(!repo.path().join(".review/snapshots/id0").exists());
     assert_eq!(
         repo.path().join(".review/snapshots/id1").exists(),
-        survivor_keeps_its_snapshot,
-        "the removal must not reach past the snapshot it owns"
+        plant,
+        "the removal must not reach past the leftover it owns"
     );
     assert!(stray_temp_files(repo.path()).is_empty());
-    // And the retry an interrupted delete issues is the ordinary no-op.
     assert!(
         !store
             .remove_comment("id0")
@@ -1669,36 +1575,20 @@ fn removing_a_comment_whose_snapshot_is_already_gone_still_succeeds(
     );
 }
 
-/// The residue a crash *inside* `remove_comment` leaves, held to the same word
-/// the module uses for the append path's residue: inert.
+/// A legacy orphan — a `snapshots/<id>` file naming no comment — is inert.
 ///
-/// The delete rewrites `comments.json` first and unlinks the snapshot second,
-/// so the window between the two is a live store whose snapshots directory
-/// holds a file no entry names. `an_orphaned_snapshot_is_harmless_and_a_missing_comments_json_reads_as_empty`
-/// covers the *append* path's version of that state, where `comments.json` does
-/// not exist at all; this is the delete path's version, where it exists and
-/// lists other comments, which is a different code path through `comments()`.
-///
-/// What the store must make of it: the removed comment stays removed rather
-/// than being resurrected from the snapshot that outlived it, the surviving
-/// comment is untouched, the retry an interrupted delete issues reports `false`
-/// and succeeds, and re-adding the same id overwrites the stale snapshot with
-/// the new comment's context instead of adopting it.
+/// Earlier versions could strand one; the store must neither resurrect the
+/// comment it belonged to nor adopt its bytes when the id is reused. The one
+/// copy of a comment's context is `anchor.context` in `comments.json`.
 #[test]
-fn a_crash_between_a_removals_two_writes_leaves_an_inert_orphan() {
+fn a_legacy_orphaned_snapshot_is_inert() {
     let repo = repo_root();
     let store = Store::open(repo.path()).expect("open store");
-    store
-        .append_comment(&fixed_comment("id0"))
-        .expect("append id0");
     store
         .append_comment(&fixed_comment("id1"))
         .expect("append id1");
     let snapshots = repo.path().join(".review/snapshots");
-
-    // Exactly the state a crash between the two writes leaves: the entry
-    // rewritten out of comments.json, the snapshot never unlinked.
-    store.remove_comment("id0").expect("remove id0");
+    fs::create_dir_all(&snapshots).expect("create the legacy dir");
     fs::write(snapshots.join("id0"), "the context id0 had").expect("plant the orphan");
 
     assert_eq!(
@@ -1709,31 +1599,19 @@ fn a_crash_between_a_removals_two_writes_leaves_an_inert_orphan() {
     assert!(
         !store
             .remove_comment("id0")
-            .expect("the retry an interrupted delete issues must succeed"),
-        "there is no entry left to remove, so the retry removed nothing"
-    );
-    assert_eq!(
-        fs::read_to_string(snapshots.join("id1")).expect("read the survivor's snapshot"),
-        fixed_comment("id1").anchor.context.join("\n"),
-        "the surviving comment's snapshot is untouched"
+            .expect("removing the id the orphan names must succeed"),
+        "there is no entry to remove"
     );
 
-    // And the id can be reused: the stale snapshot is replaced, not adopted.
+    // And the id can be reused without adopting the orphan's bytes.
     let mut newcomer = fixed_comment("id0");
-    newcomer.anchor.context = vec!["fn b() {}".to_owned(), "// and a second line".to_owned()];
-    store
-        .append_comment(&newcomer)
-        .expect("re-add the id the orphan belongs to");
-
+    newcomer.anchor.context = vec!["fn b() {}".to_owned()];
+    store.append_comment(&newcomer).expect("re-add the id");
+    let stored = store.comments().expect("read comments");
     assert_eq!(
-        ids_of(&store.comments().expect("read comments")),
-        vec!["id1".to_owned(), "id0".to_owned()],
-        "a re-added comment is a new entry at the end, not a revival of its old slot"
-    );
-    assert_eq!(
-        fs::read_to_string(snapshots.join("id0")).expect("read the reused snapshot"),
-        "fn b() {}\n// and a second line",
-        "a stale orphaned snapshot must be replaced, not kept"
+        stored.last().expect("the newcomer").anchor.context,
+        vec!["fn b() {}".to_owned()],
+        "the stored context is the newcomer's, not the orphan's"
     );
     assert!(stray_temp_files(repo.path()).is_empty());
 }

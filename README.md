@@ -284,8 +284,8 @@ right now.
 ```
 .review/
 ├── session.toml          the range under review and every change in it
-├── comments.json         the authority on which comments exist
-├── snapshots/<id>        the lines around each comment, as they were when made
+├── comments.json         the authority on which comments exist — each entry
+│                         carries the lines around its comment, as they were
 └── REVIEW-FEEDBACK.md    the human- and LLM-readable projection of the above
 ```
 

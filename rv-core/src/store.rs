@@ -9,25 +9,20 @@
 //! under review.
 //!
 //! [`Store::append_comment`] is write-through: it persists to
-//! `.review/snapshots/<id>` and then `.review/comments.json` before
-//! returning, with no in-memory cache in front of either file. Every write
-//! this module makes — those two, plus `session.toml`,
-//! `REVIEW-FEEDBACK.md` and the `.git/info/exclude` update — goes through
-//! [`write_atomic`]: new content
-//! is written to a fresh temp file in the destination's own directory,
-//! fsynced, then renamed into place. `rename` on POSIX either completes
-//! wholly or not at all, so a reader can never observe a half-written file;
-//! a crash mid-write leaves the *previous* complete contents exactly as they
-//! were, never a truncated or corrupted mix of old and new. `comments.json`
-//! is the authority on which comments exist. Because its snapshot is
-//! written first, a crash between the two writes can strand an orphaned
-//! snapshot file with no matching entry in `comments.json` (harmless —
-//! nothing looks a snapshot up except by an id already found in
-//! `comments.json`), but never the reverse: a comment recorded in
-//! `comments.json` whose snapshot was never written.
-//! [`Store::remove_comment`] runs the same ordering backwards — entry out of
-//! `comments.json` first, snapshot file deleted second — to preserve that
-//! same one-sided invariant while tearing a comment down.
+//! `.review/comments.json` before returning, with no in-memory cache in
+//! front of it. Every write this module makes — that one, plus
+//! `session.toml`, `REVIEW-FEEDBACK.md` and the `.git/info/exclude` update —
+//! goes through [`write_atomic`]: new content is written to a fresh temp file
+//! in the destination's own directory, fsynced, then renamed into place.
+//! `rename` on POSIX either completes wholly or not at all, so a reader can
+//! never observe a half-written file; a crash mid-write leaves the *previous*
+//! complete contents exactly as they were. `comments.json` is the authority
+//! on which comments exist, and it is the only comment file: earlier versions
+//! also wrote each anchor's context to `.review/snapshots/<id>`, a
+//! byte-for-byte second copy that nothing ever read back (storage spec §1).
+//! A `.review/` from those versions still loads; its leftover snapshots are
+//! removed one by one as their comments are deleted and never otherwise
+//! touched.
 //!
 //! On-disk formats are chosen to be readable by a human poking around
 //! `.review/`, not just by `rv` itself: `comments.json` is pretty-printed,
@@ -167,15 +162,14 @@ pub struct Store {
 
 impl Store {
     /// Opens the store rooted at `root` (the repo root, holding `.jj/` and
-    /// `.git/`), creating `.review/snapshots` (and so also `.review/` itself)
-    /// if it does not already exist.
+    /// `.git/`), creating `.review/` if it does not already exist.
     pub fn open(root: &Path) -> Result<Self, Error> {
         let store = Self {
             root: root.to_owned(),
         };
-        let snapshots_dir = store.snapshots_dir();
-        fs::create_dir_all(&snapshots_dir).map_err(|source| Error::Io {
-            path: snapshots_dir,
+        let review_dir = store.review_dir();
+        fs::create_dir_all(&review_dir).map_err(|source| Error::Io {
+            path: review_dir,
             source,
         })?;
         Ok(store)

@@ -4,8 +4,7 @@
 //! Every write here goes through [`write_atomic`](super::write_atomic), so a
 //! crash mid-write leaves the previous complete file rather than a truncated
 //! mix. The one ordering rule is stated on [`Store::remove_comment`]: the
-//! entry leaves `comments.json` before its snapshot leaves disk, so at every
-//! instant every comment the file claims still has its snapshot.
+//! one file is ever written, so there is no cross-file ordering to get right.
 
 use std::fs;
 use std::io::ErrorKind;
@@ -33,10 +32,9 @@ impl Store {
 
     /// Persists `comment`: upserts it by `id` into `comments.json` (an
     /// existing entry with the same id is updated in place, keeping its
-    /// position; a new id is appended) and writes its anchor's context lines
-    /// verbatim to `.review/snapshots/<id>`. Both writes go through
-    /// [`write_atomic`] and complete before this returns — there is no
-    /// buffering, so a crash right after this call cannot lose the comment.
+    /// position; a new id is appended). The write goes through [`write_atomic`]
+    /// and completes before this returns — there is no buffering, so a crash
+    /// right after this call cannot lose the comment.
     ///
     /// `id` is the only identity here. `change_id` deliberately does *not*
     /// participate: every comment a reviewer leaves during one session
@@ -44,10 +42,12 @@ impl Store {
     /// on `change_id` would cap the store at one comment per change and let
     /// each new note silently overwrite the previous one.
     ///
-    /// The snapshot is written first and `comments.json` — the authority on
-    /// which comments exist — last, so a crash between the two can only
-    /// leave a harmless orphaned snapshot file, never a comment that
-    /// `comments.json` claims exists but whose snapshot was never written.
+    /// `comments.json` is the whole of what is written. Earlier versions also
+    /// wrote `.review/snapshots/<id>` — the anchor's context lines a second
+    /// time — and a review of the review asked the question that killed it:
+    /// nothing ever read one back. `anchor.context` in `comments.json` is the
+    /// copy every consumer uses (storage spec §1: a second copy of the same
+    /// bytes protects nothing).
     pub fn append_comment(&self, comment: &Comment) -> Result<(), Error> {
         let mut comments = self.comments()?;
         match comments
@@ -59,21 +59,12 @@ impl Store {
         }
         let serialized =
             serde_json::to_string_pretty(&comments).map_err(Error::SerializeComments)?;
-
-        let snapshot_path = self.snapshots_dir().join(&comment.id);
-        let snapshot = comment.anchor.context.join("\n");
-        write_atomic(&snapshot_path, snapshot.as_bytes())?;
-
         write_atomic(&self.comments_path(), serialized.as_bytes())
     }
 
     /// Moves the comment with `id` to `state`, recording who did it, and
     /// returns whether one was there.
     ///
-    /// Settling touches no snapshot: the anchor is unchanged, so the stored
-    /// context still describes the code the comment was written against. Only
-    /// `comments.json` is rewritten, through the same atomic path every other
-    /// write uses.
     ///
     /// An unknown id is not an error, for the same reason it is not one in
     /// [`Store::remove_comment`]: settling twice must be safe.
@@ -101,13 +92,12 @@ impl Store {
 
     /// Removes the comment with `id`, returning whether one was there.
     ///
-    /// `comments.json` is rewritten *before* the snapshot is deleted — the
-    /// reverse of [`Store::append_comment`]'s order, holding the same
-    /// invariant: at every instant, every comment `comments.json` claims
-    /// exists still has its snapshot on disk. A crash between the two strands
-    /// an inert snapshot rather than orphaning a live comment.
+    /// An unknown id is not an error, so deleting is idempotent: the retry after
+    /// an interrupted delete finds the entry already gone and succeeds.
     ///
-    /// An unknown id is not an error, so deleting is idempotent.
+    /// A legacy `.review/snapshots/<id>` from an earlier version is removed
+    /// alongside, so deleting a comment leaves no orphan — but its absence is
+    /// nothing: current versions never write one.
     pub fn remove_comment(&self, id: &str) -> Result<bool, Error> {
         let mut comments = self.comments()?;
         let before = comments.len();

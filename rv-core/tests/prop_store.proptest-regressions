@@ -1,0 +1,10 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc d70b099522f2503ef2784aeb895503152269d27ffc925b4260a6f601e09e7caf # shrinks to existing = [], doomed = Comment { id: "doomed", change_id: "0", commit_id: "0", anchor: Anchor { file: "", side: Left, line: 0, content_hash: "0", context: [], context_start: 1 }, body: "", state: Open, reply: None, settled_by: None }
+cc 91609e1f717d1df2e671250fb1e80c3db16bad8eb6a68be30c1d98bc70360b83 # shrinks to seed = "", ops = [Append(Comment { id: "id", change_id: "0", commit_id: "0", anchor: Anchor { file: "", side: Left, line: 0, content_hash: "0", context: [], context_start: 1 }, body: "", state: Open, reply: None, settled_by: None })]
+cc c94f3b88e620ab6e4176a038212a35e20b83b09d9cbc0c4b8beea7e442858721 # shrinks to session = Session { revset: "", base_commit: "0", head_commit: "0", changes: [], started_at: "" }, document = "", orphans = [("id", "")], stray_temp = false, reuse = false, newcomer = Comment { id: "id", change_id: "0", commit_id: "0", anchor: Anchor { file: "", side: Left, line: 0, content_hash: "0", context: [], context_start: 1 }, body: "", state: Open, reply: None, settled_by: None }
+cc e9deb7a0c7798a93a4ea1d963e9b19033de7636c73b251dd5202b40434fceb8a # shrinks to session = Session { revset: "", base_commit: "0", head_commit: "0", changes: [], started_at: "" }, document = "", orphans = [("id", ""), ("id", "A")], stray_temp = false, reuse = true, newcomer = Comment { id: "id", change_id: "0", commit_id: "0", anchor: Anchor { file: "", side: Left, line: 0, content_hash: "0", context: [], context_start: 1 }, body: "", state: Open, reply: None, settled_by: None }

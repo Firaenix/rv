@@ -373,3 +373,17 @@ so a marker the parser gave up on is reported rather than dropped; and an
 "Unattached replies" section that `render` preserves, so an LLM's work is not
 erased by the next render when it fails to bind.
 
+---
+
+## 11. Snapshots are gone from the code, not only from the design
+
+§1 ruled `snapshots/` redundant and §2 removed it from the target design, but
+milestone 1's store kept writing them, and a later relabelling ("crash-safety
+data") dressed the duplicate up instead of asking §1's question. A review
+comment asked it — *is it actually used?* — and the answer, from the code, was
+no: nothing ever read one back.
+
+The store now writes `comments.json` and nothing else per save. Legacy
+`snapshots/` directories still load fine; a removed comment's leftover file is
+deleted with it, and an orphan is inert — neither resurrected nor adopted when
+its id is reused. `Store::open` no longer creates the directory.

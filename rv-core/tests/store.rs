@@ -153,28 +153,37 @@ fn distinct_ids_with_one_change_id_all_persist() {
     assert_eq!(comments[1], second, "second comment, in insertion order");
 }
 
-/// Every appended comment gets a snapshot file named after its id, holding
-/// its anchor's context lines verbatim.
+/// A save writes `comments.json` and nothing else — no `snapshots/<id>`.
+///
+/// Earlier versions wrote the anchor's context a second time under
+/// `.review/snapshots/`, and a review of the review asked the question that
+/// killed it: nothing ever read one back. `anchor.context` in `comments.json`
+/// is the copy every consumer uses, so the duplicate protected nothing
+/// (storage spec §1).
 #[test]
-fn snapshot_file_written() {
+fn a_save_writes_no_snapshot() {
     let repo = repo_root();
     let store = Store::open(repo.path()).expect("open store");
     let comment = sample_comment("c1");
 
     store.append_comment(&comment).expect("append comment");
 
-    let snapshot_path = repo.path().join(".review/snapshots/c1");
-    let snapshot = fs::read_to_string(&snapshot_path).expect("read snapshot file");
-    assert_eq!(snapshot, comment.anchor.context.join("\n"));
+    assert!(
+        !repo.path().join(".review/snapshots").exists(),
+        "a snapshot directory was created for bytes comments.json already holds"
+    );
+    let stored = store.comments().expect("read back")[0].clone();
+    assert_eq!(
+        stored.anchor.context, comment.anchor.context,
+        "the one copy of the context is the stored anchor's"
+    );
 }
 
 /// Every write in the store goes through a temp-file-plus-rename helper so
 /// that a destination file is never observed half-written. On the happy
 /// path — no crash, no kill — that temp file is renamed away, so after a
-/// batch of successful appends (inserts and an update, exercising both
-/// `write_atomic` call sites in `append_comment`) neither `.review/` nor
-/// `.review/snapshots/` should have any of the helper's temp files left
-/// behind.
+/// batch of successful appends (inserts and an update) `.review/` should have
+/// none of the helper's temp files left behind.
 #[test]
 fn append_comment_leaves_no_stray_temp_files() {
     let repo = repo_root();
@@ -191,7 +200,6 @@ fn append_comment_leaves_no_stray_temp_files() {
     store.append_comment(&updated).expect("append updated c1");
 
     assert_no_stray_temp_files(&repo.path().join(".review"));
-    assert_no_stray_temp_files(&repo.path().join(".review/snapshots"));
 }
 
 /// Simulates a crash between "temp file written" and "temp file renamed
@@ -250,12 +258,13 @@ fn append_comment_shrinking_body_leaves_no_residual_bytes() {
 }
 
 /// Deleting a comment takes both of the files that comment owns with it: its
-/// entry in `comments.json` and its `snapshots/<id>` file. The removal is
+/// entry in `comments.json`, plus any legacy `snapshots/<id>` an earlier
+/// version left behind. The removal is
 /// write-through like every other store write, so a freshly opened `Store`
 /// over the same root sees the shortened list; and it is surgical, so the
 /// other comment keeps both its entry and its snapshot.
 #[test]
-fn removing_a_comment_drops_it_and_its_snapshot() {
+fn removing_a_comment_drops_it_and_any_legacy_snapshot() {
     let repo = repo_root();
     let store = Store::open(repo.path()).expect("open store");
     store
@@ -264,6 +273,12 @@ fn removing_a_comment_drops_it_and_its_snapshot() {
     store
         .append_comment(&sample_comment("c2"))
         .expect("append c2");
+    // As an earlier version would have left them: one legacy snapshot per
+    // comment, which current versions never write.
+    let snapshots = repo.path().join(".review/snapshots");
+    fs::create_dir_all(&snapshots).expect("create the legacy dir");
+    fs::write(snapshots.join("c1"), "legacy").expect("file c1's legacy snapshot");
+    fs::write(snapshots.join("c2"), "legacy").expect("file c2's legacy snapshot");
 
     let removed = store.remove_comment("c1").expect("remove c1");
 
@@ -278,12 +293,12 @@ fn removing_a_comment_drops_it_and_its_snapshot() {
         "only the other comment survives, and a fresh Store sees it"
     );
     assert!(
-        !repo.path().join(".review/snapshots/c1").exists(),
-        "the removed comment's snapshot is gone"
+        !snapshots.join("c1").exists(),
+        "the removed comment's legacy snapshot is gone with it"
     );
     assert!(
-        repo.path().join(".review/snapshots/c2").exists(),
-        "the surviving comment keeps its snapshot"
+        snapshots.join("c2").exists(),
+        "the other comment's legacy file is not rv's to delete"
     );
 }
 
@@ -312,7 +327,7 @@ fn removing_an_unknown_id_is_not_an_error() {
 /// Removal writes `comments.json` through the same temp-file-plus-rename
 /// helper as every other store write, so on the happy path it must leave no
 /// temp file behind in `.review/` — and the snapshot it deletes must leave
-/// nothing behind in `.review/snapshots/` either.
+/// nothing else behind.
 #[test]
 fn remove_comment_leaves_no_stray_temp_files() {
     let repo = repo_root();
@@ -327,7 +342,6 @@ fn remove_comment_leaves_no_stray_temp_files() {
     store.remove_comment("c1").expect("remove c1");
 
     assert_no_stray_temp_files(&repo.path().join(".review"));
-    assert_no_stray_temp_files(&repo.path().join(".review/snapshots"));
 }
 
 /// A directory listing helper for [`append_comment_leaves_no_stray_temp_files`]:

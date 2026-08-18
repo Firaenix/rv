@@ -19,12 +19,12 @@ use crate::support::*;
 /// Independent oracles, none of which re-run the app's own code:
 ///
 /// * the stored body is `typed.trim()`;
-/// * the anchor's hash and snapshot are what `anchor::create` would produce
+/// * the anchor's hash and excerpt are what `anchor::create` would produce
 ///   from the *fixture's own constant* for the anchored side, at the number the
 ///   anchor stores — so reading the wrong side or the wrong commit shows up;
 /// * `REVIEW-FEEDBACK.md` carries the body as one whole line, whatever
 ///   markdown or `rv:anchor` markers it contains;
-/// * a snapshot file exists under the comment's id.
+/// * no snapshot file duplicates the stored excerpt.
 #[test]
 fn a_typed_comment_reaches_the_store_byte_identically() {
     let fixture = Fixture::multi();
@@ -127,14 +127,11 @@ fn a_typed_comment_reaches_the_store_byte_identically() {
             "{:?} is not a lowercase hex id",
             comment.id
         );
+        // The stored anchor is the one copy of the excerpt: no snapshot file
+        // duplicates it (earlier versions wrote one; nothing ever read it).
         prop_assert!(
-            fixture
-                .root()
-                .join(".review/snapshots")
-                .join(&comment.id)
-                .exists(),
-            "no snapshot was written for {}",
-            comment.id
+            !fixture.root().join(".review/snapshots").exists(),
+            "a snapshot directory appeared beside comments.json"
         );
 
         // The export is rewritten with the comment in it, on one line: the
@@ -232,16 +229,11 @@ fn both_halves_of_a_same_position_rewrite_keep_their_own_comment() {
         assert_eq!(comment.anchor.file, "same.rs");
         assert_eq!(comment.anchor.line, number);
         assert_eq!(comment.body, "which of these two is right?");
-        // Each id owns its own snapshot, so neither comment's context was
-        // overwritten by the other's.
+        // Each id owns its own stored context, so neither comment's excerpt was
+        // overwritten by the other's — in `comments.json`, the one copy.
         assert!(
-            fixture
-                .root()
-                .join(".review/snapshots")
-                .join(&comment.id)
-                .exists(),
-            "no snapshot for {}",
-            comment.id
+            !comment.anchor.context.is_empty(),
+            "a comment lost its excerpt: {comment:?}"
         );
     }
     // The base-side snapshot quotes the base file and the head-side one the

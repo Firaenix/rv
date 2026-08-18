@@ -27,7 +27,9 @@ fn a_comment_stored_under_a_foreign_id_keeps_working() {
     write_comment(&mut app, "written by the previous build");
 
     // Rewrite `.review/` the way an older `rv` left it: the same comment under
-    // an id this build's seed cannot produce, snapshot filed under that id.
+    // an id this build's seed cannot produce, plus the legacy snapshot file
+    // those versions wrote beside every save — which nothing reads, and which
+    // must therefore change nothing about how the comment behaves.
     const LEGACY: &str = "0badc0de";
     let mut comments = workspace.store().comments().expect("read comments.json");
     assert_eq!(comments.len(), 1, "{comments:?}");
@@ -39,11 +41,9 @@ fn a_comment_stored_under_a_foreign_id_keeps_working() {
         serde_json::to_string_pretty(&comments).expect("serialize comments.json"),
     )
     .expect("write the legacy comments.json");
-    fs::rename(
-        workspace.root().join(".review/snapshots").join(&derived),
-        workspace.root().join(".review/snapshots").join(LEGACY),
-    )
-    .expect("file the snapshot under the legacy id");
+    let snapshots = workspace.root().join(".review/snapshots");
+    fs::create_dir_all(&snapshots).expect("create the legacy dir");
+    fs::write(snapshots.join(LEGACY), "legacy context").expect("file the legacy snapshot");
 
     // The export is a projection of the store, so it now carries the legacy
     // marker — and a reply written under it binds to the stored comment.
