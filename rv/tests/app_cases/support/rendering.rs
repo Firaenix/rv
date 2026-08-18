@@ -80,6 +80,7 @@ pub fn diff_area(width: u16, height: u16, mode: Mode) -> Rect {
             bar_rows,
             help_open: false,
             toast: false,
+            sidebar_hidden: false,
         },
     )
     .diff

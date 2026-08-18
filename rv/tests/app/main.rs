@@ -21,6 +21,7 @@ mod boxes_2;
 mod browser_1;
 mod browser_2;
 mod clipping;
+mod collapse;
 mod comment_1;
 mod comment_2;
 mod commits;

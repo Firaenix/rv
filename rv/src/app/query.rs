@@ -80,6 +80,12 @@ impl App {
         &self.review.session.changes
     }
 
+    /// Whether the reviewer has put the sidebar away.
+    #[must_use]
+    pub fn sidebar_hidden(&self) -> bool {
+        self.sidebar_hidden
+    }
+
     pub fn sidebar_row(&self) -> usize {
         self.sidebar_row
     }

@@ -74,10 +74,14 @@ use std::time::Instant;
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
+use ratatui::style::Style;
+use ratatui::text::Span;
 
 use crate::app::Alert;
 use crate::app::App;
 use crate::app::Mode;
+use crate::gradient;
+use crate::statusbar;
 use crate::layout::Chrome;
 use crate::layout::Layout;
 use crate::layout::Split;
@@ -113,9 +117,13 @@ pub fn draw(frame: &mut Frame, app: &App, now: Instant) {
     // and the next resolves against the geometry this frame had.
     app.note_layout(rects);
 
-    bar::draw_bar(frame, app, rects.bar);
+    // The bar starts after the chevron's column, so the control and the status
+    // text never contend for the same cell.
+    bar::draw_bar(frame, app, beside(rects.bar, rects.chevron.width));
     sidebar::draw_sidebar(frame, app, rects.sidebar);
     diff::draw_diff(frame, app, rects.diff);
+    // After the bar, which it is drawn on top of.
+    draw_chevron(frame, rects.chevron, rects.sidebar.width > 0);
     // Over the panes, and under the keymap: a reviewer who asked for the manual
     // is reading it, and an alert that covered it would be interrupting the one
     // thing they asked to see.
@@ -125,6 +133,40 @@ pub fn draw(frame: &mut Frame, app: &App, now: Instant) {
     if let Some(area) = rects.popup {
         help::draw_help(frame, app, area);
     }
+}
+
+/// `area` with its first `columns` taken off the left.
+fn beside(area: Rect, columns: u16) -> Rect {
+    Rect::new(
+        area.x.saturating_add(columns),
+        area.y,
+        area.width.saturating_sub(columns),
+        area.height,
+    )
+}
+
+/// The one cell that opens and closes the sidebar by pointer.
+///
+/// It points the way it would move the edge: `‹` closes the sidebar leftwards,
+/// `›` brings it back. In the bar rather than on a pane, so it costs no row of
+/// either list and no corner of either frame — which matters most on the narrow
+/// screen it exists for.
+fn draw_chevron(frame: &mut Frame, area: Rect, showing: bool) {
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+    let mark = if showing { "‹" } else { "›" };
+    frame.render_widget(
+        Span::styled(
+            mark,
+            Style::default()
+                .fg(text::colour(gradient::FOCUS))
+                // The bar's own ground: a cell of the bar with no background is
+                // a hole in the row.
+                .bg(text::colour(statusbar::fill())),
+        ),
+        area,
+    );
 }
 
 /// What the layout needs to know about the frame being painted.
@@ -142,6 +184,7 @@ fn chrome(app: &App, toast: bool) -> Chrome {
         },
         help_open: app.help_open(),
         toast,
+        sidebar_hidden: app.sidebar_hidden(),
     }
 }
 
@@ -161,6 +204,7 @@ pub fn default_layout() -> Layout {
             bar_rows: 1,
             help_open: false,
             toast: false,
+            sidebar_hidden: false,
         },
     )
 }

@@ -53,6 +53,23 @@ impl App {
         self.resettle_sidebar();
     }
 
+    /// `z`: puts the sidebar away, or brings it back.
+    ///
+    /// The focus comes with it. A sidebar that is not on screen must not still
+    /// hold the cursor — every key would then be acting on a list the reviewer
+    /// cannot see.
+    pub(super) fn toggle_sidebar(&mut self) {
+        self.sidebar_hidden = !self.sidebar_hidden;
+        if self.sidebar_hidden && self.focus == Focus::Sidebar {
+            self.focus = Focus::Diff;
+        }
+        self.status = if self.sidebar_hidden {
+            "sidebar hidden — z brings it back".to_owned()
+        } else {
+            "sidebar shown".to_owned()
+        };
+    }
+
     /// `o`: cycles the file list's order. See [`crate::tree::Sort`], whose
     /// `next` is what "cycles" means, declared beside the orders themselves.
     pub(super) fn cycle_sort(&mut self) {

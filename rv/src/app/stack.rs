@@ -13,8 +13,17 @@ impl App {
     /// `Enter`: into the selected line's comment stack, or — from the comment
     /// browser — to the code the browsed comment is about.
     pub(super) fn on_enter(&mut self) -> Result<()> {
-        if self.focus == Focus::Sidebar && self.sidebar_tab == SidebarTab::Comments {
-            return self.jump_to_comment(self.browser_index);
+        if self.focus == Focus::Sidebar {
+            if self.sidebar_tab == SidebarTab::Comments {
+                return self.jump_to_comment(self.browser_index);
+            }
+            // A row that holds things opens and closes; a row that is a file is
+            // already open, and `Enter` on it does nothing rather than
+            // pretending to.
+            if let Some(key) = self.sidebar_fold_key() {
+                self.toggle_dir_fold(key);
+                return Ok(());
+            }
         }
         self.enter_stack();
         Ok(())

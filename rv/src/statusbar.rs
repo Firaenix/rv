@@ -387,7 +387,7 @@ fn separator(glyph: &'static str, ink: Rgb, ground: Rgb) -> Span<'static> {
 /// bar's own background rather than as another segment, and painted rather than
 /// left bare so the row is one bar instead of two blocks with the pane showing
 /// through between them.
-fn fill() -> Rgb {
+pub fn fill() -> Rgb {
     neutral(0.86)
 }
 

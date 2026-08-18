@@ -295,6 +295,7 @@ fn the_popup_covers_what_is_beneath_it() {
             bar_rows: 1,
             help_open: true,
             toast: false,
+            sidebar_hidden: false,
         },
     )
     .popup

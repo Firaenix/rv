@@ -35,6 +35,7 @@ fn browsing() -> Chrome {
         bar_rows: 1,
         help_open: false,
         toast: false,
+        sidebar_hidden: false,
     }
 }
 
@@ -246,8 +247,48 @@ fn a_row_index_does_not_move_when_the_bar_changes_height() {
 #[test]
 fn a_click_on_the_bar_reports_the_bar() {
     let l = layout(Rect::new(0, 0, 100, 24), Split::new(30), browsing());
-    assert_eq!(hit(&l, 0, l.bar.y), Some(Target::Bar));
+    // Column 0 is the chevron, which is one cell *of* the bar and is asked
+    // about first — see `hit`. Everything else on the row is the bar itself.
+    assert_eq!(hit(&l, 0, l.bar.y), Some(Target::Chevron));
+    assert_eq!(hit(&l, 1, l.bar.y), Some(Target::Bar));
     assert_eq!(hit(&l, 99, l.bar.y), Some(Target::Bar));
+}
+
+/// The one control a pointer has over the panes, in the one row that is always
+/// drawn whatever the panes are doing.
+#[test]
+fn the_chevron_is_the_bars_first_cell_whether_the_sidebar_is_showing_or_not() {
+    for hidden in [false, true] {
+        let l = layout(
+            Rect::new(0, 0, 100, 24),
+            Split::new(30),
+            Chrome {
+                sidebar_hidden: hidden,
+                ..browsing()
+            },
+        );
+        assert_eq!(l.chevron, Rect::new(0, l.bar.y, 1, 1), "hidden: {hidden}");
+        assert_eq!(hit(&l, 0, l.bar.y), Some(Target::Chevron));
+    }
+}
+
+/// With the sidebar away the diff takes every column, the handle included:
+/// there is nothing left to divide and nothing left to drag.
+#[test]
+fn a_hidden_sidebar_gives_the_diff_the_whole_width() {
+    let area = Rect::new(0, 0, 100, 24);
+    let l = layout(
+        area,
+        Split::new(30),
+        Chrome {
+            sidebar_hidden: true,
+            ..browsing()
+        },
+    );
+    assert_eq!(l.sidebar.width, 0);
+    assert_eq!(l.divider.width, 0);
+    assert_eq!(l.diff.x, area.x);
+    assert_eq!(l.diff.width, area.width);
 }
 
 #[test]

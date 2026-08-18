@@ -171,13 +171,15 @@ everywhere.
 | `]` | Next file, from whichever pane the cursor is in |
 | `[` | Previous file, likewise |
 | `Tab` | Cycle the sidebar through **Files**, **Commits** and **Comments** |
-| `Enter` | Step into the selected line's comment stack — or, from the Comments tab, jump to the code that comment is about |
+| `Enter` | Fold a directory or change in the sidebar; from the diff, step into the selected line's comment stack — or, from the Comments tab, jump to the code that comment is about |
+| `Space` | Fold the directory or change under the cursor, same as `Enter` |
 | `Esc` | Leave the comment stack |
 | `c` | Comment on the highlighted line |
 | `d` | Delete a comment, after a `y`/`n` confirmation |
 | `r` | Resolve a comment — press it again to reopen |
 | `a` | Abandon a comment, dropping it without fixing it — again to reopen |
 | `s` | Fold a comment box away, or a directory in the file list — again to unfold |
+| `z` | Hide the sidebar, or bring it back — the `‹` in the bottom-left corner does the same by pointer |
 | `e` | Export the review to `.review/REVIEW-FEEDBACK.md`, same as `rv render` |
 | `t` | Switch the file list between a flat list and a tree |
 | `o` | Cycle the file list's order: by path, by additions, by deletions |

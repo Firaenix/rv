@@ -114,6 +114,7 @@ impl App {
             Command::Escape => self.leave_stack(),
             Command::Narrower => self.split = self.split.nudged(-NUDGE),
             Command::Wider => self.split = self.split.nudged(NUDGE),
+            Command::ToggleSidebar => self.toggle_sidebar(),
             Command::ToggleTree => self.toggle_tree(),
             Command::CycleSort => self.cycle_sort(),
             Command::Help => {

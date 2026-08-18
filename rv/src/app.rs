@@ -196,6 +196,12 @@ pub struct App {
     /// Set to skip difftastic for every file in this review — see
     /// [`App::with_fallback_diffs`].
     force_fallback: bool,
+    /// Whether the reviewer has put the sidebar away with `z`.
+    ///
+    /// What they asked for, not what they get: a terminal narrow enough hides
+    /// it regardless, and that decision belongs to [`crate::layout`], which is
+    /// the only place that knows how wide the screen is.
+    sidebar_hidden: bool,
     /// The commits view, built the first frame that asks for it.
     ///
     /// A [`std::cell::OnceCell`] because [`crate::ui::draw`] takes `&App`, and
@@ -280,6 +286,7 @@ impl App {
             buffer: String::new(),
             status: HELP.to_owned(),
             force_fallback,
+            sidebar_hidden: false,
             commits: commits::Commits::default(),
         };
         for message in unreadable {

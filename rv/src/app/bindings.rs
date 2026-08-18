@@ -133,6 +133,13 @@ pub const BINDINGS: &[Binding] = &[
         command: Command::Enter,
     },
     Binding {
+        keys: "Space",
+        group: Group::Focus,
+        what: "fold a directory",
+        codes: &[KeyCode::Char(' ')],
+        command: Command::Enter,
+    },
+    Binding {
         keys: "Esc",
         group: Group::Focus,
         what: "leave the stack",
@@ -196,6 +203,13 @@ pub const BINDINGS: &[Binding] = &[
         command: Command::Wider,
     },
     Binding {
+        keys: "z",
+        group: Group::View,
+        what: "hide the sidebar",
+        codes: &[KeyCode::Char('z')],
+        command: Command::ToggleSidebar,
+    },
+    Binding {
         keys: "t",
         group: Group::View,
         what: "list / tree",
@@ -248,6 +262,7 @@ pub(super) enum Command {
     Fold,
     Narrower,
     Wider,
+    ToggleSidebar,
     ToggleTree,
     CycleSort,
     Help,
@@ -269,6 +284,7 @@ impl App {
             | Command::Narrower
             | Command::Wider
             | Command::Help
+            | Command::ToggleSidebar
             // A review with no comments still has a session to export.
             | Command::Export
             | Command::Quit => true,

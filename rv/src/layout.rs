@@ -175,6 +175,12 @@ pub struct Chrome {
     pub help_open: bool,
     /// Whether an alert is floating over the panes.
     pub toast: bool,
+    /// Whether the reviewer has put the sidebar away with `z`.
+    ///
+    /// A narrow enough terminal puts it away regardless — see
+    /// [`NARROW_COLUMNS`] — so this is what the reviewer asked for, not what
+    /// they get.
+    pub sidebar_hidden: bool,
 }
 
 /// Every rectangle of one frame.
@@ -193,6 +199,13 @@ pub struct Layout {
     /// The floating alert, when there is one. Drawn over the panes; never a
     /// click target — see [`Target`].
     pub toast: Option<Rect>,
+    /// The one cell that opens and closes the sidebar by pointer.
+    ///
+    /// A key is not enough on a phone over ssh, which is the whole reason the
+    /// sidebar folds away at all. It is the bar's first cell — the bottom-left
+    /// of the screen, where every editor puts the same control — so it is in
+    /// the same place whether the sidebar is showing or not.
+    pub chevron: Rect,
 }
 
 /// What is under the pointer.
@@ -218,6 +231,8 @@ pub enum Target {
     Bar,
     /// Anywhere inside the `?` popup.
     Popup,
+    /// The one cell that opens and closes the sidebar.
+    Chevron,
 }
 
 /// Every rectangle for `area`, given the split and what chrome is showing.
@@ -234,9 +249,19 @@ pub fn layout(area: Rect, split: Split, chrome: Chrome) -> Layout {
 
     // The divider is a column the panes do not get; on a zero-width area there
     // is not even one of those.
-    let shared = area.width.saturating_sub(DIVIDER);
-    let divider_columns = area.width - shared;
-    let sidebar_columns = split.sidebar_width(shared);
+    let hidden = chrome.sidebar_hidden;
+    // With the sidebar away there is nothing to divide and nothing to drag, so
+    // the handle gives its column to the diff. On the narrow screens this fold
+    // exists for, a column of nothing is a column of code.
+    let divider_columns = if hidden { 0 } else { DIVIDER.min(area.width) };
+    let shared = area.width - divider_columns;
+    // Put away only on request. A narrow screen does *not* hide it by itself:
+    // the file list already degrades deliberately as columns run out — the
+    // change bar goes, then the counts, then the path is clipped — and a rule
+    // that overrode all of that would take the choice away on exactly the
+    // screens where the reviewer most needs it. `z` and the chevron are the
+    // choice; the degradation is the default.
+    let sidebar_columns = if hidden { 0 } else { split.sidebar_width(shared) };
     let diff_columns = shared - sidebar_columns;
 
     let sidebar = Rect::new(area.x, area.y, sidebar_columns, pane_rows);
@@ -244,10 +269,16 @@ pub fn layout(area: Rect, split: Split, chrome: Chrome) -> Layout {
     let diff = Rect::new(divider.right(), area.y, diff_columns, pane_rows);
     let bar = Rect::new(area.x, area.y + pane_rows, area.width, bar_rows);
 
+    // The bar's first cell. Not a pane's corner: a control drawn over `╭`
+    // destroys the frame it sits on, and the bar is the one row that is always
+    // there whatever the panes are doing.
+    let chevron = Rect::new(bar.x, bar.y, DIVIDER.min(bar.width), bar.height.min(1));
+
     Layout {
         sidebar,
         divider,
         diff,
+        chevron,
         bar,
         popup: chrome
             .help_open
@@ -275,6 +306,11 @@ pub fn hit(layout: &Layout, column: u16, row: u16) -> Option<Target> {
         && within(popup, column, row)
     {
         return Some(Target::Popup);
+    }
+    // Before the bar, which it is one cell of. Everything else is tested in
+    // painting order; this is the one target that sits inside another.
+    if within(layout.chevron, column, row) {
+        return Some(Target::Chevron);
     }
     if within(layout.divider, column, row) {
         return Some(Target::Divider);

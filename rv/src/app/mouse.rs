@@ -96,6 +96,7 @@ impl App {
         // a drag only ever resizes when it *started* on the handle.
         self.dragging = false;
         match hit(painted, column, row) {
+            Some(Target::Chevron) => self.toggle_sidebar(),
             Some(Target::Divider) => self.dragging = true,
             Some(Target::SidebarRow(row)) => self.click_sidebar(painted, row)?,
             Some(Target::DiffRow(row)) => self.click_diff(painted, row),
