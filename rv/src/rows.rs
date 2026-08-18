@@ -76,6 +76,26 @@ pub enum Row<'a> {
     BoxCollapsed { line: usize, comment: &'a Comment },
 }
 
+impl Row<'_> {
+    /// The diff line this row belongs to: a diff row owns itself, and a box row
+    /// is owned by the line its box hangs from.
+    ///
+    /// This is what makes a box something the cursor can walk *into*. `c`, `d`,
+    /// `comments_for_line` and the anchor a comment saves against all follow the
+    /// row cursor through here, so commenting from inside a box comments on the
+    /// line that box is about — the only thing it could sensibly mean.
+    #[must_use]
+    pub fn line(&self) -> usize {
+        match self {
+            Row::Diff { index, .. } => *index,
+            Row::BoxTop { line, .. }
+            | Row::BoxBody { line, .. }
+            | Row::BoxBottom { line, .. }
+            | Row::BoxCollapsed { line, .. } => *line,
+        }
+    }
+}
+
 /// Every row of a file's diff, in the order they are drawn.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Plan<'a> {
@@ -152,6 +172,15 @@ impl Plan<'_> {
         self.rows
             .iter()
             .position(|row| matches!(row, Row::Diff { index, .. } if *index == line))
+    }
+
+    /// The diff line that owns row `row`, or `None` when the plan has no such
+    /// row.
+    ///
+    /// The inverse of [`Plan::row_of_line`] for a diff row, and the whole of
+    /// what makes the row cursor usable for a box row: see [`Row::line`].
+    pub fn line_of_row(&self, row: usize) -> Option<usize> {
+        self.rows.get(row).map(Row::line)
     }
 
     /// The row where the `comment_index`-th box under diff line `line` starts

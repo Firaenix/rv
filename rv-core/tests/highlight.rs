@@ -3,11 +3,15 @@
 //!
 //! Two halves. The hand-written cases pin one example per documented
 //! behaviour — what a Rust file's keywords and functions come back as, what a
-//! file with no grammar comes back as, what a broken parse comes back as. The
-//! properties go after the *contract* a consumer relies on to render without
-//! crashing: totality over arbitrary bytes and arbitrary paths, spans that are
-//! ordered, disjoint and inside their own line, byte offsets that are always
-//! char boundaries, and a deterministic answer for the same input.
+//! file with no grammar comes back as, what a broken parse comes back as, and
+//! one characteristic construct per shipped grammar, so a grammar that stops
+//! working is a failing test rather than a screen that quietly loses its
+//! colour. The properties go after the *contract* a consumer relies on to
+//! render without crashing: totality over arbitrary bytes and arbitrary paths,
+//! spans that are ordered, disjoint and inside their own line, byte offsets
+//! that are always char boundaries, and a deterministic answer for the same
+//! input — and they run over *every* grammar, not only Rust, because each
+//! grammar is a separate C parser with its own opinion about malformed input.
 //!
 //! The line oracle ([`ref_line`]) is written independently of the module's own
 //! line indexing — a plain `split('\n')` — so the "inside its line" property
@@ -88,6 +92,58 @@ fn all_spans(highlights: &Highlights, source: &str) -> Vec<Span> {
         .into_iter()
         .flat_map(|line| highlights.line(line).to_vec())
         .collect()
+}
+
+/// Every path that must select a grammar, one per language rv ships. The
+/// per-grammar properties walk this, so adding a grammar without adding its
+/// path here is the one way to get a grammar the properties never fuzz — and
+/// [`the_grammar_paths_cover_every_shipped_language`] is what catches that.
+const GRAMMAR_PATHS: &[(&str, &str)] = &[
+    ("a.rs", "rust"),
+    ("a.toml", "toml"),
+    ("Cargo.lock", "toml"),
+    ("a.md", "markdown"),
+    ("a.yaml", "yaml"),
+    ("a.json", "json"),
+    ("a.py", "python"),
+    ("a.go", "go"),
+    ("a.ts", "typescript"),
+    ("a.tsx", "tsx"),
+    ("a.js", "javascript"),
+    ("a.sh", "bash"),
+];
+
+/// The [`Capture`] covering `token` on 1-based `line` of `source`, or `None`
+/// when no span covers it.
+///
+/// This is how the per-grammar cases below are stated: not "some span on this
+/// line is a keyword", which a grammar could satisfy by accident, but "*this
+/// token* came back as this kind". The column is found in the line's own text
+/// via [`ref_line`], the same independent oracle the properties use, so the
+/// lookup does not borrow the module's idea of where a line starts.
+fn capture_of(source: &str, path: &str, line: u32, token: &str) -> Option<Capture> {
+    let highlights = Highlights::of(source.as_bytes(), path);
+    let text = ref_line(source, line)?;
+    let at = u32::try_from(text.find(token)?).ok()?;
+    highlights
+        .line(line)
+        .iter()
+        .find(|span| span.start <= at && at < span.end)
+        .map(|span| span.capture)
+}
+
+/// Asserts that `token` on `line` came back as `want`, reporting what it
+/// actually got — which is almost always the useful half of the message, since
+/// "the grammar captured this as something else" and "the grammar did not
+/// capture this at all" are different bugs.
+#[track_caller]
+fn assert_capture(source: &str, path: &str, line: u32, token: &str, want: Capture) {
+    let got = capture_of(source, path, line, token);
+    assert_eq!(
+        got,
+        Some(want),
+        "in {path}, `{token}` on line {line} should be {want:?}, got {got:?}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -262,6 +318,265 @@ fn an_empty_rust_file_is_still_rust() {
 }
 
 // ---------------------------------------------------------------------------
+// The rest of the grammars: one characteristic construct each
+// ---------------------------------------------------------------------------
+//
+// Each case names a token a reader would point at and says what kind it must
+// come back as. These are deliberately about the *grammar's* opinion, not
+// rv's: where a grammar disagrees with the obvious guess — TOML captures a
+// table header as a type, YAML captures a key as a property (and so a
+// variable) — the test records the grammar's answer, because that is what a
+// reviewer will actually see on screen.
+
+/// TOML is first because it is what a reviewer opening this repository sees
+/// first: `Cargo.lock` sorts before every source file, so an rv that cannot
+/// colour TOML looks like an rv whose highlighting does not work at all.
+#[test]
+fn toml_tables_keys_and_values_are_captured() {
+    let source = "# a comment\n[package]\nname = \"rv\"\nedition = 2024\nok = true\n";
+
+    assert_eq!(
+        Highlights::of(source.as_bytes(), "Cargo.toml").language(),
+        Some("toml")
+    );
+    assert_capture(source, "Cargo.toml", 1, "# a comment", Capture::Comment);
+    assert_capture(source, "Cargo.toml", 2, "package", Capture::Type);
+    assert_capture(source, "Cargo.toml", 3, "\"rv\"", Capture::String);
+    assert_capture(source, "Cargo.toml", 4, "2024", Capture::Number);
+    // `true` is `@boolean`, a capture name no grammar rv shipped before used.
+    assert_capture(source, "Cargo.toml", 5, "true", Capture::Constant);
+}
+
+/// `Cargo.lock` is TOML with an extension that says `lock`. It is the first
+/// file in this repository alphabetically, so the filename table exists mostly
+/// for it: without this row the headline case of the whole feature is a blank
+/// screen.
+#[test]
+fn cargo_lock_is_toml_by_filename() {
+    let source = "[[package]]\nname = \"rv\"\nversion = \"0.1.0\"\n";
+
+    assert_eq!(
+        Highlights::of(source.as_bytes(), "Cargo.lock").language(),
+        Some("toml")
+    );
+    assert_capture(source, "Cargo.lock", 2, "\"rv\"", Capture::String);
+}
+
+/// Markdown's block structure: a heading is the construct a reader looks for,
+/// and a fenced code block is the other thing a spec is made of.
+#[test]
+fn markdown_headings_and_code_fences_are_captured() {
+    let source = "# Title\n\nprose\n\n```\nfn a() {}\n```\n";
+
+    assert_eq!(
+        Highlights::of(source.as_bytes(), "notes.md").language(),
+        Some("markdown")
+    );
+    assert_capture(source, "notes.md", 1, "Title", Capture::Keyword);
+    assert_capture(source, "notes.md", 1, "#", Capture::Punctuation);
+    assert_capture(source, "notes.md", 6, "fn a() {}", Capture::String);
+    assert!(
+        capture_of(source, "notes.md", 3, "prose").is_none(),
+        "ordinary prose is not captured as anything"
+    );
+}
+
+/// Markdown's *inline* content — emphasis, code spans, links — comes from a
+/// second grammar that the block grammar injects. It is a separate parser, and
+/// wiring it is the difference between a markdown file with three coloured
+/// tokens and one that reads the way a reader expects, so it gets its own
+/// case rather than riding along with the block test above.
+#[test]
+fn markdown_inline_emphasis_and_code_spans_are_captured() {
+    let source = "Some *emph* and `code` and [text](http://example.com).\n";
+
+    assert_capture(source, "notes.md", 1, "`", Capture::Punctuation);
+    assert_capture(source, "notes.md", 1, "code", Capture::String);
+    assert_capture(source, "notes.md", 1, "text", Capture::Variable);
+    assert_capture(source, "notes.md", 1, "http://example.com", Capture::String);
+    assert!(
+        capture_of(source, "notes.md", 1, "Some").is_none(),
+        "ordinary prose between the inline constructs stays plain"
+    );
+}
+
+/// YAML: the key is what a reader scans down the left-hand side of a CI
+/// workflow, and the grammar calls it a property — which rv maps to a
+/// variable, the same as a struct field.
+#[test]
+fn yaml_keys_comments_and_scalars_are_captured() {
+    let source = "# a comment\nname: build\ncount: 3\n";
+
+    assert_eq!(
+        Highlights::of(source.as_bytes(), "ci.yml").language(),
+        Some("yaml")
+    );
+    assert_capture(source, "ci.yml", 1, "# a comment", Capture::Comment);
+    assert_capture(source, "ci.yml", 2, "name", Capture::Variable);
+    assert_capture(source, "ci.yml", 2, ":", Capture::Punctuation);
+    assert_capture(source, "ci.yml", 2, "build", Capture::String);
+    assert_capture(source, "ci.yml", 3, "3", Capture::Number);
+}
+
+/// JSON: the grammar makes no distinction between a key and any other string
+/// that rv's vocabulary can express — both are strings — but numbers and
+/// `true` are their own kinds, which is what makes a lock file readable.
+#[test]
+fn json_strings_numbers_and_literals_are_captured() {
+    let source = "{\n  \"name\": \"rv\",\n  \"count\": 3,\n  \"ok\": true\n}\n";
+
+    assert_eq!(
+        Highlights::of(source.as_bytes(), "package.json").language(),
+        Some("json")
+    );
+    assert_capture(source, "package.json", 2, "\"name\"", Capture::String);
+    assert_capture(source, "package.json", 3, "3", Capture::Number);
+    assert_capture(source, "package.json", 4, "true", Capture::Constant);
+}
+
+/// `.jsonc` is claimed by the JSON row on the strength of the grammar having a
+/// `comment` rule. That is a claim about a dependency, so it is checked rather
+/// than asserted in a comment: a `tsconfig.jsonc` whose comments came back
+/// uncaptured would mean the row should not exist.
+#[test]
+fn jsonc_comments_are_comments() {
+    let source = "{\n  // a comment\n  \"strict\": true\n}\n";
+
+    assert_capture(
+        source,
+        "tsconfig.jsonc",
+        2,
+        "// a comment",
+        Capture::Comment,
+    );
+    assert_capture(source, "tsconfig.jsonc", 3, "true", Capture::Constant);
+}
+
+/// Python: `def` and the name that follows it, the pair a reader uses to find
+/// their way down a file.
+#[test]
+fn python_definitions_and_comments_are_captured() {
+    let source = "# a comment\ndef parse(text):\n    return len(text)\n";
+
+    assert_eq!(
+        Highlights::of(source.as_bytes(), "parse.py").language(),
+        Some("python")
+    );
+    assert_capture(source, "parse.py", 1, "# a comment", Capture::Comment);
+    assert_capture(source, "parse.py", 2, "def", Capture::Keyword);
+    assert_capture(source, "parse.py", 2, "parse", Capture::Function);
+    assert_capture(source, "parse.py", 3, "return", Capture::Keyword);
+    assert_capture(source, "parse.py", 3, "len", Capture::Function);
+}
+
+/// Go: `func` and the built-in types, which is most of what a Go signature is
+/// made of.
+#[test]
+fn go_declarations_and_types_are_captured() {
+    let source = "package main\n\n// a comment\nfunc parse(text string) int {\n\treturn 1\n}\n";
+
+    assert_eq!(
+        Highlights::of(source.as_bytes(), "parse.go").language(),
+        Some("go")
+    );
+    assert_capture(source, "parse.go", 1, "package", Capture::Keyword);
+    assert_capture(source, "parse.go", 3, "// a comment", Capture::Comment);
+    assert_capture(source, "parse.go", 4, "func", Capture::Keyword);
+    assert_capture(source, "parse.go", 4, "string", Capture::Type);
+    assert_capture(source, "parse.go", 4, "int", Capture::Type);
+    assert_capture(source, "parse.go", 5, "1", Capture::Number);
+}
+
+/// TypeScript. The interesting part is not the keyword but the *annotation*:
+/// `tree-sitter-typescript` ships only the TypeScript-specific half of its
+/// highlight query, so a configuration built from that alone captures the
+/// types and nothing else — no comments, no strings, no function names. This
+/// case fails if the JavaScript half is ever dropped.
+#[test]
+fn typescript_captures_both_its_types_and_the_javascript_underneath() {
+    let source = "// a comment\nfunction parse(text: string): Ast {\n  return text.length;\n}\n";
+
+    assert_eq!(
+        Highlights::of(source.as_bytes(), "parse.ts").language(),
+        Some("typescript")
+    );
+    // The TypeScript half.
+    assert_capture(source, "parse.ts", 2, "string", Capture::Type);
+    assert_capture(source, "parse.ts", 2, "Ast", Capture::Type);
+    // The JavaScript half, which is where everything else comes from.
+    assert_capture(source, "parse.ts", 1, "// a comment", Capture::Comment);
+    assert_capture(source, "parse.ts", 2, "function", Capture::Keyword);
+    assert_capture(source, "parse.ts", 2, "parse", Capture::Function);
+    assert_capture(source, "parse.ts", 3, "length", Capture::Variable);
+}
+
+/// TSX is a different parser from TypeScript — JSX does not parse as
+/// TypeScript — so it is a separate row with its own name.
+///
+/// Asserting only that `const` is a keyword and `"x"` a string would not show
+/// that: the TypeScript parser error-recovers through JSX and still gets those
+/// right, so such a test passes just as happily with the wrong parser. The
+/// assertions below are the ones that actually separate the two. Fed
+/// `<div …>`, the TypeScript parser reads `<div>` as a *type assertion* and
+/// calls `div` a type; the TSX parser reads it as an element name. And the
+/// element's body is text to TSX, while TypeScript, having lost the thread,
+/// takes `hi` for an identifier.
+#[test]
+fn tsx_parses_jsx_that_typescript_alone_cannot() {
+    let source = "const el = <div className=\"x\">hi</div>;\n";
+
+    assert_eq!(
+        Highlights::of(source.as_bytes(), "app.tsx").language(),
+        Some("tsx")
+    );
+    assert_capture(source, "app.tsx", 1, "const", Capture::Keyword);
+    assert_capture(source, "app.tsx", 1, "className", Capture::Variable);
+    assert_capture(source, "app.tsx", 1, "\"x\"", Capture::String);
+    // The two that need the JSX parser.
+    assert_capture(source, "app.tsx", 1, "div", Capture::Variable);
+    assert!(
+        capture_of(source, "app.tsx", 1, "hi").is_none(),
+        "the element's body is text, not an identifier: {:?}",
+        capture_of(source, "app.tsx", 1, "hi")
+    );
+}
+
+/// JavaScript rides along: its grammar has to be linked anyway to give
+/// TypeScript a usable query, so claiming `.js` costs one row and leaves one
+/// fewer file rendered plain.
+#[test]
+fn javascript_functions_and_strings_are_captured() {
+    let source = "// a comment\nfunction go(a) {\n  return \"x\";\n}\n";
+
+    assert_eq!(
+        Highlights::of(source.as_bytes(), "go.js").language(),
+        Some("javascript")
+    );
+    assert_capture(source, "go.js", 1, "// a comment", Capture::Comment);
+    assert_capture(source, "go.js", 2, "function", Capture::Keyword);
+    assert_capture(source, "go.js", 2, "go", Capture::Function);
+    assert_capture(source, "go.js", 3, "\"x\"", Capture::String);
+}
+
+/// Bash: the shape of a shell script is its keywords and its comments, and the
+/// crate spells its constant `HIGHLIGHT_QUERY` rather than `HIGHLIGHTS_QUERY`
+/// — a difference that is invisible until a file comes back plain.
+#[test]
+fn bash_keywords_and_comments_are_captured() {
+    let source = "#!/bin/bash\n# a comment\nif [ -n \"$x\" ]; then\n  echo hi\nfi\n";
+
+    assert_eq!(
+        Highlights::of(source.as_bytes(), "run.sh").language(),
+        Some("bash")
+    );
+    assert_capture(source, "run.sh", 2, "# a comment", Capture::Comment);
+    assert_capture(source, "run.sh", 3, "if", Capture::Keyword);
+    assert_capture(source, "run.sh", 3, "then", Capture::Keyword);
+    assert_capture(source, "run.sh", 4, "echo", Capture::Function);
+    assert_capture(source, "run.sh", 5, "fi", Capture::Keyword);
+}
+
+// ---------------------------------------------------------------------------
 // Language detection: extension only
 // ---------------------------------------------------------------------------
 
@@ -300,6 +615,115 @@ fn a_rust_extension_selects_the_rust_grammar(#[case] path: &str) {
 
     assert_eq!(highlights.language(), Some("rust"), "path {path:?}");
     assert!(!highlights.line(1).is_empty(), "path {path:?}");
+}
+
+/// The whole extension table, one case per extension rv claims. This is the
+/// list a user reads as "which files get colour", so it is stated once,
+/// explicitly, rather than inferred from the grammar rows.
+#[rstest]
+#[case("Cargo.toml", "toml")]
+#[case("rustfmt.toml", "toml")]
+#[case("README.md", "markdown")]
+#[case("notes.markdown", "markdown")]
+#[case("ci.yaml", "yaml")]
+#[case("ci.yml", "yaml")]
+#[case("package.json", "json")]
+#[case("tsconfig.jsonc", "json")]
+#[case("parse.py", "python")]
+#[case("types.pyi", "python")]
+#[case("main.go", "go")]
+#[case("app.ts", "typescript")]
+#[case("app.mts", "typescript")]
+#[case("app.cts", "typescript")]
+#[case("app.tsx", "tsx")]
+#[case("app.js", "javascript")]
+#[case("app.jsx", "javascript")]
+#[case("app.mjs", "javascript")]
+#[case("app.cjs", "javascript")]
+#[case("run.sh", "bash")]
+#[case("run.bash", "bash")]
+#[case("src/deep/run.SH", "bash")]
+fn an_extension_selects_its_grammar(#[case] path: &str, #[case] language: &str) {
+    assert_eq!(
+        Highlights::of(b"", path).language(),
+        Some(language),
+        "path {path:?}"
+    );
+}
+
+/// The filename table: names whose extension does not name their language, or
+/// which have no extension at all. It is deliberately short — a name has to be
+/// unambiguous to earn a row, because a wrong guess here is the same failure
+/// as content sniffing, just spelled differently.
+#[rstest]
+#[case("Cargo.lock", "toml")]
+#[case("rv/Cargo.lock", "toml")]
+#[case("cargo.lock", "toml")]
+#[case(".bashrc", "bash")]
+#[case("home/.bash_profile", "bash")]
+fn a_known_filename_selects_its_grammar(#[case] path: &str, #[case] language: &str) {
+    assert_eq!(
+        Highlights::of(b"", path).language(),
+        Some(language),
+        "path {path:?}"
+    );
+}
+
+/// Names that look like they might be claimed but are not. `Gemfile.lock` is
+/// not TOML, `foo.lock` is nothing in particular, and a directory called
+/// `Cargo.lock` is not a file — matching any of them would paint a file as a
+/// language it is not.
+#[rstest]
+#[case("Gemfile.lock")]
+#[case("yarn.lock")]
+#[case("foo.lock")]
+#[case("Cargo.lock/inner.txt")]
+#[case("bashrc")]
+#[case("notes.mdx")]
+fn a_name_the_tables_do_not_claim_stays_plain(#[case] path: &str) {
+    assert_eq!(
+        Highlights::of(b"x\n", path).language(),
+        None,
+        "path {path:?}"
+    );
+}
+
+/// Every grammar in the table is reachable by some path, and every path in
+/// [`GRAMMAR_PATHS`] names the language it claims to. This is what keeps the
+/// per-grammar properties honest: a grammar added to the module without a path
+/// here would never be fuzzed, and the count check is what notices.
+#[test]
+fn the_grammar_paths_cover_every_shipped_language() {
+    let mut languages: Vec<&str> = GRAMMAR_PATHS
+        .iter()
+        .map(|(path, language)| {
+            assert_eq!(
+                Highlights::of(b"", path).language(),
+                Some(*language),
+                "path {path:?}"
+            );
+            *language
+        })
+        .collect();
+    languages.sort_unstable();
+    languages.dedup();
+    assert_eq!(
+        languages,
+        [
+            "bash",
+            "go",
+            "javascript",
+            "json",
+            "markdown",
+            "python",
+            "rust",
+            "toml",
+            "tsx",
+            "typescript",
+            "yaml",
+        ],
+        "every shipped grammar has a path the properties can reach it by"
+    );
 }
 
 /// Detection looks at the path and nothing else: a file full of Rust under a
@@ -494,6 +918,10 @@ fn path_text() -> impl Strategy<Value = String> {
         3 => prop::sample::select(vec![
             "a.rs", "src/a.rs", "a.RS", "a.tar.gz", "Makefile", "", ".rs", "a.rs/b", "dir.rs/b.txt",
             "a.", "a.txt", "weird .rs", "a.rs ", "мир.rs",
+            // One per shipped grammar, plus the near-misses the filename table
+            // must not claim, so the totality properties see every parser.
+            "a.toml", "Cargo.lock", "cargo.lock", "Cargo.lock/b", "yarn.lock", "a.md", "a.yml",
+            "a.json", "a.py", "a.go", "a.ts", "a.tsx", "a.js", "a.sh", ".bashrc", "bashrc",
         ])
         .prop_map(String::from),
         1 => "[a-zA-Z0-9._/\\\\-]{0,24}",
@@ -613,6 +1041,60 @@ proptest! {
                         at,
                         source.get(at).copied().unwrap_or(0)
                     );
+                }
+            }
+        }
+    }
+
+    /// Every grammar, over the same hostile bytes: no panic, a language
+    /// always reported, and the same ordering, disjointness and
+    /// character-boundary guarantees Rust already has.
+    ///
+    /// This is the property that earns its keep once there is more than one
+    /// grammar. Each one is a separate C parser with its own external
+    /// scanner, and the bytes here — lone continuation bytes, truncated lead
+    /// bytes, `\xff` — are exactly what a mis-encoded file in a repository
+    /// looks like. A parser that reports a range starting inside a character
+    /// is a panic in any consumer that indexes by column, and only running
+    /// every grammar over this generator finds the one that does.
+    #[test]
+    fn every_grammar_is_total_over_arbitrary_bytes(source in source_bytes()) {
+        for (path, language) in GRAMMAR_PATHS {
+            let highlights = Highlights::of(&source, path);
+            prop_assert_eq!(highlights.language(), Some(*language), "path {}", path);
+
+            let starts = ref_line_starts(&source);
+            for (index, &line_start) in starts.iter().enumerate() {
+                let line = u32::try_from(index + 1).expect("line fits");
+                let line_end = starts.get(index + 1).copied().unwrap_or(source.len());
+                let spans = highlights.line(line);
+                for pair in spans.windows(2) {
+                    prop_assert!(
+                        pair[0].end <= pair[1].start,
+                        "{}: overlapping or unordered spans {:?}",
+                        path,
+                        pair
+                    );
+                }
+                for span in spans {
+                    prop_assert!(span.start < span.end, "{}: empty span {:?}", path, span);
+                    prop_assert!(
+                        line_start + span.end as usize <= line_end,
+                        "{}: span {:?} reaches past line {}",
+                        path,
+                        span,
+                        line
+                    );
+                    for edge in [span.start, span.end] {
+                        let at = line_start + edge as usize;
+                        prop_assert!(
+                            !source.get(at).copied().is_some_and(is_continuation),
+                            "{}: span {:?} has an edge at byte {} inside a character",
+                            path,
+                            span,
+                            at
+                        );
+                    }
                 }
             }
         }

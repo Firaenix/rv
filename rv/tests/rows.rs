@@ -463,4 +463,34 @@ proptest! {
             prop_assert!(visible.contains(&anchor), "the anchor row is on screen");
         }
     }
+
+    /// **Every row is reachable.** For any plan and any pane height, every row
+    /// is inside the window for some cursor position.
+    ///
+    /// This is the assertion the defect in spec §10 would have failed, and it
+    /// is a property rather than an example on purpose: the defect only bites
+    /// when a comment box is taller than the pane, which no fixture in this
+    /// suite happened to build, so no example test would reliably have caught
+    /// it. A reviewer could see the top of a long comment from the line above
+    /// it and its bottom from the line below, and its middle from nowhere at
+    /// all.
+    ///
+    /// What makes it true is that the cursor ranges over the **rows** —
+    /// `0..rows` here, and `App::cursor_row` in the reviewer. It fails the
+    /// moment the cursor can only rest on a subset of them, which is what
+    /// anchoring the window on the selected *diff line* did: the anchors were
+    /// the diff rows, a box sits between two of them, and `window` centres, so
+    /// the rows more than half a pane from either neighbour were in no window
+    /// at all. Proved by vendoring a copy and restoring line-anchored
+    /// windowing, which leaves rows unreachable at any cursor position.
+    #[test]
+    fn every_row_is_reachable(rows in 1usize..60, height in 1usize..20) {
+        let mut seen = HashSet::new();
+        for cursor in 0..rows {
+            for row in window(rows, cursor, height) {
+                seen.insert(row);
+            }
+        }
+        prop_assert_eq!(seen.len(), rows, "some row is in no window at any cursor");
+    }
 }

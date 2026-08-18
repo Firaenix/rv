@@ -23,8 +23,20 @@ toml.workspace = true
 # terminal colour lives in `rv`, so this crate stays terminal-free.
 # `tree-sitter` itself is not a direct dependency: nothing here names a
 # `tree_sitter` type, so it arrives once, transitively, under the highlighter.
+# Each grammar below is one row in `GRAMMARS` in `src/highlight.rs` and one
+# test in `tests/highlight.rs`; a grammar with neither is dead weight in the
+# binary, and every one of these is a C parser compiled into it.
+tree-sitter-bash.workspace = true
+tree-sitter-go.workspace = true
 tree-sitter-highlight.workspace = true
+tree-sitter-javascript.workspace = true
+tree-sitter-json.workspace = true
+tree-sitter-md.workspace = true
+tree-sitter-python.workspace = true
 tree-sitter-rust.workspace = true
+tree-sitter-toml-ng.workspace = true
+tree-sitter-typescript.workspace = true
+tree-sitter-yaml.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true

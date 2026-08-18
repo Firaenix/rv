@@ -116,22 +116,22 @@ alphabet), so you can paste one straight back into a jj command.
 
 ## The reviewer
 
-A bare `rv` opens the terminal UI: a status line over a sidebar and a diff
-pane, with your comments drawn in the diff itself, under the lines they are
+A bare `rv` opens the terminal UI: a sidebar and a diff pane over a status
+line, with your comments drawn in the diff itself, under the lines they are
 about.
 
 ```
-┌──────────────────────────────────────────────────────────────────────┐
-│ j/k line  [/] file  c comment  enter stack  d delete  s fold  q quit │
-├──────────────────────┬───────────────────────────────────────────────┤
-│ Files (27)           │ ▸ rv-core/src/anchor.rs — difftastic (Rust)   │
-│ +  Cargo.lock        │    47 +    let start = index.satu…            │
-│ +  rv-core/src/an…   │    48 +    let end = (index + 5)…             │
-│ ~  rv/src/ui.rs      │        ╭─ 8d985355 · open ────────────────╮   │
-│                      │        │ lines.len() - 1 underflows       │   │
-│                      │        │ reply: fixed with unwrap_or(0)   │   │
-│                      │        ╰──────────────────────────────────╯   │
-└──────────────────────┴───────────────────────────────────────────────┘
+┌──────────────────────┬──────────────────────────────────────────────────────┐
+│ Files (27)           │ ▸ rv-core/src/anchor.rs — difftastic (Rust)          │
+│ +  Cargo.lock        │    47 +    let start = index.satu…                   │
+│ +  rv-core/src/an…   │    48 +    let end = (index + 5)…                    │
+│ ~  rv/src/ui.rs      │        ╭─ 8d985355 · open ────────────────╮          │
+│                      │        │ lines.len() - 1 underflows       │          │
+│                      │        │ reply: fixed with unwrap_or(0)   │          │
+│                      │        ╰──────────────────────────────────╯          │
+├──────────────────────┴──────────────────────────────────────────────────────┤
+│ ↓↑ line  [/] file  c comment  enter stack  d delete  s fold  ? help  q quit │
+└─────────────────────────────────────────────────────────────────────────────┘
 ```
 
 The sidebar marks each file by how it changed: `+` added, `-` removed, `~`
@@ -143,18 +143,31 @@ structural one. Diffs are computed lazily, for the selected file only, and
 cached, so stepping back to a file does not re-run difftastic.
 
 The pane the next keystroke lands in is marked with a `▸` on its title and a
-bold border, never with colour: blue means *comment* here and nothing else.
+bold border, never with colour — the chrome's colours already mean something
+else: a blue border is a *comment*, a green background an *addition*, a red one
+a *removal*.
+
+**The code's own colours are your terminal's, not `rv`'s.** Syntax highlighting
+emits only the 16 indexed ANSI colours, which every scheme redefines for itself,
+so `rv` shows your Solarized or your Gruvbox rather than a palette it picked —
+which is why there is no theme setting and no need for one. The chrome and the
+code never collide because they use different channels: a diff's green and red
+are *backgrounds*, and a syntax colour is always a *foreground*.
 
 ### Keybindings
 
 **Browsing**
 
+The arrows are the bindings and `hjkl` are aliases for them, so the table below
+leads with the arrow and gives the vim key in parentheses. Either works
+everywhere.
+
 | Key | Action |
 | --- | --- |
-| `j` / `↓` | Next line, file or comment — whichever the focused pane is listing |
-| `k` / `↑` | The previous one |
-| `←` | Focus the pane to the left: the diff hands over to the sidebar, a comment stack to the diff |
-| `→` | Focus the diff from the sidebar |
+| `↓` (`j`) | Next row, file or comment — whichever the focused pane is listing |
+| `↑` (`k`) | The previous one |
+| `←` (`h`) | Focus the pane to the left: the diff hands over to the sidebar, a comment stack to the diff |
+| `→` (`l`) | Focus the diff from the sidebar |
 | `]` | Next file, from whichever pane the cursor is in |
 | `[` | Previous file, likewise |
 | `Tab` | Switch the sidebar between **Files** and **Comments** |
@@ -163,8 +176,17 @@ bold border, never with colour: blue means *comment* here and nothing else.
 | `c` | Comment on the highlighted line |
 | `d` | Delete a comment, after a `y`/`n` confirmation |
 | `s` | Fold a comment box away, or unfold it |
+| `<` | Narrow the sidebar |
+| `>` | Widen it |
+| `?` | The whole keymap, in a popup — `?`, `Esc` or `q` closes it again |
 | `q` | Quit |
 | `Ctrl+C` | Quit from anywhere, including out of a half-typed comment |
+
+In the diff, `↓` and `↑` move by **row** rather than by diff line, so a comment
+box is something the cursor walks through rather than over — see [Inline
+comments](#inline-comments). `<`, `>` and the fold state are preferences of the
+running session: nothing about how you arranged your screen is written to
+`.review/`.
 
 Which comment `d` and `s` act on follows the cursor: the box you are on inside a
 stack, the comment the browser is showing on the **Comments** tab, and otherwise
@@ -197,8 +219,11 @@ somewhere approximate, and says so in the status line.
 A saved comment is drawn **beneath the line it is anchored to**, in a blue
 bordered box indented to the diff's gutter, titled with the comment's id and its
 state. Several comments on one line stack under it, oldest first. The boxes are
-part of the diff pane: `j` and `k` step past them, and the pane scrolls to keep
-whichever one you are steering on screen.
+part of the diff pane: `↓` and `↑` move the cursor by **row**, so they walk
+*through* a box rather than over it, and the pane scrolls with them. A comment
+longer than the pane is tall is therefore read the way any other content is, by
+scrolling. While the cursor is inside a box, the line the box belongs to stays
+the selected one — so `c` there comments on the code the box is about.
 
 `Enter` steps the cursor *into* the stack under the selected line, where `j` and
 `k` move between the boxes rather than between the lines; `Esc` or `←` steps

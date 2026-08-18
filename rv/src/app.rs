@@ -47,6 +47,7 @@
 //! computed [`FileDiff`] is cached per file so that stepping back to a file
 //! does not re-run difftastic.
 
+use std::cell::Cell;
 use std::collections::HashMap;
 use std::collections::HashSet;
 
@@ -73,6 +74,8 @@ use rv_core::store::CommentState;
 use rv_core::store::Session;
 
 use crate::layout::Split;
+use crate::rows;
+use crate::rows::Plan;
 use crate::session;
 use crate::session::Review;
 use crate::ui;
@@ -97,9 +100,20 @@ const ID_CHARS: usize = 8;
 /// Every key that changes something is in here, `d` above all: a key that
 /// destroys written work with no way back must be discoverable from inside the
 /// app rather than only from the README. One bar row is the whole budget (see
-/// [`crate::ui`]), so each entry is a key and one word — 68 columns, which fits
+/// [`crate::ui`]), so each entry is a key and one word — 75 columns, which fits
 /// the 80-column terminal that is the narrowest anyone reviews in.
-const HELP: &str = "j/k line  [/] file  c comment  enter stack  d delete  s fold  q quit";
+///
+/// **`? help` is what makes the rest of the keymap reachable.** As shipped, the
+/// popup could only be found by guessing the key, which is no way to find a
+/// manual; the bar is the one surface every reviewer sees, so it is where the
+/// pointer to the manual belongs.
+///
+/// The arrows lead here as they do in [`BINDINGS`] — and `j`/`k` are left to
+/// the popup and README rather than spelled out, because the bar is the
+/// smallest surface the keymap is shown on and the arrows are the half a
+/// reviewer can find unaided. Nothing is lost: `?` is now one keystroke away
+/// and lists both.
+const HELP: &str = "↓↑ line  [/] file  c comment  enter stack  d delete  s fold  ? help  q quit";
 
 /// What `d` says from the sidebar's **Files** tab, where there is no comment
 /// under the cursor to delete.
@@ -267,19 +281,33 @@ pub struct Binding {
 ///
 /// The order is the order the popup reads in, grouped by [`Group`]. It is not
 /// a priority order: no key appears in two rows.
+///
+/// # The arrows are the binding; `hjkl` are aliases
+///
+/// Everywhere the keymap is presented — this table, which the `?` popup and
+/// README are both held to, and the status bar — the **arrow leads and the vim
+/// key follows in parentheses**: `↓ (j)`, `↑ (k)`, `← (h)`, `→ (l)`. rv is a
+/// tool a reviewer may open once a week, and the arrows are the keys someone
+/// can find without being told; the vim set is a convenience for the hands that
+/// already have it. Both are in `codes`, and the arrow is listed first there
+/// too, so the spelling and the dispatch cannot disagree about which is which.
+///
+/// `h` and `l` are aliases the reviewer did not have until now — `j` and `k`
+/// existed and their horizontal halves never did, which left the vim set
+/// half-present. Adding them removes nothing.
 pub const BINDINGS: &[Binding] = &[
     Binding {
-        keys: "j / ↓",
+        keys: "↓ (j)",
         group: Group::Move,
-        what: "next line",
-        codes: &[KeyCode::Char('j'), KeyCode::Down],
+        what: "next row",
+        codes: &[KeyCode::Down, KeyCode::Char('j')],
         command: Command::Forward,
     },
     Binding {
-        keys: "k / ↑",
+        keys: "↑ (k)",
         group: Group::Move,
-        what: "previous line",
-        codes: &[KeyCode::Char('k'), KeyCode::Up],
+        what: "previous row",
+        codes: &[KeyCode::Up, KeyCode::Char('k')],
         command: Command::Back,
     },
     Binding {
@@ -297,17 +325,17 @@ pub const BINDINGS: &[Binding] = &[
         command: Command::PreviousFile,
     },
     Binding {
-        keys: "←",
+        keys: "← (h)",
         group: Group::Focus,
         what: "the file list",
-        codes: &[KeyCode::Left],
+        codes: &[KeyCode::Left, KeyCode::Char('h')],
         command: Command::FocusLeft,
     },
     Binding {
-        keys: "→",
+        keys: "→ (l)",
         group: Group::Focus,
         what: "the diff",
-        codes: &[KeyCode::Right],
+        codes: &[KeyCode::Right, KeyCode::Char('l')],
         command: Command::FocusRight,
     },
     Binding {
@@ -431,15 +459,26 @@ pub struct App {
     diffs: Vec<Option<FileDiff>>,
     comments: Vec<Comment>,
     file_index: usize,
-    /// Where the highlight sits in each file's diff, parallel to
-    /// `review.files`.
+    /// Where the cursor sits in each file, as a **row of that file's plan** —
+    /// parallel to `review.files`.
+    ///
+    /// Rows, not diff lines, and that is the whole of spec §10's fix. A comment
+    /// box is several rows tall and sits between two diff rows, so a cursor that
+    /// moved by diff line *stepped over* a box rather than through it: with a
+    /// box taller than the pane, its middle rows were in no window at any cursor
+    /// position and the comment could not be read at all. A row cursor can walk
+    /// into a box, so every row is reachable by construction.
+    ///
+    /// **This is the state; [`App::line_index`] is derived from it.** The
+    /// reverse would leave two cursors to keep in step, and two cursors — the
+    /// window's anchor and the reviewer's — is exactly what caused the defect.
     ///
     /// One position per file rather than one shared between them, because
     /// `[`/`]` is how a reviewer compares two files and a shared cursor makes
     /// every round trip cost them their place: the first real review of `rv`
     /// spent a fifth of its keystrokes on `j` walking back down to where it had
     /// just been.
-    line_indices: Vec<usize>,
+    cursor_rows: Vec<usize>,
     focus: Focus,
     /// What the left column lists.
     sidebar_tab: SidebarTab,
@@ -486,6 +525,22 @@ pub struct App {
     /// once — [`crate::ui`] clamps it against the geometry it has, because the
     /// geometry is the one thing this module deliberately does not know.
     help_scroll: usize,
+    /// How many columns of body text a comment box was drawn with on the last
+    /// frame — reported by [`crate::ui::visible`], never decided here.
+    ///
+    /// A comment box is as many rows as its body wraps into, so how many rows a
+    /// plan has is a fact about the pane's width, and `cursor_rows` indexes that
+    /// plan. This module still decides nothing about the geometry: the renderer
+    /// is the only thing that knows how wide it drew a box, and this is it
+    /// saying so. Exactly the arrangement the mouse will need for `hit`, and the
+    /// mirror of [`App::help_scroll`], which this module holds unclamped because
+    /// only the renderer knows how tall the popup got.
+    ///
+    /// A [`Cell`] because [`crate::ui::draw`] takes `&App` — it must not be able
+    /// to *decide* anything — and reporting the width it drew at is a
+    /// measurement rather than a decision. Session-only, like every other
+    /// preference here: nothing about it reaches `.review/`.
+    body_width: Cell<usize>,
     /// Highlight spans per `(commit, path)`, parsed once per blob.
     ///
     /// Keyed by the blob rather than by the file, because a diff line's colours
@@ -542,7 +597,7 @@ impl App {
             .store
             .comments()
             .context("could not read the saved comments")?;
-        let line_indices = vec![0; review.files.len()];
+        let cursor_rows = vec![0; review.files.len()];
         // A comment that is no longer open starts folded: it is still exactly
         // where the reviewer left it, in file and line order, without competing
         // for the screen with the comments that are still asking for an answer.
@@ -559,7 +614,7 @@ impl App {
             diffs,
             comments,
             file_index: 0,
-            line_indices,
+            cursor_rows,
             focus: Focus::Diff,
             sidebar_tab: SidebarTab::Files,
             browser_index: 0,
@@ -568,6 +623,7 @@ impl App {
             split: Split::default(),
             help_open: false,
             help_scroll: 0,
+            body_width: Cell::new(ui::default_body_width()),
             highlights: HashMap::new(),
             mode: Mode::Browse,
             buffer: String::new(),
@@ -628,12 +684,64 @@ impl App {
         self.file_index
     }
 
-    /// Which line of the selected diff is highlighted.
+    /// Which **row** of the selected file's plan the cursor is on.
     ///
-    /// Zero when the review has no files, which is the only way this can be
-    /// asked about a file that does not exist.
+    /// The state the reviewer moves with `↓`/`↑`, and the row
+    /// [`crate::ui::visible`] anchors its window on. Zero when the review has no
+    /// files, which is the only way this can be asked about a file that does not
+    /// exist.
+    pub fn cursor_row(&self) -> usize {
+        self.cursor_rows.get(self.file_index).copied().unwrap_or(0)
+    }
+
+    /// The row plan for the selected file, at the width the pane last drew a
+    /// comment box's text in.
+    ///
+    /// Rebuilt rather than cached, which is what [`crate::rows`] is built for —
+    /// it borrows the diff and the comments instead of copying them. The one
+    /// place a plan is *made*: [`crate::ui::visible`] draws from this, so the
+    /// rows the keyboard walks and the rows the pane shows are the same list
+    /// rather than two that agree by inspection.
+    pub fn plan(&self) -> Plan<'_> {
+        let Some(diff) = self.selected_diff() else {
+            return Plan { rows: Vec::new() };
+        };
+        rows::plan(
+            diff,
+            &|index| self.comments_for_line(index),
+            &self.collapsed,
+            self.body_width.get(),
+        )
+    }
+
+    /// Records how many columns of body text the pane drew a comment box with.
+    ///
+    /// Called by [`crate::ui::visible`] and nowhere else; see the `body_width`
+    /// field for why the renderer is the one that says.
+    pub fn note_body_width(&self, width: usize) {
+        self.body_width.set(width);
+    }
+
+    /// How many rows the selected file's plan has.
+    fn row_count(&self) -> usize {
+        self.plan().rows.len()
+    }
+
+    /// Which line of the selected diff is highlighted: the line that **owns**
+    /// the row under the cursor — a diff row owns itself, and a box row is
+    /// owned by the line its box hangs from.
+    ///
+    /// **Derived, never stored.** `c`, `d`, `comments_for_line` and the anchor a
+    /// comment saves against all read this, so a stored copy would be a second
+    /// cursor to keep in step with the first — which is the shape of the defect
+    /// spec §10 describes. There is one cursor, and it is [`App::cursor_row`].
+    ///
+    /// Zero when the review has no files, or when the plan is somehow shorter
+    /// than the cursor: a clamp belongs on the way in ([`App::set_cursor_row`]),
+    /// and answering `None` here would push a `None` into every caller for a
+    /// case none of them can do anything about.
     pub fn line_index(&self) -> usize {
-        self.line_indices.get(self.file_index).copied().unwrap_or(0)
+        self.plan().line_of_row(self.cursor_row()).unwrap_or(0)
     }
 
     /// What the keyboard is doing right now.
@@ -840,7 +948,7 @@ impl App {
                 SidebarTab::Files => self.file_index + 1 < self.review.files.len(),
                 SidebarTab::Comments => self.browser_index + 1 < self.comments.len(),
             },
-            Focus::Diff => self.line_index() + 1 < self.line_count(),
+            Focus::Diff => self.cursor_row() + 1 < self.row_count(),
             Focus::Stack => self.comment_index + 1 < self.stack_len(),
         }
     }
@@ -852,7 +960,7 @@ impl App {
                 SidebarTab::Files => self.file_index > 0,
                 SidebarTab::Comments => self.browser_index > 0,
             },
-            Focus::Diff => self.line_index() > 0,
+            Focus::Diff => self.cursor_row() > 0,
             Focus::Stack => self.comment_index > 0,
         }
     }
@@ -1068,11 +1176,15 @@ impl App {
         self.load_selected()?;
         match self.line_of_anchor(&anchor) {
             Some(line) => {
-                self.set_line_index(line);
+                // Onto the line's own diff row rather than into its stack: a
+                // jump lands where `c` and `d` mean what the reviewer just
+                // clicked on, and `Enter` steps into the box from there.
+                let row = self.plan().row_of_line(line).unwrap_or(0);
+                self.set_cursor_row(row);
                 self.status = format!("jumped to {}:{}", anchor.file, anchor.line);
             }
             None => {
-                self.set_line_index(0);
+                self.set_cursor_row(0);
                 self.status = format!(
                     "{}: line {} is not in this diff any more",
                     anchor.file, anchor.line
@@ -1199,7 +1311,10 @@ impl App {
                     self.browser_index = self.browser_index.saturating_add(1).min(last);
                 }
             },
-            Focus::Diff => self.set_line_index(self.line_index().saturating_add(1)),
+            // By **row**, not by diff line: a comment box is rows, so this is
+            // what lets the cursor walk into one instead of over it. See
+            // `cursor_rows`.
+            Focus::Diff => self.set_cursor_row(self.cursor_row().saturating_add(1)),
             Focus::Stack => {
                 let last = self.stack_len().saturating_sub(1);
                 self.comment_index = self.comment_index.saturating_add(1).min(last);
@@ -1219,25 +1334,48 @@ impl App {
                     self.browser_index = self.browser_index.saturating_sub(1);
                 }
             },
-            Focus::Diff => self.set_line_index(self.line_index().saturating_sub(1)),
+            Focus::Diff => self.set_cursor_row(self.cursor_row().saturating_sub(1)),
             Focus::Stack => self.comment_index = self.comment_index.saturating_sub(1),
         }
         Ok(())
     }
 
-    /// Moves the highlight to `index` of the selected file, clamped to that
-    /// file's last diff line.
+    /// Moves the cursor to row `row` of the selected file's plan, clamped to
+    /// that plan's last row.
     ///
-    /// The one place a line position is written, so the clamp cannot be
-    /// forgotten on some path: a diff with no lines pins it at 0, and a review
-    /// with no files has nowhere to put it at all.
-    fn set_line_index(&mut self, index: usize) {
-        let clamped = index.min(self.line_count().saturating_sub(1));
-        if let Some(position) = self.line_indices.get_mut(self.file_index) {
+    /// The one place the cursor is written, so the clamp cannot be forgotten on
+    /// some path: an empty plan pins it at 0, and a review with no files has
+    /// nowhere to put it at all.
+    fn set_cursor_row(&mut self, row: usize) {
+        let clamped = row.min(self.row_count().saturating_sub(1));
+        if let Some(position) = self.cursor_rows.get_mut(self.file_index) {
             *position = clamped;
         }
         // The stack belongs to the line, so it goes back to the top with it.
         self.reset_stack();
+    }
+
+    /// Puts the cursor back on the row that owns `line`, after something
+    /// rebuilt the plan under it — a fold, a save, a delete.
+    ///
+    /// The *line* is what survives such a change; a row index is an address in
+    /// a list that just changed length. Folding the box the cursor was inside
+    /// therefore lands it on the line the box hangs from, which is the row still
+    /// on screen where the box used to be.
+    ///
+    /// Deliberately does **not** reset the stack: nothing here is the reviewer
+    /// moving the selection, and a delete from inside a stack is a stack the
+    /// reviewer is still working through — [`App::sync_stack`] is what keeps the
+    /// cursor inside it.
+    fn resettle_cursor(&mut self, line: usize) {
+        let plan = self.plan();
+        let row = plan
+            .row_of_line(line)
+            .unwrap_or(0)
+            .min(plan.rows.len().saturating_sub(1));
+        if let Some(position) = self.cursor_rows.get_mut(self.file_index) {
+            *position = row;
+        }
     }
 
     fn on_key_comment(&mut self, key: KeyCode) -> Result<Action> {
@@ -1297,6 +1435,10 @@ impl App {
             return;
         }
 
+        // Read before the fold, because folding is one of the things that
+        // rebuilds the plan the cursor indexes: a box the cursor was inside
+        // becomes one row, and every row after it moves up.
+        let line = self.line_index();
         let folded = ids.iter().all(|id| self.collapsed.contains(id));
         for id in ids {
             if folded {
@@ -1305,6 +1447,7 @@ impl App {
                 self.collapsed.insert(id);
             }
         }
+        self.resettle_cursor(line);
     }
 
     /// Which comments `s` would fold, as ids. Empty where it would fold
@@ -1424,6 +1567,10 @@ impl App {
         // review: "1 of 3" is what a reviewer needs in order to know how much
         // of what they were looking at is still there.
         let before = self.stack_len();
+        // Read before it too: a delete takes a box's rows out of the plan the
+        // cursor indexes, so the row survives the write only as the line it
+        // belonged to.
+        let line = self.line_index();
         let removed = self
             .review
             .store
@@ -1444,6 +1591,7 @@ impl App {
             // as a deletion that did not happen.
             format!("nothing to delete at {label}, it was already gone")
         };
+        self.resettle_cursor(line);
         self.sync_stack();
         Ok(Action::Continue)
     }
@@ -1495,7 +1643,7 @@ impl App {
         }
         self.file_index = index;
         self.load_selected()?;
-        self.set_line_index(self.line_index());
+        self.set_cursor_row(self.cursor_row());
         Ok(())
     }
 
@@ -1610,10 +1758,6 @@ impl App {
         Ok(())
     }
 
-    fn line_count(&self) -> usize {
-        self.selected_diff().map_or(0, |diff| diff.lines.len())
-    }
-
     fn selected_line(&self) -> Option<&DiffLine> {
         self.selected_diff()
             .and_then(|diff| diff.lines.get(self.line_index()))
@@ -1649,11 +1793,16 @@ impl App {
             }
         };
 
+        // A new box adds rows to the plan the cursor indexes, so the cursor
+        // comes back to the line it commented on rather than to a row number
+        // that now means something else.
+        let line = self.line_index();
         self.review
             .store
             .append_comment(&comment)
             .context("could not save the comment")?;
         self.reload_comments()?;
+        self.resettle_cursor(line);
         session::write_markdown(&self.review)?;
 
         self.status = format!(

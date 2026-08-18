@@ -44,23 +44,43 @@
 //!
 //! # Colour
 //!
-//! There are two layers here and they are kept apart deliberately.
+//! There are two layers here and they are kept apart deliberately — **by
+//! channel, not by hue**.
 //!
-//! **The chrome** — borders, comment boxes, the status line — has three colours
-//! with one meaning each: blue is a *comment*, green an *addition*, red a
-//! *removal*. Focus is therefore shown without colour at all — a `▸` on the
-//! focused pane's title and a bold border — so that the two never compete for
-//! the same cue. A comment that is no longer open drops to grey and dim, which
-//! is the one deliberate exception: it is still a comment, but not one asking
-//! for an answer.
+//! **The chrome** — borders, comment boxes, the status line, the gutter — has
+//! three colours with one meaning each: blue is a *comment*, green an
+//! *addition*, red a *removal*. Focus is therefore shown without colour at all
+//! — a `▸` on the focused pane's title and a bold border — so that the two
+//! never compete for the same cue. A comment that is no longer open drops to
+//! grey and dim, which is the one deliberate exception: it is still a comment,
+//! but not one asking for an answer.
 //!
 //! **The code** inside the diff pane carries its own syntax colours, and they
-//! are the file's rather than the reviewer's: a keyword is a keyword whatever
-//! this tool thinks green means. To keep the two layers from arguing, the
-//! syntax palette in [`capture_colour`] deliberately excludes all three of the
-//! chrome's colours — green and red are the diff's own tint, and blue is drawn
-//! in the same pane by every comment box — and uses magenta, cyan, yellow and
-//! grey instead.
+//! are the *terminal's* rather than rv's: [`capture_colour`] emits only the 16
+//! indexed ANSI colours, which every scheme redefines for itself, so a keyword
+//! is whatever the reviewer's own theme calls magenta.
+//!
+//! An earlier version of this module kept the two apart by hue instead, banning
+//! green, red and blue from the syntax palette because the chrome spends all
+//! three in this very pane. That is the wrong axis, and it cost the mapping its
+//! semantics: it pushed comments onto index 7 — the terminal's *white* — which
+//! is the loudest thing on the screen on a dark scheme and invisible on a light
+//! one, and is the defect a user reported. The colours are split by channel
+//! instead, which is where they actually cannot collide:
+//!
+//! | Colour | Chrome owns | Code owns |
+//! |---|---|---|
+//! | green | the **background** wash on an added line, and the `+` in the gutter | a string literal, as a **foreground** on code text |
+//! | red | the **background** wash on a removed line, and the `-` in the gutter | nothing |
+//! | blue | a comment box's **border glyphs**, drawn on the box's own rows | a function name, as a foreground on code text |
+//! | index 8 | nothing | a comment, and nothing else |
+//!
+//! A wash is a background and a syntax colour is a foreground, so the two never
+//! contend for the same channel; a box's border is drawn on rows that hold no
+//! code at all, and the gutter's sigil sits in the seven columns before a line's
+//! text starts. So [`Capture::Function`] moved to blue and [`Capture::String`]
+//! to green, which is what spec §6's table asks for, and neither can be read as
+//! chrome: no cell carries both.
 //!
 //! Added and removed lines carry a **dim wash of the palette's own green and
 //! red** ([`crate::gradient::ADDED`] and [`crate::gradient::REMOVED`], so the
@@ -77,6 +97,8 @@
 //! conversation the box holds, and a key a reviewer cannot find is a key they
 //! do not have — but none of them competes with what is still waiting on
 //! somebody.
+
+use std::ops::Range;
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -113,11 +135,11 @@ use crate::app::SidebarTab;
 use crate::app::anchored_side;
 use crate::gradient;
 use crate::layout::Chrome;
+use crate::layout::Split;
 use crate::layout::layout;
 use crate::rows::BodyKind;
 use crate::rows::Plan;
 use crate::rows::Row;
-use crate::rows::plan;
 use crate::rows::window;
 
 /// Rows the comment box needs: its two borders and the line being typed.
@@ -359,10 +381,41 @@ fn draw_diff(frame: &mut Frame, app: &App, area: Rect) {
 
     let highlighting = Highlighting::of(app);
     let block = pane(title(diff, highlighting.language()), focused);
-    let height = usize::from(area.height.saturating_sub(BORDER_ROWS));
-    let width = usize::from(area.width.saturating_sub(BORDER_ROWS));
-    let text = body(app, highlighting, diff, width, height);
+    let text = body(app, highlighting, diff, area);
     frame.render_widget(Paragraph::new(text).block(block), area);
+}
+
+/// The diff pane's row plan and the slice of it that is on screen, for a pane
+/// drawn in `pane`.
+///
+/// `pane` is the whole rectangle, borders included — the very `Rect` [`layout`]
+/// hands [`draw_diff`] — so no caller repeats the border arithmetic and none
+/// can ask about a pane that was never drawn.
+///
+/// Public because this is the one place the answer is decided, and because the
+/// defect it exists to prevent is precisely a window and a cursor disagreeing
+/// about which rows exist: a caller (or a test) that computed its own would be
+/// asserting about a third thing neither the pane nor the keyboard uses.
+///
+/// It also **reports the width the boxes were drawn at** back to `app` — see
+/// [`App::note_body_width`]. The renderer is the only thing that knows how wide
+/// a comment box really is, and the row cursor is an index into rows whose
+/// count depends on it.
+#[must_use]
+pub fn visible(app: &App, pane: Rect) -> (Plan<'_>, Range<usize>) {
+    let width = usize::from(pane.width.saturating_sub(BORDER_ROWS));
+    let height = usize::from(pane.height.saturating_sub(BORDER_ROWS));
+    app.note_body_width(width.saturating_sub(GUTTER + BOX_PADDING));
+
+    let plan = app.plan();
+    // The suppressed note takes a row from the window, and only where there is
+    // one to take — see [`body`].
+    let note = app
+        .selected_diff()
+        .is_some_and(|diff| diff.suppressed && height >= 2);
+    let height = height.saturating_sub(usize::from(note));
+    let rows = window(plan.rows.len(), anchor_row(app, &plan), height);
+    (plan, rows)
 }
 
 /// The two blobs' highlight spans for the file being drawn, one per side,
@@ -491,8 +544,7 @@ fn body<'a>(
     app: &'a App,
     highlighting: Highlighting<'a>,
     diff: &'a FileDiff,
-    width: usize,
-    height: usize,
+    pane: Rect,
 ) -> Text<'static> {
     if diff.source == DiffSource::Binary {
         return Text::from("binary file, not shown by line");
@@ -505,21 +557,16 @@ fn body<'a>(
         });
     }
 
+    let width = usize::from(pane.width.saturating_sub(BORDER_ROWS));
+    let height = usize::from(pane.height.saturating_sub(BORDER_ROWS));
     let note = diff.suppressed && height >= 2;
-    let height = height.saturating_sub(usize::from(note));
+    let (plan, rows) = visible(app, pane);
 
-    // What a wrapped body row may occupy: the pane, less the gutter the box
-    // hangs off, less the box's own two borders and their padding.
-    let text_width = width.saturating_sub(GUTTER + BOX_PADDING);
-    let plan = plan(
-        diff,
-        &|index| app.comments_for_line(index),
-        app.collapsed(),
-        text_width,
-    );
-    let visible = window(plan.rows.len(), anchor_row(app, &plan), height);
-
-    let mut lines: Vec<Line> = Vec::with_capacity(visible.len() + usize::from(note));
+    // Asked once and handed down the row loop rather than per row: it is
+    // derived from the row cursor over this very plan, and a forty-row pane
+    // would otherwise rebuild the plan forty times to paint one frame.
+    let selected = app.line_index();
+    let mut lines: Vec<Line> = Vec::with_capacity(rows.len() + usize::from(note));
     if note {
         lines.push(Line::styled(
             SUPPRESSED_NOTE,
@@ -527,38 +574,74 @@ fn body<'a>(
         ));
     }
     lines.extend(
-        plan.rows[visible]
+        plan.rows[rows]
             .iter()
-            .map(|row| draw_row(app, highlighting, row, width)),
+            .map(|row| draw_row(app, highlighting, row, selected, width)),
     );
     Text::from(lines)
 }
 
 /// The row the window is centred on: the selected comment's box while the
-/// cursor is inside a stack, and the selected diff line otherwise.
+/// cursor is inside a stack, and the **row cursor** otherwise.
 ///
 /// A cursor that could scroll off the pane it is steering is a cursor the
 /// reviewer cannot use, and inside a stack the thing being steered is the box
 /// rather than the line it hangs off.
+///
+/// Outside a stack it is [`App::cursor_row`] and nothing derived from it. That
+/// is the fix for the defect in spec §10: this used to anchor on
+/// `row_of_line(line_index())`, so the anchor could only ever rest on a *diff*
+/// row, and the rows of a box taller than the pane were in no window at any
+/// cursor position. The cursor and the anchor are now one number.
+///
+/// Clamped against this plan rather than trusted, because the plan is rebuilt
+/// per frame at whatever width the pane has and the cursor was last clamped
+/// against the previous one.
 fn anchor_row(app: &App, plan: &Plan) -> usize {
-    let line = app.line_index();
     if app.focus() == Focus::Stack
-        && let Some(row) = plan.row_of_comment(line, app.comment_index())
+        && let Some(row) = plan.row_of_comment(app.line_index(), app.comment_index())
     {
         return row;
     }
-    plan.row_of_line(line).unwrap_or(0)
+    app.cursor_row().min(plan.rows.len().saturating_sub(1))
+}
+
+/// The width a comment box's text is wrapped at before any frame has been
+/// drawn.
+///
+/// The renderer is the only thing that knows how wide a box really is, and it
+/// reports that after every frame — see [`visible`]. This is what [`App`]
+/// assumes until the first one: an 80-column terminal at the default split,
+/// less the pane's borders, the gutter a box hangs off and the box's own frame.
+/// The narrowest terminal anyone reviews in, so the first frame can only widen
+/// a box rather than narrow it.
+#[must_use]
+pub fn default_body_width() -> usize {
+    let rects = layout(
+        Rect::new(0, 0, 80, 24),
+        Split::default(),
+        Chrome {
+            bar_rows: 1,
+            help_open: false,
+            toast: false,
+        },
+    );
+    usize::from(rects.diff.width.saturating_sub(BORDER_ROWS)).saturating_sub(GUTTER + BOX_PADDING)
 }
 
 /// One row of the plan, as one styled line of the pane.
+///
+/// `selected` is the diff line the row cursor is on — the line that owns the
+/// row under the cursor — passed down rather than asked per row; see [`body`].
 fn draw_row(
     app: &App,
     highlighting: Highlighting<'_>,
     row: &Row<'_>,
+    selected: usize,
     width: usize,
 ) -> Line<'static> {
     match row {
-        Row::Diff { index, line } => diff_row(app, highlighting, *index, line, width),
+        Row::Diff { index, line } => diff_row(highlighting, *index, line, selected, width),
         Row::BoxTop { comment, .. } => {
             let style = box_style(app, comment);
             let heading = format!("─ {} ", label(comment));
@@ -616,13 +699,13 @@ fn draw_row(
 /// The wash goes on every cell of the row, not only the ones with text on them,
 /// so an added line reads as a band rather than as a ragged edge.
 fn diff_row(
-    app: &App,
     highlighting: Highlighting<'_>,
     index: usize,
     line: &DiffLine,
+    selected_line: usize,
     width: usize,
 ) -> Line<'static> {
-    let selected = index == app.line_index();
+    let selected = index == selected_line;
     // The gutter keeps the kind's hue and takes the bright version of it on the
     // selected row: the same green on the brighter green band is a `+` a
     // reviewer has to look for, and the sigil is the one part of the row that
@@ -727,29 +810,54 @@ pub fn line_background(kind: LineKind, selected: bool) -> Option<Color> {
 
 /// The foreground one kind of source token is painted with.
 ///
-/// Public so a test can name a colour without copying this table. The palette
-/// deliberately contains **no green, no red and no blue**: those three are the
-/// chrome's, they all appear in this very pane, and a keyword that looked like
-/// an addition would be worse than a keyword with no colour at all. What is
-/// left — magenta, cyan, yellow and grey — is enough to tell the kinds apart.
+/// Public so a test can name a colour without copying this table.
 ///
-/// [`Capture::Variable`] and [`Capture::Other`] keep the terminal's own
-/// foreground: most of a line is one or the other, and colouring the majority
-/// of the text is how a highlighter stops being a highlighter.
+/// Every value here is one of the **16 indexed ANSI colours**, which are a
+/// pass-through to the reviewer's own scheme rather than a palette rv chose:
+/// emit index 4 and the terminal substitutes whatever *its* theme calls blue,
+/// so a Solarized user gets Solarized and a Gruvbox user gets Gruvbox, in rv as
+/// in every other tool they run. An `Rgb` value would do the opposite — dictate
+/// an exact colour and ignore the scheme — which is what makes a syntax theme
+/// something a user then has to configure. rv should never need a theme option,
+/// because rv should never be the thing deciding. See the module docs for which
+/// layer owns which colour, and `rv/tests/app.rs`'s
+/// `code_is_painted_only_in_indexed_colours` for the boundary asserted in cells.
+///
+/// The mapping is semantic rather than chromatic (spec §6):
+///
+/// | Capture | Index | |
+/// |---|---|---|
+/// | Comment | 8, bright black | the muted tone every scheme defines against its own background |
+/// | Keyword | 5, magenta | |
+/// | Function | 4, blue | |
+/// | Type | 6, cyan | |
+/// | String | 2, green | |
+/// | Number, Constant | 3, yellow | |
+/// | Punctuation, Variable, Other | default | unstyled, so they inherit the terminal's own foreground |
+///
+/// [`Capture::Comment`] is the one that had to change: it was index 7, the
+/// terminal's *white*, which is as loud as the code it annotates on a dark
+/// scheme and near-invisible on a light one. Index 8 is the tone every scheme
+/// defines for exactly this, and it now means one thing in this pane and one
+/// only, because [`Capture::Punctuation`] gave it up.
+///
+/// [`Capture::Punctuation`], [`Capture::Variable`] and [`Capture::Other`] keep
+/// the terminal's own foreground: most of a line is one of the three, and
+/// colouring the majority of the text is how a highlighter stops being a
+/// highlighter.
 #[must_use]
 pub fn capture_colour(capture: Capture) -> Color {
     match capture {
         Capture::Keyword => Color::Magenta,
-        Capture::Function => Color::LightCyan,
+        Capture::Function => Color::Blue,
         Capture::Type => Color::Cyan,
-        Capture::String => Color::Yellow,
+        Capture::String => Color::Green,
         // tree-sitter-rust reports integer and float literals as
         // `constant.builtin`, so Rust numbers arrive as `Constant`; the two
         // share a colour because they are the same thing to a reader.
-        Capture::Number | Capture::Constant => Color::LightMagenta,
-        Capture::Comment => Color::Gray,
-        Capture::Punctuation => Color::DarkGray,
-        Capture::Variable | Capture::Other => Color::Reset,
+        Capture::Number | Capture::Constant => Color::Yellow,
+        Capture::Comment => Color::DarkGray,
+        Capture::Punctuation | Capture::Variable | Capture::Other => Color::Reset,
     }
 }
 

@@ -9,11 +9,16 @@
 //!
 //! Three rules shape the rest of this module.
 //!
-//! **Detection is by extension, and only by extension.** Nothing sniffs the
-//! content. A wrong guess paints a file as a language it is not, which reads
-//! worse than no colour at all, so a file whose extension names no grammar
-//! comes back with [`language`](Highlights::language) `None` and no spans and
-//! is rendered plain.
+//! **Detection is by name, and only by name.** Nothing sniffs the content. A
+//! wrong guess paints a file as a language it is not, which reads worse than
+//! no colour at all, so a file whose name selects no grammar comes back with
+//! [`language`](Highlights::language) `None` and no spans and is rendered
+//! plain. Two tables do the selecting: an extension table, and a short
+//! filename table for names whose extension does not name their language —
+//! `Cargo.lock` is TOML, and it is the first file in a Rust repository
+//! alphabetically, so an rv that cannot colour it looks like an rv whose
+//! highlighting does not work. A name earns a filename row only if it is
+//! unambiguous; guessing there is content sniffing by another spelling.
 //!
 //! **Nothing here fails.** A blob that is not UTF-8, a half-typed function
 //! that does not parse, a path that is not a path — each produces an answer.
@@ -110,9 +115,9 @@ pub struct Highlights {
 }
 
 impl Highlights {
-    /// Highlights `source` using whichever grammar `path`'s extension selects.
+    /// Highlights `source` using whichever grammar `path`'s name selects.
     ///
-    /// Never fails: a path with no known extension, a grammar that cannot be
+    /// Never fails: a path with no known name, a grammar that cannot be
     /// built, bytes that are not UTF-8 and source that does not parse all
     /// produce a value rather than an error. The first two report no language
     /// (so the caller can say *why* a file is plain); the last two report the
@@ -132,7 +137,8 @@ impl Highlights {
         let language = Some(grammar.name);
         let lines = LineIndex::of(source);
         let mut highlighter = Highlighter::new();
-        let Ok(events) = highlighter.highlight(config, source, None, |_| None) else {
+        let injection = grammar.injection;
+        let Ok(events) = highlighter.highlight(config, source, None, injection) else {
             return Highlights {
                 spans: Vec::new(),
                 language,
@@ -362,23 +368,151 @@ fn floor_byte_boundary(source: &[u8], mut at: usize, floor: usize) -> usize {
 struct Grammar {
     /// What [`Highlights::language`] reports.
     name: &'static str,
-    /// The extensions that select it, lowercase and without the dot.
+    /// The extensions that select it, without the dot. Matched
+    /// case-insensitively, so these are written lowercase.
     extensions: &'static [&'static str],
+    /// Whole file names that select it, for files whose extension does not
+    /// name their language (`Cargo.lock`) or which have none (`.bashrc`).
+    /// Matched case-insensitively against the path's last segment.
+    filenames: &'static [&'static str],
     /// The compiled highlight configuration, built once per process.
     ///
     /// A function pointer rather than a name matched in a `match`, so a
     /// grammar cannot be listed here and then silently produce no
     /// highlighting because nothing dispatched to it.
     configuration: fn() -> Option<&'static HighlightConfiguration>,
+    /// Resolves a language name this grammar's *injections* query asks for.
+    ///
+    /// Almost every grammar answers [`no_injection`]: rv highlights a file as
+    /// one language, and resolving, say, the `rust` a markdown fence declares
+    /// would be reading the content to decide what it is — the thing the
+    /// module's first rule forbids. Markdown is the exception, and it is not
+    /// really an exception: its inline content is parsed by a *second parser
+    /// of the same language*, not by a language guessed from the text.
+    injection: fn(&str) -> Option<&'static HighlightConfiguration>,
 }
 
-/// Every grammar rv ships. Rust only, for now: it is what this repository is
-/// written in and so what a reviewer sees first.
-const GRAMMARS: &[Grammar] = &[Grammar {
-    name: "rust",
-    extensions: &["rs"],
-    configuration: rust_configuration,
-}];
+/// Every grammar rv ships, in the order a reviewer of a Rust repository meets
+/// them. The lists are what a user reads as "which files get colour", and
+/// `tests/highlight.rs` states every entry again as a case, so a row added
+/// here without a test is a failing test rather than a silent claim.
+///
+/// What is *not* here matters too. `zsh` is not an alias for `bash`: bash is a
+/// superset of POSIX `sh`, so the bash grammar over a `.sh` file is safe,
+/// while zsh has syntax bash does not and would parse as errors. `.mdx` is not
+/// markdown, `Gemfile.lock` and `yarn.lock` are not TOML, and `.eslintrc` is
+/// as often YAML as JSON — each of those renders plain instead.
+const GRAMMARS: &[Grammar] = &[
+    Grammar {
+        name: "rust",
+        extensions: &["rs"],
+        filenames: &[],
+        configuration: rust_configuration,
+        injection: no_injection,
+    },
+    Grammar {
+        name: "toml",
+        extensions: &["toml"],
+        // `Cargo.lock` is TOML under a `.lock` extension, and it sorts first
+        // in a Rust repository — the single most valuable row in this table.
+        filenames: &["Cargo.lock"],
+        configuration: toml_configuration,
+        injection: no_injection,
+    },
+    Grammar {
+        name: "markdown",
+        extensions: &["md", "markdown"],
+        filenames: &[],
+        configuration: markdown_configuration,
+        injection: markdown_injection,
+    },
+    Grammar {
+        name: "yaml",
+        extensions: &["yaml", "yml"],
+        filenames: &[],
+        configuration: yaml_configuration,
+        injection: no_injection,
+    },
+    Grammar {
+        name: "json",
+        // The grammar has a `comment` rule, so `.jsonc` parses as well as
+        // `.json` does.
+        extensions: &["json", "jsonc"],
+        filenames: &[],
+        configuration: json_configuration,
+        injection: no_injection,
+    },
+    Grammar {
+        name: "python",
+        extensions: &["py", "pyi"],
+        filenames: &[],
+        configuration: python_configuration,
+        injection: no_injection,
+    },
+    Grammar {
+        name: "go",
+        extensions: &["go"],
+        filenames: &[],
+        configuration: go_configuration,
+        injection: no_injection,
+    },
+    Grammar {
+        name: "typescript",
+        extensions: &["ts", "mts", "cts"],
+        filenames: &[],
+        configuration: typescript_configuration,
+        injection: no_injection,
+    },
+    Grammar {
+        name: "tsx",
+        // A separate parser, not a separate query: JSX does not parse as
+        // TypeScript, which is why the crate ships two languages.
+        extensions: &["tsx"],
+        filenames: &[],
+        configuration: tsx_configuration,
+        injection: no_injection,
+    },
+    Grammar {
+        name: "javascript",
+        // The JavaScript grammar parses JSX itself, so `.jsx` needs no
+        // second parser the way `.tsx` does.
+        extensions: &["js", "jsx", "mjs", "cjs"],
+        filenames: &[],
+        configuration: javascript_configuration,
+        injection: no_injection,
+    },
+    Grammar {
+        name: "bash",
+        extensions: &["sh", "bash"],
+        filenames: &[".bashrc", ".bash_profile", ".bash_aliases", ".bash_logout"],
+        configuration: bash_configuration,
+        injection: no_injection,
+    },
+];
+
+/// Applies rv's capture vocabulary to a freshly built configuration, and
+/// turns a query that did not compile into `None`.
+///
+/// A query fails to compile when a grammar crate and the linked tree-sitter
+/// disagree about a node name — a version skew. That has to show up as a file
+/// rendered plain, never as a crash, which is why every configuration below
+/// funnels through here.
+///
+/// Generic over the error type only so that this module can name it without
+/// naming `tree_sitter::QueryError`, and so keep `tree-sitter` out of
+/// `rv-core`'s direct dependencies.
+fn configured<E>(built: Result<HighlightConfiguration, E>) -> Option<HighlightConfiguration> {
+    let mut config = built.ok()?;
+    let names: Vec<&str> = CAPTURES.iter().map(|(name, _)| *name).collect();
+    config.configure(&names);
+    Some(config)
+}
+
+/// The answer for every grammar that does not highlight a second language
+/// inside itself, which is all of them but markdown.
+fn no_injection(_: &str) -> Option<&'static HighlightConfiguration> {
+    None
+}
 
 /// The Rust grammar's configuration, or `None` if its query does not compile
 /// against the linked tree-sitter — a version skew, which shows up as a file
@@ -389,24 +523,266 @@ fn rust_configuration() -> Option<&'static HighlightConfiguration> {
         .get_or_init(|| {
             // No locals query: tree-sitter-rust ships none, and rv does not
             // need scope-aware highlighting to colour a diff.
-            let mut config = HighlightConfiguration::new(
+            configured(HighlightConfiguration::new(
                 tree_sitter_rust::LANGUAGE.into(),
                 "rust",
                 tree_sitter_rust::HIGHLIGHTS_QUERY,
                 tree_sitter_rust::INJECTIONS_QUERY,
                 "",
-            )
-            .ok()?;
-            let names: Vec<&str> = CAPTURES.iter().map(|(name, _)| *name).collect();
-            config.configure(&names);
-            Some(config)
+            ))
         })
         .as_ref()
 }
 
-/// The grammar `path`'s extension selects, or `None` for a path with no
-/// extension or an extension no grammar claims.
+fn toml_configuration() -> Option<&'static HighlightConfiguration> {
+    static CONFIG: OnceLock<Option<HighlightConfiguration>> = OnceLock::new();
+    CONFIG
+        .get_or_init(|| {
+            configured(HighlightConfiguration::new(
+                tree_sitter_toml_ng::LANGUAGE.into(),
+                "toml",
+                tree_sitter_toml_ng::HIGHLIGHTS_QUERY,
+                "",
+                "",
+            ))
+        })
+        .as_ref()
+}
+
+fn yaml_configuration() -> Option<&'static HighlightConfiguration> {
+    static CONFIG: OnceLock<Option<HighlightConfiguration>> = OnceLock::new();
+    CONFIG
+        .get_or_init(|| {
+            configured(HighlightConfiguration::new(
+                tree_sitter_yaml::LANGUAGE.into(),
+                "yaml",
+                tree_sitter_yaml::HIGHLIGHTS_QUERY,
+                "",
+                "",
+            ))
+        })
+        .as_ref()
+}
+
+fn json_configuration() -> Option<&'static HighlightConfiguration> {
+    static CONFIG: OnceLock<Option<HighlightConfiguration>> = OnceLock::new();
+    CONFIG
+        .get_or_init(|| {
+            configured(HighlightConfiguration::new(
+                tree_sitter_json::LANGUAGE.into(),
+                "json",
+                tree_sitter_json::HIGHLIGHTS_QUERY,
+                "",
+                "",
+            ))
+        })
+        .as_ref()
+}
+
+fn python_configuration() -> Option<&'static HighlightConfiguration> {
+    static CONFIG: OnceLock<Option<HighlightConfiguration>> = OnceLock::new();
+    CONFIG
+        .get_or_init(|| {
+            configured(HighlightConfiguration::new(
+                tree_sitter_python::LANGUAGE.into(),
+                "python",
+                tree_sitter_python::HIGHLIGHTS_QUERY,
+                "",
+                "",
+            ))
+        })
+        .as_ref()
+}
+
+fn go_configuration() -> Option<&'static HighlightConfiguration> {
+    static CONFIG: OnceLock<Option<HighlightConfiguration>> = OnceLock::new();
+    CONFIG
+        .get_or_init(|| {
+            configured(HighlightConfiguration::new(
+                tree_sitter_go::LANGUAGE.into(),
+                "go",
+                tree_sitter_go::HIGHLIGHTS_QUERY,
+                "",
+                "",
+            ))
+        })
+        .as_ref()
+}
+
+/// `tree-sitter-bash` spells its constant `HIGHLIGHT_QUERY`, singular, where
+/// every other grammar here spells it `HIGHLIGHTS_QUERY`. Worth a line,
+/// because reaching for the wrong name is a compile error today and would be
+/// an uncoloured file if the crate ever added the other spelling.
+fn bash_configuration() -> Option<&'static HighlightConfiguration> {
+    static CONFIG: OnceLock<Option<HighlightConfiguration>> = OnceLock::new();
+    CONFIG
+        .get_or_init(|| {
+            configured(HighlightConfiguration::new(
+                tree_sitter_bash::LANGUAGE.into(),
+                "bash",
+                tree_sitter_bash::HIGHLIGHT_QUERY,
+                "",
+                "",
+            ))
+        })
+        .as_ref()
+}
+
+fn javascript_configuration() -> Option<&'static HighlightConfiguration> {
+    static CONFIG: OnceLock<Option<HighlightConfiguration>> = OnceLock::new();
+    CONFIG
+        .get_or_init(|| {
+            configured(HighlightConfiguration::new(
+                tree_sitter_javascript::LANGUAGE.into(),
+                "javascript",
+                tree_sitter_javascript::HIGHLIGHT_QUERY,
+                tree_sitter_javascript::INJECTIONS_QUERY,
+                tree_sitter_javascript::LOCALS_QUERY,
+            ))
+        })
+        .as_ref()
+}
+
+/// The highlight query both TypeScript parsers use: JavaScript's, then
+/// TypeScript's own.
+///
+/// `tree-sitter-typescript`'s `HIGHLIGHTS_QUERY` is thirty-five lines — the
+/// TypeScript-specific half only. On its own it captures type annotations and
+/// `interface`, and *nothing else*: no comments, no strings, no function
+/// names. The TypeScript grammar is a superset of JavaScript's, so
+/// JavaScript's query is valid against it and supplies the other half.
+///
+/// The order is not load-bearing, which is worth stating because it looks as
+/// though it should be. The two halves overlap on exactly one thing — a
+/// capitalised identifier in expression position, `Foo` in `Foo.bar()`, in
+/// `new Foo()`, in `extends Foo` — and they disagree only about whether to
+/// call it `type` or `constructor`. [`CAPTURES`] maps both to
+/// [`Capture::Type`], so the two orders produce identical spans in every
+/// construct that has been put through them. Written this way round because
+/// it is the order the query halves are named in, not because it wins.
+fn typescript_query() -> &'static str {
+    static QUERY: OnceLock<String> = OnceLock::new();
+    QUERY.get_or_init(|| {
+        format!(
+            "{}\n{}",
+            tree_sitter_javascript::HIGHLIGHT_QUERY,
+            tree_sitter_typescript::HIGHLIGHTS_QUERY
+        )
+    })
+}
+
+fn typescript_configuration() -> Option<&'static HighlightConfiguration> {
+    static CONFIG: OnceLock<Option<HighlightConfiguration>> = OnceLock::new();
+    CONFIG
+        .get_or_init(|| {
+            configured(HighlightConfiguration::new(
+                tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
+                "typescript",
+                typescript_query(),
+                "",
+                "",
+            ))
+        })
+        .as_ref()
+}
+
+fn tsx_configuration() -> Option<&'static HighlightConfiguration> {
+    static CONFIG: OnceLock<Option<HighlightConfiguration>> = OnceLock::new();
+    CONFIG
+        .get_or_init(|| {
+            configured(HighlightConfiguration::new(
+                tree_sitter_typescript::LANGUAGE_TSX.into(),
+                "tsx",
+                typescript_query(),
+                "",
+                "",
+            ))
+        })
+        .as_ref()
+}
+
+/// Markdown's *block* grammar: headings, fences, list markers, block quotes.
+///
+/// The injections query is rv's own rather than the crate's, and it is one
+/// pattern. Two reasons, both load-bearing.
+///
+/// The first is a bug in the shipped query. `tree-sitter-md` asks for the
+/// `markdown_inline` parser over each `(inline)` node without setting
+/// `injection.include-children`, and `tree-sitter-highlight` reads the absence
+/// of that flag as "highlight the node *except* its children" — so it hands
+/// the inline parser the ranges an `(inline)` node's children do not cover,
+/// which for a paragraph is nothing at all. The result is a markdown file with
+/// its headings coloured and every emphasis, code span and link left plain.
+/// Setting the flag is the fix, and it is why this string is written out here
+/// instead of using `INJECTION_QUERY_BLOCK`.
+///
+/// The second is what is left out. The crate's query also injects whatever
+/// language a fenced code block's info string names, plus `html` for HTML
+/// blocks and `yaml`/`toml` for frontmatter. rv resolves none of those on
+/// purpose: reading ```` ```rust ```` and parsing the block as Rust is
+/// deciding what content is by looking at it, which is the one thing this
+/// module refuses to do. `markdown_inline` is not that — it is the same
+/// language's own second parser, the way markdown is specified to be read.
+fn markdown_configuration() -> Option<&'static HighlightConfiguration> {
+    static CONFIG: OnceLock<Option<HighlightConfiguration>> = OnceLock::new();
+    CONFIG
+        .get_or_init(|| {
+            configured(HighlightConfiguration::new(
+                tree_sitter_md::LANGUAGE.into(),
+                "markdown",
+                tree_sitter_md::HIGHLIGHT_QUERY_BLOCK,
+                "((inline) @injection.content \
+                  (#set! injection.language \"markdown_inline\") \
+                  (#set! injection.include-children))",
+                "",
+            ))
+        })
+        .as_ref()
+}
+
+/// Markdown's *inline* grammar: emphasis, code spans, links, escapes. Reached
+/// only through [`markdown_injection`] — no file extension selects it, because
+/// no file is written in it.
+fn markdown_inline_configuration() -> Option<&'static HighlightConfiguration> {
+    static CONFIG: OnceLock<Option<HighlightConfiguration>> = OnceLock::new();
+    CONFIG
+        .get_or_init(|| {
+            configured(HighlightConfiguration::new(
+                tree_sitter_md::INLINE_LANGUAGE.into(),
+                "markdown_inline",
+                tree_sitter_md::HIGHLIGHT_QUERY_INLINE,
+                "",
+                "",
+            ))
+        })
+        .as_ref()
+}
+
+/// The one injection rv resolves. Anything else the block grammar might ask
+/// for is `None`, which leaves that text to the block grammar's own captures.
+fn markdown_injection(name: &str) -> Option<&'static HighlightConfiguration> {
+    (name == "markdown_inline")
+        .then(markdown_inline_configuration)
+        .flatten()
+}
+
+/// The grammar `path`'s name selects, or `None` when neither table claims it.
+///
+/// The filename table is consulted first: it exists precisely for names whose
+/// extension says something else (`Cargo.lock`) or nothing at all
+/// (`.bashrc`), so an exact name beats an extension.
 fn grammar_for_path(path: &str) -> Option<Grammar> {
+    let name = file_name(path)?;
+    let by_filename = GRAMMARS.iter().find(|grammar| {
+        grammar
+            .filenames
+            .iter()
+            .any(|candidate| candidate.eq_ignore_ascii_case(name))
+    });
+    if let Some(grammar) = by_filename {
+        return Some(*grammar);
+    }
+
     let extension = extension_of(path)?;
     GRAMMARS
         .iter()
@@ -419,15 +795,25 @@ fn grammar_for_path(path: &str) -> Option<Grammar> {
         .copied()
 }
 
-/// The extension of `path`'s last segment, without the dot.
+/// The last segment of `path`, or `None` for a path that has no last segment
+/// at all. An empty path has none; a path ending in a separator yields the
+/// empty string, which no table row matches.
 ///
 /// Written by hand rather than through `std::path::Path` so that it answers
 /// the same way on every platform for the `/`-separated repository paths rv
-/// deals in, and so that the edge cases are visible: a name with no dot has no
-/// extension, a dotfile (`.rs`) is a name and not an extension, and a name
-/// with several dots (`archive.tar.gz`) has only the last one.
+/// deals in — and, on Windows, so that a `\` in a jj path is still a
+/// separator.
+fn file_name(path: &str) -> Option<&str> {
+    path.rsplit(['/', '\\']).next()
+}
+
+/// The extension of `path`'s last segment, without the dot.
+///
+/// The edge cases are visible on purpose: a name with no dot has no extension,
+/// a dotfile (`.rs`) is a name and not an extension, and a name with several
+/// dots (`archive.tar.gz`) has only the last one.
 fn extension_of(path: &str) -> Option<&str> {
-    let name = path.rsplit(['/', '\\']).next()?;
+    let name = file_name(path)?;
     let (stem, extension) = name.rsplit_once('.')?;
     if stem.is_empty() {
         return None;
@@ -455,9 +841,21 @@ fn extension_of(path: &str) -> Option<&str> {
 /// captures integer and float literals as `constant.builtin`, the same as
 /// `true` and `false`, so Rust numbers arrive as [`Capture::Constant`] and
 /// never as [`Capture::Number`]. That variant is for grammars that do
-/// distinguish them; rv follows the grammar rather than second-guessing it.
+/// distinguish them, and TOML, YAML and JSON all do; rv follows each grammar
+/// rather than second-guessing it, which is why the same literal can be a
+/// different kind in two languages.
+///
+/// The `text.*` rows are markdown's, which is the only grammar here whose
+/// subject is prose rather than code. `text` itself is [`Capture::Other`] so
+/// that the parts of the vocabulary rv has no colour for — `text.emphasis`,
+/// `text.strong`, since a terminal-free span carries no italic or bold — fall
+/// back to being rendered plain rather than being painted some arbitrary
+/// colour that means nothing.
 const CAPTURES: &[(&str, Capture)] = &[
     ("attribute", Capture::Other),
+    // TOML and YAML give booleans their own name; without this row `true` in
+    // a `Cargo.toml` is the one word on the line with no colour.
+    ("boolean", Capture::Constant),
     ("comment", Capture::Comment),
     ("constant", Capture::Constant),
     ("constructor", Capture::Type),
@@ -471,6 +869,14 @@ const CAPTURES: &[(&str, Capture)] = &[
     ("punctuation", Capture::Punctuation),
     ("string", Capture::String),
     ("tag", Capture::Other),
+    ("text", Capture::Other),
+    // A code span or a fenced block: literal text, the same as a string.
+    ("text.literal", Capture::String),
+    // The visible text of a link, which names something else.
+    ("text.reference", Capture::Variable),
+    // A heading, the strongest structural marker a markdown file has.
+    ("text.title", Capture::Keyword),
+    ("text.uri", Capture::String),
     ("type", Capture::Type),
     ("variable", Capture::Variable),
     ("variable.builtin", Capture::Keyword),

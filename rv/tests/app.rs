@@ -12,7 +12,9 @@
 //! invocation is made hermetic with `JJ_CONFIG=/dev/null` plus a fixed author,
 //! so the developer's own jj config cannot change what the tests see.
 
+use std::collections::HashSet;
 use std::fs;
+use std::ops::Range;
 use std::path::Path;
 use std::process::Command;
 use std::time::SystemTime;
@@ -43,6 +45,7 @@ use rv_core::anchor;
 use rv_core::diff::DiffLine;
 use rv_core::diff::DiffSource;
 use rv_core::diff::LineKind;
+use rv_core::highlight::Capture;
 use rv_core::model::ChangeKind;
 use rv_core::model::Side;
 use rv_core::store::CommentState;
@@ -99,6 +102,15 @@ const REWRITE_LITERAL_COLUMN: usize = 16;
 
 /// [`Fixture::plain`]'s one file: a `.txt`, for which rv ships no grammar.
 const PLAIN_TEXT: &str = "just some prose\nand a second line\n";
+
+/// [`Fixture::commented`]'s one file: a `//` comment over a function.
+///
+/// The comment is what the "comments render too white" defect was about, and a
+/// frame of this file is the only way to read the colour a real terminal would
+/// have been sent. The rest of the file is there so the same frame carries a
+/// keyword, a type-free binding and a number literal beside it — a row that is
+/// *all* comment would prove nothing about the captures around it.
+const COMMENTED: &str = "// a note about a\nfn a() -> u32 {\n    let x = 1;\n    x\n}\n";
 
 struct Fixture {
     tempdir: TempDir,
@@ -173,6 +185,19 @@ impl Fixture {
         fixture.jj(&["git", "init", "--colocate"]);
         fixture.write("notes.txt", PLAIN_TEXT);
         fixture.jj(&["describe", "-m", "some prose"]);
+        fixture.jj(&["new"]);
+        fixture
+    }
+
+    /// Creates a workspace whose one file opens with a `//` comment — see
+    /// [`COMMENTED`].
+    fn commented() -> Self {
+        let fixture = Self {
+            tempdir: tempfile::tempdir().expect("create temp dir"),
+        };
+        fixture.jj(&["git", "init", "--colocate"]);
+        fixture.write("noted.rs", COMMENTED);
+        fixture.jj(&["describe", "-m", "a commented function"]);
         fixture.jj(&["new"]);
         fixture
     }
@@ -2771,11 +2796,14 @@ fn a_status_line_too_long_for_the_terminal_is_marked() {
 /// this exists to stop. What each key actually does is pinned by
 /// `rv/tests/app_cases.rs`'s `browse_keybindings` table and by the tests above;
 /// this pair is only about whether a user can find out.
+/// The arrow leads and the vim key follows in parentheses, here as in
+/// [`BINDINGS`] and in the popup: rv is a tool a reviewer may open once a week,
+/// and the arrows are the keys someone can find without being told.
 const BROWSE_KEYS: &[&str] = &[
-    "`j` / `↓`",
-    "`k` / `↑`",
-    "`←`",
-    "`→`",
+    "`↓` (`j`)",
+    "`↑` (`k`)",
+    "`←` (`h`)",
+    "`→` (`l`)",
     "`]`",
     "`[`",
     "`Tab`",
@@ -2784,6 +2812,9 @@ const BROWSE_KEYS: &[&str] = &[
     "`c`",
     "`d`",
     "`s`",
+    "`<`",
+    "`>`",
+    "`?`",
     "`q`",
     "`Ctrl+C`",
 ];
@@ -3391,6 +3422,127 @@ fn distinct_foregrounds(buffer: &Buffer, area: Rect, y: u16) -> Vec<Color> {
     seen
 }
 
+/// Every cell of the diff pane's interior that carries a glyph, as
+/// `(column, row)`.
+///
+/// Blank cells are skipped because a blank cell has no foreground to judge:
+/// what is being asked here is what colour the *code a reviewer is reading* was
+/// sent in.
+fn diff_pane_cells(buffer: &Buffer, area: Rect) -> Vec<(u16, u16)> {
+    let mut cells = Vec::new();
+    for y in (area.y + 1)..area.bottom().saturating_sub(1) {
+        for x in (area.x + 1)..area.right().saturating_sub(1) {
+            if !buffer[(x, y)].symbol().trim().is_empty() {
+                cells.push((x, y));
+            }
+        }
+    }
+    cells
+}
+
+/// The foreground the diff pane drew the first `//` comment in.
+fn colour_of_first_comment(buffer: &Buffer, area: Rect) -> Option<Color> {
+    let (y, text) = diff_rows(buffer, area)
+        .into_iter()
+        .find(|(_, text)| text.contains("//"))
+        .unwrap_or_else(|| panic!("no `//` comment is on screen:\n{}", buffer_text(buffer)));
+    let at = text.find("//").expect("the row holds it");
+    let column = area.x + 1 + u16::try_from(text[..at].chars().count()).expect("a small column");
+    buffer[(column, y)].style().fg
+}
+
+/// The defect a user reported: comments render too white.
+///
+/// `Color::Gray` is ANSI index 7 — the terminal's *white* — which is what this
+/// used to send, and index 8 (bright black) is the tone every scheme defines
+/// for exactly this against its own background. The distinction is not
+/// cosmetic: index 7 on a light scheme is near-invisible and on a dark one is
+/// as loud as the code it annotates.
+#[test]
+fn a_comment_uses_the_terminals_muted_tone() {
+    let workspace = Fixture::commented();
+    let app = workspace.app();
+    let frame = frame_at(&app, 100, 24);
+    let area = areas(100, 24, Split::default()).diff;
+    assert_eq!(
+        colour_of_first_comment(&frame, area),
+        Some(Color::DarkGray),
+        "comments are index 8, the tone every scheme defines for exactly this:\n{}",
+        buffer_text(&frame)
+    );
+}
+
+/// Every capture maps to one of the 16 indexed ANSI colours, or to nothing at
+/// all.
+///
+/// The indexed colours are a pass-through to the reviewer's own scheme: emit
+/// index 4 and the terminal substitutes whatever *its* theme calls blue. That
+/// is the whole of rv's theming design, which is why there is no theme option
+/// — see `ui`'s module docs for which layer owns which colour.
+///
+/// Punctuation, variables and anything unrecognised are deliberately
+/// **unstyled**: most of a line is one or the other, and a highlighter that
+/// colours the majority of the text has stopped highlighting anything.
+#[rstest]
+#[case::keyword(Capture::Keyword, Color::Magenta)]
+#[case::function(Capture::Function, Color::Blue)]
+#[case::a_type(Capture::Type, Color::Cyan)]
+#[case::string(Capture::String, Color::Green)]
+#[case::number(Capture::Number, Color::Yellow)]
+#[case::constant(Capture::Constant, Color::Yellow)]
+#[case::comment(Capture::Comment, Color::DarkGray)]
+#[case::punctuation(Capture::Punctuation, Color::Reset)]
+#[case::variable(Capture::Variable, Color::Reset)]
+#[case::other(Capture::Other, Color::Reset)]
+fn every_capture_maps_to_an_indexed_colour(#[case] capture: Capture, #[case] expected: Color) {
+    assert_eq!(ui::capture_colour(capture), expected);
+}
+
+/// ...and nothing the diff pane writes a glyph in dictates an exact colour.
+///
+/// An `Rgb` foreground overrides the reviewer's scheme instead of deferring to
+/// it, which is how a tool ends up needing a theme option it should never have
+/// needed. The boundary is asserted rather than remembered: the sweep covers
+/// the code, the gutter sigils and a comment box's borders — everything with a
+/// glyph on it — and the frame deliberately has a comment box in it so the
+/// chrome is swept too.
+///
+/// The **background** is the bounded exception, and it is asserted here as one
+/// so that this test cannot be read as forbidding it: the wash that marks a
+/// line added or removed is a truecolour mix (see
+/// `the_wash_is_the_palettes_own_green_and_red`) and cannot exist in 16
+/// colours. Foreground and background never contend for the same channel, so a
+/// syntax colour and a wash cannot collide.
+#[test]
+fn code_is_painted_only_in_indexed_colours() {
+    let workspace = Fixture::commented();
+    let mut app = workspace.app();
+    write_comment(&mut app, "a finding, so the box is swept too");
+    let frame = frame_at(&app, 100, 24);
+    let area = areas(100, 24, Split::default()).diff;
+
+    let cells = diff_pane_cells(&frame, area);
+    assert!(cells.len() > 20, "the pane drew almost nothing to judge");
+    for (column, row) in cells {
+        let fg = frame[(column, row)].style().fg;
+        assert!(
+            !matches!(fg, Some(Color::Rgb(..))),
+            "cell ({column},{row}) dictates an exact colour instead of using \
+             the terminal's: {fg:?}\n{}",
+            buffer_text(&frame)
+        );
+    }
+
+    assert!(
+        matches!(
+            ui::line_background(LineKind::Added, false),
+            Some(Color::Rgb(..))
+        ),
+        "the wash is no longer truecolour, so this test's exception has gone \
+         stale and the rule above is broader than it says"
+    );
+}
+
 /// Whether `target` sits on the ramp from `from` to the ink the diff washes
 /// with — which is what "the diff and the sidebar share one green" means in
 /// cells rather than in prose.
@@ -3655,25 +3807,203 @@ fn every_documented_browse_key_is_a_row_of_the_binding_table() {
     }
 }
 
-/// The three bindings this wave added are deliberately **not** in
-/// [`BROWSE_KEYS`], and so are not yet held to the README.
+/// `?` has to be findable from inside the binary, not only from the README.
 ///
-/// README is not this wave's file to edit — Task 12 of the viewport plan owns
-/// the page, the `? help` entry in the status bar, and the mouse gestures, and
-/// documents them in one change. Until then a reviewer can only find `?` by
-/// pressing it, which is a real gap and is written down here rather than left
-/// in a report nobody reads: the moment the page grows those rows, this fails
-/// and whoever added them is told to put the keys in [`BROWSE_KEYS`] — where
-/// the two directions above will hold them — and delete this test.
+/// As shipped, the popup was reachable only by guessing the key: the status bar
+/// is the one surface every reviewer sees and it said nothing about `?`, and
+/// the README's table said nothing about it either. This pins the pointer to
+/// the manual in the bar itself, and `the_readme_mockup_draws_the_status_bar…`
+/// in `app_cases.rs` chains the page's picture to the same constant, so the two
+/// cannot drift apart again.
 #[test]
-fn the_readme_still_owes_rows_for_this_waves_bindings() {
-    let documented = table_keys("**Browsing**");
-    for key in ["`<`", "`>`", "`?`"] {
-        assert!(
-            !documented.iter().any(|row| row == key),
-            "the README now has a Browsing row for {key}: add it to BROWSE_KEYS, \
-             which holds the table and the binding table to each other, and delete \
-             this test"
-        );
+fn the_status_bar_says_where_the_keymap_is() {
+    let workspace = Fixture::new();
+    let app = workspace.app();
+    assert!(
+        app.status().contains("? help"),
+        "the bar a reviewer opens on does not mention the keymap: {:?}",
+        app.status()
+    );
+    assert!(
+        last_row(&frame_at(&app, 100, 24)).contains("? help"),
+        "...and it is not on screen either"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// The cursor walks rows, so a tall comment can be read
+// ---------------------------------------------------------------------------
+
+/// The diff pane's rectangle on a terminal `width` columns wide, sized so the
+/// pane itself is `height` rows tall.
+///
+/// The bar takes the row under both panes, so the terminal has to be a row
+/// taller than the pane asked for. The assertion is what keeps that arithmetic
+/// honest rather than silently off by one if the chrome ever changes.
+fn diff_pane(width: u16, height: u16) -> Rect {
+    let area = areas(width, height + 1, Split::default()).diff;
+    assert_eq!(
+        area.height, height,
+        "the diff pane is not {height} rows tall"
+    );
+    area
+}
+
+/// The rows of the diff pane's plan that are on screen at that size, as
+/// indices into the plan.
+///
+/// Asked of [`rv::ui::visible`] — the very function [`rv::ui::draw`] windows
+/// with — rather than recomputed here. That matters more in this section than
+/// anywhere else in the file: the defect below *was* a window and a cursor
+/// disagreeing, and a test with its own copy of the arithmetic would be
+/// asserting about a third thing that neither of them uses.
+fn visible_row_indices(app: &App, width: u16, height: u16) -> Range<usize> {
+    ui::visible(app, diff_pane(width, height)).1
+}
+
+/// How many rows that plan holds in total.
+fn row_count(app: &App, width: u16, height: u16) -> usize {
+    ui::visible(app, diff_pane(width, height)).0.rows.len()
+}
+
+/// The defect, stated as a test: a comment taller than the diff pane must not
+/// have rows that no cursor position can bring on screen.
+///
+/// It used to. The pane anchored its window on the row of the selected *diff
+/// line* and `j` moved that selection to the next diff line, so a box between
+/// two diff rows was stepped over rather than scrolled through: from the line
+/// above you saw the box's top, from the line below its bottom, and the middle
+/// was reachable from nowhere at all. What looked like scrolling jumping
+/// through a comment was the pane never scrolling it.
+#[test]
+fn every_row_of_a_tall_comment_can_be_brought_on_screen() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    write_comment(&mut app, &"a very long finding. ".repeat(40));
+    let height = 10;
+
+    let mut seen: HashSet<usize> = HashSet::new();
+    for _ in 0..80 {
+        seen.extend(visible_row_indices(&app, 100, height));
+        app.on_key(KeyCode::Char('j')).expect("j");
     }
+
+    let total = row_count(&app, 100, height);
+    assert!(
+        total > usize::from(height),
+        "the comment is not taller than the pane, so this proves nothing: \
+         {total} rows in {height}"
+    );
+    let missed: Vec<usize> = (0..total).filter(|row| !seen.contains(row)).collect();
+    assert!(
+        missed.is_empty(),
+        "rows unreachable at any cursor position: {missed:?}"
+    );
+}
+
+/// `j` steps *into* the box rather than over it, and the selection everything
+/// else depends on stays the line the box hangs from.
+#[test]
+fn j_walks_into_a_comment_box_rather_than_over_it() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    write_comment(&mut app, &"a long finding. ".repeat(20));
+    let line = app.line_index();
+    let row = app.cursor_row();
+
+    app.on_key(KeyCode::Char('j')).expect("j");
+    assert_eq!(
+        app.line_index(),
+        line,
+        "the cursor left the line instead of walking into its comment"
+    );
+    assert!(
+        app.cursor_row() > row,
+        "the cursor did not move down a row: {} then {}",
+        row,
+        app.cursor_row()
+    );
+}
+
+/// ...so `c` from inside a box comments on the line that box is about, which
+/// is the only thing it could sensibly mean.
+#[test]
+fn commenting_from_inside_a_box_targets_the_line_the_box_belongs_to() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    write_comment(&mut app, &"a long finding. ".repeat(20));
+    let line = app.line_index();
+
+    app.on_key(KeyCode::Char('j')).expect("step into the box");
+    write_comment(&mut app, "a second finding");
+    assert_eq!(
+        app.comments_for_line(line).len(),
+        2,
+        "the second comment did not land on the line the box belongs to"
+    );
+}
+
+/// ...and the box is somewhere the cursor walks *through*, not into: past its
+/// last row is the next diff line.
+#[test]
+fn stepping_past_the_last_row_of_a_box_lands_on_the_next_diff_line() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    write_comment(&mut app, "short");
+    let line = app.line_index();
+
+    for _ in 0..8 {
+        app.on_key(KeyCode::Char('j')).expect("j");
+    }
+    assert!(
+        app.line_index() > line,
+        "the cursor never left the box: still on line {}",
+        app.line_index()
+    );
+}
+
+/// Folding the box the cursor is inside leaves the cursor on the line that box
+/// belongs to, rather than on a row index that now means something else.
+///
+/// A fold is one of the three things that rebuild the plan under the cursor —
+/// with a save and a delete — and a tall box collapsing to one row takes every
+/// row after it with it. Left alone, the cursor would keep pointing at a row
+/// past the end of the shortened plan: `line_index` would answer 0 while the
+/// pane, which clamps its own anchor, scrolled to the bottom. The two would be
+/// describing different places, which is the shape of the defect this whole
+/// section exists to have fixed.
+#[test]
+fn folding_a_box_the_cursor_is_inside_keeps_the_cursor_on_its_line() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    write_comment(&mut app, &"a long finding. ".repeat(20));
+    let line = app.line_index();
+    for _ in 0..6 {
+        app.on_key(KeyCode::Char('j')).expect("step into the box");
+    }
+    assert_eq!(
+        app.line_index(),
+        line,
+        "the fixture's box is not tall enough for the cursor to be inside it"
+    );
+
+    app.on_key(KeyCode::Char('s')).expect("fold it");
+    assert_eq!(
+        app.line_index(),
+        line,
+        "the fold left the cursor on another line"
+    );
+    let plan = app.plan();
+    assert_eq!(
+        plan.line_of_row(app.cursor_row()),
+        Some(line),
+        "the cursor is on row {} of a plan that has {} rows",
+        app.cursor_row(),
+        plan.rows.len()
+    );
+    assert_eq!(
+        plan.row_of_line(line),
+        Some(app.cursor_row()),
+        "the cursor did not land on the folded line's own row"
+    );
 }

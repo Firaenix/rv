@@ -12,5 +12,6 @@ pub mod gradient;
 pub mod layout;
 pub mod rows;
 pub mod session;
+pub mod statusbar;
 pub mod tree;
 pub mod ui;

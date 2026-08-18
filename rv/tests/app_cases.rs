@@ -87,7 +87,7 @@ use tempfile::TempDir;
 /// The status line `App::new` starts on. Copied from `app.rs`'s private `HELP`
 /// on purpose: if the help text changes, these cases should be re-read rather
 /// than silently following it.
-const HELP: &str = "j/k line  [/] file  c comment  enter stack  d delete  s fold  q quit";
+const HELP: &str = "↓↑ line  [/] file  c comment  enter stack  d delete  s fold  ? help  q quit";
 
 /// What `Enter`, `d` and `s` report on a line carrying no comments. Copied from
 /// `app.rs`'s private constant for the same reason [`HELP`] is.
@@ -583,11 +583,16 @@ fn rewind(app: &mut App) {
         app.on_key(KeyCode::Char('[')).expect("first file");
     }
     for _ in 0..app.files().len() {
-        // Bounded, not `while line_index() > 0`: this reset presses the very
+        // Bounded, not `while cursor_row() > 0`: this reset presses the very
         // key `line_navigation_clamps_at_both_ends` exists to pin, and an
         // unbounded loop would turn a regression in the `k`/`Up` binding into a
         // silent hang of the whole binary instead of a failed assertion below.
-        for _ in 0..=lines(app).len() {
+        //
+        // The bound is the **plan's** rows rather than the diff's lines,
+        // because that is what `k` walks: a comment box is rows, so a file
+        // carrying comments has more of them than it has lines, and a bound of
+        // one per line would stop partway up such a file.
+        for _ in 0..=app.plan().rows.len() {
             app.on_key(KeyCode::Char('k')).expect("first line");
         }
         app.on_key(KeyCode::Char(']')).expect("next file");
@@ -618,6 +623,45 @@ fn press_n(app: &mut App, key: KeyCode, times: usize) {
     for _ in 0..times {
         press(app, key);
     }
+}
+
+/// Walks the cursor down onto diff line `index` with `j`, the way a reviewer
+/// would, and returns the number of presses it took.
+///
+/// **Not `press_n(j, index)`.** `j` walks the diff pane's *rows*, and a comment
+/// box is rows, so how many presses reach line `index` depends on what is
+/// anchored to the lines above it — see `rv/src/app.rs`'s `cursor_rows` for why
+/// the cursor moves by row rather than by line. What every case below means is
+/// "put the cursor on that line", and this is that sentence said once.
+///
+/// The first row a line owns is its own diff row, so this always lands on the
+/// line rather than inside one of its boxes.
+///
+/// A file with fewer lines than `index` stops at its last one rather than
+/// failing, which is where holding `j` down actually leaves a reviewer and what
+/// `press_n(j, n)` used to do. Every caller that means "and it must be exactly
+/// that line" asserts it on the next line of its own body.
+///
+/// Bounded rather than `while`, for the reason [`rewind`]'s loops are: a
+/// regression in the `j` binding should fail an assertion here rather than hang
+/// the whole binary. The bound is the plan's own length, which is the space `j`
+/// walks.
+fn walk_to_line(app: &mut App, index: usize) -> usize {
+    let bound = app.plan().rows.len();
+    for pressed in 0..=bound {
+        if app.line_index() == index {
+            return pressed;
+        }
+        let row = app.cursor_row();
+        press(app, KeyCode::Char('j'));
+        if app.cursor_row() == row {
+            return pressed;
+        }
+    }
+    panic!(
+        "`j` never reached diff line {index} in {bound} presses: stopped on {}",
+        app.line_index()
+    );
 }
 
 fn type_text(app: &mut App, text: &str) {
@@ -843,10 +887,12 @@ fn any_body() -> impl Strategy<Value = String> {
 /// does not bind.
 ///
 /// Cross-checked against `app.rs::BINDINGS`, which is now the *only* thing
-/// `on_key_browse` dispatches from: `j`/`Down`, `k`/`Up`, `Left`, `Right`, `]`,
-/// `[`, `c`, `d`, `s`, `Tab`, `Enter`, `Esc`, `<`, `>`, `?`, `q` — every one of
-/// which has a row below, and the rows after them are keys the table
-/// deliberately leaves inert. A key that reached the handler without a row in
+/// `on_key_browse` dispatches from: `Down`/`j`, `Up`/`k`, `Left`/`h`,
+/// `Right`/`l`, `]`, `[`, `c`, `d`, `s`, `Tab`, `Enter`, `Esc`, `<`, `>`, `?`,
+/// `q` — every one of which has a row below, and the rows after them are keys
+/// the table deliberately leaves inert. The arrow is the binding and the vim
+/// key its alias, so each of the four movement rows appears twice: a pair that
+/// stopped agreeing would be two keys doing different things under one heading. A key that reached the handler without a row in
 /// `BINDINGS` would fail one of the `unbound_*` rows here; a row in `BINDINGS`
 /// that reached nothing would fail its own row.
 ///
@@ -881,8 +927,10 @@ fn any_body() -> impl Strategy<Value = String> {
 #[case::next_line_arrow(KeyCode::Down, Action::Continue, Mode::Browse, Focus::Diff, (0, 1), None)]
 #[case::previous_line_letter(KeyCode::Char('k'), Action::Continue, Mode::Browse, Focus::Diff, (0, 0), None)]
 #[case::previous_line_arrow(KeyCode::Up, Action::Continue, Mode::Browse, Focus::Diff, (0, 0), None)]
-#[case::focus_sidebar(KeyCode::Left, Action::Continue, Mode::Browse, Focus::Sidebar, (0, 0), None)]
-#[case::focus_diff(KeyCode::Right, Action::Continue, Mode::Browse, Focus::Diff, (0, 0), None)]
+#[case::focus_sidebar_arrow(KeyCode::Left, Action::Continue, Mode::Browse, Focus::Sidebar, (0, 0), None)]
+#[case::focus_sidebar_letter(KeyCode::Char('h'), Action::Continue, Mode::Browse, Focus::Sidebar, (0, 0), None)]
+#[case::focus_diff_arrow(KeyCode::Right, Action::Continue, Mode::Browse, Focus::Diff, (0, 0), None)]
+#[case::focus_diff_letter(KeyCode::Char('l'), Action::Continue, Mode::Browse, Focus::Diff, (0, 0), None)]
 #[case::next_file(KeyCode::Char(']'), Action::Continue, Mode::Browse, Focus::Diff, (1, 0), None)]
 #[case::previous_file(KeyCode::Char('['), Action::Continue, Mode::Browse, Focus::Diff, (0, 0), None)]
 #[case::comment(KeyCode::Char('c'), Action::Continue, Mode::Comment, Focus::Diff, (0, 0), None)]
@@ -1318,6 +1366,12 @@ fn modified_keys_reach_the_state_machine_by_their_code(
 ///    `ui::draw`'s "no diff loaded" branch documents as unreachable), that diff
 ///    is *that file's* — the `diffs` vector stays parallel to `files` — and the
 ///    sidebar selects the file at `file_index`.
+/// 5. The cursor is a **row of the plan it indexes**, and `line_index` is the
+///    line that owns that row. The cursor is the state and the line is derived
+///    from it (see `rv/src/app.rs`'s `cursor_rows`), so a cursor that has
+///    fallen off the end of a plan something shortened under it — a fold, a
+///    delete — is a reviewer whose selection and whose scroll position have
+///    stopped describing the same place.
 ///
 /// Four, not the five this used to advertise. `selected_file()` is
 /// `self.review.files.get(self.file_index)`, so "the sidebar selects
@@ -1394,6 +1448,28 @@ fn state_invariants_survive_any_key_sequence() {
                     app.line_index()
                 );
             }
+            // Invariant 5.
+            let plan = app.plan();
+            if plan.rows.is_empty() {
+                prop_assert_eq!(
+                    app.cursor_row(),
+                    0,
+                    "after {:?} at step {}: the cursor is off an empty plan",
+                    key,
+                    step
+                );
+            } else {
+                prop_assert_eq!(
+                    plan.line_of_row(app.cursor_row()),
+                    Some(app.line_index()),
+                    "after {:?} at step {}: the cursor is on row {} of a {}-row plan",
+                    key,
+                    step,
+                    app.cursor_row(),
+                    plan.rows.len()
+                );
+            }
+
             // Invariant 3.
             if app.mode() == Mode::Browse {
                 prop_assert_eq!(
@@ -1842,7 +1918,7 @@ fn a_typed_comment_reaches_the_store_byte_identically() {
         fixture.clear_comments();
         let app = &mut *app.borrow_mut();
         rewind(app);
-        press_n(app, KeyCode::Char('j'), downs);
+        walk_to_line(app, downs);
 
         let line = lines(app)
             .get(app.line_index())
@@ -1996,7 +2072,7 @@ fn both_halves_of_a_same_position_rewrite_keep_their_own_comment() {
     // The same reviewer, the same sentence, on each half of the rewrite.
     for index in [removed_index, added_index] {
         select_path(&mut app, "same.rs");
-        press_n(&mut app, KeyCode::Char('j'), index);
+        walk_to_line(&mut app, index);
         assert_eq!(app.line_index(), index);
         press(&mut app, KeyCode::Char('c'));
         assert_eq!(app.mode(), Mode::Comment);
@@ -2087,7 +2163,7 @@ fn a_jump_tells_the_two_halves_of_a_rewrite_apart() {
     // that order too.
     for (index, body) in [(removed, "the old one"), (added, "the new one")] {
         select_path(&mut app, "same.rs");
-        press_n(&mut app, KeyCode::Char('j'), index);
+        walk_to_line(&mut app, index);
         press(&mut app, KeyCode::Char('c'));
         assert_eq!(app.mode(), Mode::Comment);
         type_text(&mut app, body);
@@ -2421,7 +2497,7 @@ fn the_pane_the_status_and_the_anchor_agree_on_the_line() {
         fixture.clear_comments();
         let app = &mut *app.borrow_mut();
         rewind(app);
-        press_n(app, KeyCode::Char('j'), index);
+        walk_to_line(app, index);
         prop_assert_eq!(app.line_index(), index);
 
         let printed = printed_number(app, 120, 44).ok_or_else(|| {
@@ -2652,7 +2728,7 @@ fn jumping_to_any_comment_lands_on_a_line_that_shows_it() {
         for (index, (file, downs)) in writes.iter().enumerate() {
             rewind(app);
             press_n(app, KeyCode::Char(']'), *file);
-            press_n(app, KeyCode::Char('j'), *downs);
+            walk_to_line(app, *downs);
             press(app, KeyCode::Char('c'));
             prop_assert_eq!(app.mode(), Mode::Comment);
             // Distinct bodies, so that two writes at one location are two
@@ -2882,7 +2958,7 @@ fn the_fallback_path_navigates_comments_and_anchors() {
         fixture.clear_comments();
         let app = &mut *app.borrow_mut();
         rewind(app);
-        press_n(app, KeyCode::Char('j'), index);
+        walk_to_line(app, index);
         prop_assert_eq!(app.line_index(), index);
 
         let line = lines(app)[index].clone();
@@ -3025,7 +3101,7 @@ fn a_suppressed_fallback_diff_shows_the_lines_it_lets_you_navigate() {
             for height in 4u16..24 {
                 let app = &mut *app.borrow_mut();
                 select_path(app, path);
-                press_n(app, KeyCode::Char('j'), index);
+                walk_to_line(app, index);
                 assert_eq!(app.line_index(), index);
 
                 let frame = render(app, 100, height).backend().to_string();
@@ -3059,7 +3135,7 @@ fn a_suppressed_fallback_diff_shows_the_lines_it_lets_you_navigate() {
             fixture.clear_comments();
             let app = &mut *app.borrow_mut();
             select_path(app, path);
-            press_n(app, KeyCode::Char('j'), index);
+            walk_to_line(app, index);
 
             press(app, KeyCode::Char('c'));
             assert_eq!(

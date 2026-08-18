@@ -22,5 +22,28 @@ similar = "3.2"
 tempfile = "3"
 thiserror = "2"
 toml = "0.9"
+# Syntax highlighting. `tree-sitter-highlight` pins the tree-sitter version
+# everything else has to agree with; each grammar crate depends on
+# `tree-sitter-language = "0.1"` rather than on tree-sitter itself, which is
+# what lets grammars generated against 0.23–0.26 all link against one runtime.
+# A grammar that does not build costs the whole binary, so nothing is pinned
+# here that has not been built and highlighted at least once.
+tree-sitter-bash = "0.25"
+tree-sitter-go = "0.25"
 tree-sitter-highlight = "0.26"
+# JavaScript is not only for `.js`: `tree-sitter-typescript` ships only the
+# TypeScript-specific half of its highlight query — types, `interface`,
+# parameter properties — and a configuration built from that alone captures
+# no comments, no strings and no function names. The JavaScript query is the
+# other half, and the TypeScript grammar is a superset of it, so the two
+# concatenate into one usable query. Having linked it, `.js` costs one row.
+tree-sitter-javascript = "0.25"
+tree-sitter-json = "0.24"
+tree-sitter-md = "0.5"
+tree-sitter-python = "0.25"
 tree-sitter-rust = "0.24"
+# TOML: the `-ng` fork is the maintained one. `tree-sitter-toml` proper was
+# last released in 2022 against a tree-sitter that predates this workspace's.
+tree-sitter-toml-ng = "0.7"
+tree-sitter-typescript = "0.23"
+tree-sitter-yaml = "0.7"
