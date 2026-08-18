@@ -31,9 +31,23 @@
 //! the store, so what is on screen is what is on disk rather than what this
 //! process believes it wrote.
 //!
+//! # What a delete costs
+//!
+//! Deleting one goes through the store and stops there: the entry and its
+//! snapshot go, the in-memory copy is re-read, and `REVIEW-FEEDBACK.md` is
+//! **not** rewritten. The asymmetry with saving is deliberate rather than an
+//! omission — the markdown is an *export* (see
+//! `docs/superpowers/specs/2026-08-17-rv-storage-model-design.md`), produced by
+//! `rv render` from whatever the store holds, and the save path's rewrite is
+//! the thing on its way out rather than the behaviour to copy. A delete that
+//! rewrote it would also be rewriting whatever reply an LLM had appended since,
+//! for a document nobody asked for.
+//!
 //! Blobs are read lazily, for the selected file only (spec §7), and the
 //! computed [`FileDiff`] is cached per file so that stepping back to a file
 //! does not re-run difftastic.
+
+use std::collections::HashSet;
 
 use anyhow::Context as _;
 use anyhow::Result;
@@ -75,15 +89,50 @@ use crate::ui;
 const ID_CHARS: usize = 8;
 
 /// The status line shown before the reviewer has done anything.
-const HELP: &str = "j/k line  [/] file  c comment  q quit";
+///
+/// Every key that changes something is in here, `d` above all: a key that
+/// destroys written work with no way back must be discoverable from inside the
+/// app rather than only from the README. One bar row is the whole budget (see
+/// [`crate::ui`]), so each entry is a key and one word — 68 columns, which fits
+/// the 80-column terminal that is the narrowest anyone reviews in.
+const HELP: &str = "j/k line  [/] file  c comment  enter stack  d delete  s fold  q quit";
+
+/// What `d` says from the sidebar, where there is no comment under the cursor
+/// to delete.
+///
+/// It names the way out rather than only refusing: the reviewer pressed a key
+/// meaning "delete this", and the answer they need is where "this" lives.
+const DELETE_NEEDS_A_COMMENT: &str = "the file list selects files, not comments: right to the diff";
+
+/// What `Enter`, `d` and `s` say when the selected line carries no comments.
+///
+/// One sentence for all three because it is one fact about the line, and a
+/// reviewer who has just pressed a key wants to know why nothing happened
+/// rather than which of three phrasings this key prefers.
+const NO_COMMENTS: &str = "no comments on this line";
 
 /// What the reviewer is doing with the keyboard.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+///
+/// Not [`Copy`] since [`Mode::ConfirmDelete`] gained its two fields. That is
+/// the point of putting them here rather than in a pair of `Option` fields on
+/// [`App`]: the question and the answer are one state, so there is no way to
+/// be *asking* without knowing what is being asked about, and no way for a
+/// stale id to survive the answer.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Mode {
     /// Keys navigate the diff.
     Browse,
     /// Keys go into the comment buffer.
     Comment,
+    /// Waiting for `y` before removing the comment with this `id`, which is
+    /// shown as `label` (`path:line`).
+    ///
+    /// Deletion is unrecoverable — the comment leaves the store and its
+    /// snapshot is deleted with it — so a mistyped `d` while browsing must not
+    /// cost a reviewer written work. Every key answers this question (`y`
+    /// deletes, anything else cancels) precisely so that it cannot become a
+    /// state the reviewer is stuck in.
+    ConfirmDelete { id: String, label: String },
 }
 
 /// Which pane the keys act on.
@@ -99,9 +148,9 @@ pub enum Focus {
     Sidebar,
     /// The diff of the selected file.
     Diff,
-    /// Inside the comment stack of the selected diff line. Introduced here so
-    /// that the two movement helpers below are total over the enum; nothing
-    /// reaches it until the stack itself lands.
+    /// Inside the comment stack of the selected diff line: `Enter` steps in,
+    /// `Esc` and `Left` step back out, and `j`/`k` move between the comments
+    /// rather than between the lines.
     Stack,
 }
 
@@ -139,6 +188,23 @@ pub struct App {
     /// just been.
     line_indices: Vec<usize>,
     focus: Focus,
+    /// Which comment of the selected line's stack the cursor is on, meaningful
+    /// only while the focus is [`Focus::Stack`].
+    ///
+    /// An index into [`App::comments_for_line`]'s answer rather than an id,
+    /// because the stack is a list the reviewer walks with `j`/`k` and the
+    /// store is what says which comments are in it. It is reset by
+    /// [`App::reset_stack`] whenever the selection moves, so it can never
+    /// address a comment on a line the reviewer has left.
+    comment_index: usize,
+    /// The comments the reviewer has folded away, by id.
+    ///
+    /// A **session-only view preference**, deliberately not review state: it
+    /// never reaches `.review/`, so nothing another reviewer (or an LLM
+    /// reading the export) sees depends on which boxes happened to be in this
+    /// reviewer's way. Keyed by id rather than by position so that folding
+    /// survives a delete, a save, or a walk to another file and back.
+    collapsed: HashSet<String>,
     mode: Mode,
     buffer: String,
     status: String,
@@ -193,6 +259,8 @@ impl App {
             file_index: 0,
             line_indices,
             focus: Focus::Diff,
+            comment_index: 0,
+            collapsed: HashSet::new(),
             mode: Mode::Browse,
             buffer: String::new(),
             status: HELP.to_owned(),
@@ -260,8 +328,16 @@ impl App {
         self.line_indices.get(self.file_index).copied().unwrap_or(0)
     }
 
+    /// What the keyboard is doing right now.
+    ///
+    /// Returned by value — a clone — rather than as a borrow. [`Mode`] stopped
+    /// being [`Copy`] when [`Mode::ConfirmDelete`] gained the id it is about,
+    /// and every caller either compares the answer against a literal or holds
+    /// it across the next [`App::on_key`], which takes `&mut self`: a borrow
+    /// would make each of them clone anyway, or fight the borrow checker for
+    /// no gain. The clone is one short id, and only while a confirmation is up.
     pub fn mode(&self) -> Mode {
-        self.mode
+        self.mode.clone()
     }
 
     /// Which pane the movement keys act on. The diff, on launch: that is what
@@ -273,6 +349,40 @@ impl App {
     /// Every comment in the review, in store order (oldest first).
     pub fn comments(&self) -> &[Comment] {
         &self.comments
+    }
+
+    /// The ids of the comments the reviewer has folded away.
+    ///
+    /// [`crate::ui`] draws a collapsed comment as a single line instead of a
+    /// box. Nothing else reads it, and nothing writes it to disk — see the
+    /// field's own doc comment for why that is the point rather than an
+    /// omission.
+    pub fn collapsed(&self) -> &HashSet<String> {
+        &self.collapsed
+    }
+
+    /// Which comment of the selected line's stack the cursor is on.
+    ///
+    /// Only meaningful while [`App::focus`] is [`Focus::Stack`]; it is 0 the
+    /// rest of the time, which is where entering a stack starts.
+    pub fn comment_index(&self) -> usize {
+        self.comment_index
+    }
+
+    /// The comment the stack cursor is on, or `None` when the cursor is not in
+    /// a stack.
+    ///
+    /// Deliberately `None` off [`Focus::Stack`] rather than "whatever comment
+    /// index 0 would be": `d` and `s` both ask this question to decide what a
+    /// keystroke acts on, and answering it with a comment the reviewer has not
+    /// selected is how a delete hits the wrong one.
+    pub fn selected_comment(&self) -> Option<&Comment> {
+        if self.focus != Focus::Stack {
+            return None;
+        }
+        self.comments_for_line(self.line_index())
+            .get(self.comment_index)
+            .copied()
     }
 
     /// The comments anchored to diff line `index` of the selected file, oldest
@@ -342,6 +452,7 @@ impl App {
         match self.mode {
             Mode::Browse => self.on_key_browse(key),
             Mode::Comment => self.on_key_comment(key),
+            Mode::ConfirmDelete { .. } => self.on_key_confirm_delete(key),
         }
     }
 
@@ -376,9 +487,76 @@ impl App {
             KeyCode::Char(']') => self.select_file(self.file_index.saturating_add(1))?,
             KeyCode::Char('[') => self.select_file(self.file_index.saturating_sub(1))?,
             KeyCode::Char('c') => self.begin_comment(),
+            KeyCode::Char('d') => self.begin_delete(),
+            KeyCode::Char('s') => self.toggle_collapse(),
+            KeyCode::Enter => self.enter_stack(),
+            KeyCode::Esc => self.leave_stack(),
             _ => {}
         }
         Ok(Action::Continue)
+    }
+
+    /// Steps the cursor into the selected line's comment stack.
+    ///
+    /// From [`Focus::Diff`] only. From the sidebar `Enter` is still unbound (it
+    /// gains a meaning when the sidebar learns to list comments), and from
+    /// inside the stack it is inert rather than a jump back to the first
+    /// comment: a key that quietly moved the cursor while the reviewer was
+    /// already choosing with `j`/`k` would be a key they had to be careful of.
+    ///
+    /// A line with nothing on it is refused with a sentence rather than
+    /// entered. An empty stack is a focus containing nothing, which the
+    /// reviewer would then have to guess their way out of.
+    fn enter_stack(&mut self) {
+        if self.focus != Focus::Diff {
+            return;
+        }
+        if self.comments_for_line(self.line_index()).is_empty() {
+            self.status = NO_COMMENTS.to_owned();
+            return;
+        }
+        self.focus = Focus::Stack;
+        self.comment_index = 0;
+    }
+
+    /// `Esc` out of the stack, and a no-op anywhere else — the other way out of
+    /// the one focus that is entered deliberately, beside [`App::focus_left`].
+    ///
+    /// Two ways out, on the two keys a terminal user reaches for, is what keeps
+    /// the stack from being somewhere a reviewer can get stuck.
+    fn leave_stack(&mut self) {
+        if self.focus == Focus::Stack {
+            self.focus = Focus::Diff;
+        }
+    }
+
+    /// How many comments the selected line carries.
+    fn stack_len(&self) -> usize {
+        self.comments_for_line(self.line_index()).len()
+    }
+
+    /// Takes the cursor out of the comment stack and puts the stack index back
+    /// at the top, because the *selection* moved out from under both.
+    ///
+    /// Called wherever a line or a file is selected. The stack index means "the
+    /// nth comment on the selected line", so it is only ever valid for the line
+    /// it was set on; leaving it alone across a `j` would point it at a comment
+    /// of a line the reviewer is no longer looking at.
+    ///
+    /// The focus leaves **unconditionally** — not only when the new line's stack
+    /// happens to be empty. Entering a stack is a deliberate act (`Enter`, on a
+    /// line the reviewer chose), so it is never something navigation may hand
+    /// on: `]` off a stack onto a file whose current line also carries comments
+    /// would otherwise land the cursor *inside that line's stack*, having never
+    /// entered it, with `d` and `s` aimed at a comment nobody selected. A
+    /// conditional version of this shipped once and its test passed vacuously,
+    /// because the fixture's other file had no comment on the line `]` landed
+    /// on.
+    fn reset_stack(&mut self) {
+        self.comment_index = 0;
+        if self.focus == Focus::Stack {
+            self.focus = Focus::Diff;
+        }
     }
 
     fn focus_left(&mut self) {
@@ -403,7 +581,10 @@ impl App {
         match self.focus {
             Focus::Sidebar => self.select_file(self.file_index.saturating_add(1))?,
             Focus::Diff => self.set_line_index(self.line_index().saturating_add(1)),
-            Focus::Stack => {}
+            Focus::Stack => {
+                let last = self.stack_len().saturating_sub(1);
+                self.comment_index = self.comment_index.saturating_add(1).min(last);
+            }
         }
         Ok(())
     }
@@ -415,7 +596,7 @@ impl App {
             // at the top of the list stays put rather than wrapping.
             Focus::Sidebar => self.select_file(self.file_index.saturating_sub(1))?,
             Focus::Diff => self.set_line_index(self.line_index().saturating_sub(1)),
-            Focus::Stack => {}
+            Focus::Stack => self.comment_index = self.comment_index.saturating_sub(1),
         }
         Ok(())
     }
@@ -431,6 +612,8 @@ impl App {
         if let Some(position) = self.line_indices.get_mut(self.file_index) {
             *position = clamped;
         }
+        // The stack belongs to the line, so it goes back to the top with it.
+        self.reset_stack();
     }
 
     fn on_key_comment(&mut self, key: KeyCode) -> Result<Action> {
@@ -452,6 +635,171 @@ impl App {
             _ => {}
         }
         Ok(Action::Continue)
+    }
+
+    /// Folds comment boxes away, or unfolds them — the view preference `s`
+    /// toggles.
+    ///
+    /// What it acts on follows the cursor, exactly as `d` does: the selected
+    /// box from inside the stack, the whole line's stack from anywhere else.
+    ///
+    /// A line whose boxes are in *mixed* states collapses rather than expands.
+    /// The reason to press `s` on a line is to get it out of the way, and a
+    /// toggle that flipped each box independently would leave the line half
+    /// folded and need a second press to finish a job the reviewer asked for
+    /// once. Expanding is then the answer to "they are all folded already".
+    ///
+    /// Nothing here writes: see [`App::collapsed`].
+    fn toggle_collapse(&mut self) {
+        let ids: Vec<String> = match self.focus {
+            Focus::Stack => self
+                .selected_comment()
+                .map(|comment| comment.id.clone())
+                .into_iter()
+                .collect(),
+            Focus::Diff | Focus::Sidebar => self
+                .comments_for_line(self.line_index())
+                .iter()
+                .map(|comment| comment.id.clone())
+                .collect(),
+        };
+        if ids.is_empty() {
+            self.status = NO_COMMENTS.to_owned();
+            return;
+        }
+
+        let folded = ids.iter().all(|id| self.collapsed.contains(id));
+        for id in ids {
+            if folded {
+                self.collapsed.remove(&id);
+            } else {
+                self.collapsed.insert(id);
+            }
+        }
+    }
+
+    /// Asks before deleting: picks what `d` would remove and enters
+    /// [`Mode::ConfirmDelete`] with the question in the status line.
+    ///
+    /// Which comment that is depends on where the cursor is, and the two rules
+    /// are different because the two situations are:
+    ///
+    /// * **inside the stack**, `d` takes the comment the cursor is on — the
+    ///   reviewer is looking at one comment of several and pointing at it;
+    /// * **on the diff**, it takes the *newest* on the line, which is the one
+    ///   just written and the one a reviewer reaching for `d` means. The
+    ///   oldest would be the strange choice: it is the note they have lived
+    ///   with longest.
+    ///
+    /// **From the sidebar it deletes nothing**, and says why. `c` does write
+    /// against the selected diff line from there, and the symmetry is tempting,
+    /// but the two keys are not symmetrical: `c` creates and is undone by `d`,
+    /// while `d` destroys and is undone by nothing. The file list shows files,
+    /// so a `d` pressed in it would be aimed at a comment the reviewer cannot
+    /// see — on a diff line they may never have looked at. When the sidebar
+    /// learns to list comments (Task 13) it will have a selection of its own for
+    /// this key to mean, and this arm is where that goes.
+    ///
+    /// With nothing on the line there is no question worth asking, so it says
+    /// so and stays in [`Mode::Browse`] rather than opening a confirmation
+    /// about nothing.
+    fn begin_delete(&mut self) {
+        let target = match self.focus {
+            Focus::Stack => self.selected_comment(),
+            Focus::Diff => self.comments_for_line(self.line_index()).last().copied(),
+            Focus::Sidebar => {
+                self.status = DELETE_NEEDS_A_COMMENT.to_owned();
+                return;
+            }
+        };
+        let Some(comment) = target else {
+            self.status = NO_COMMENTS.to_owned();
+            return;
+        };
+
+        let label = format!("{}:{}", comment.anchor.file, comment.anchor.line);
+        let id = comment.id.clone();
+        self.status = format!("delete comment at {label}? (y/n)");
+        self.mode = Mode::ConfirmDelete { id, label };
+    }
+
+    /// Answers the delete confirmation — `y` deletes, anything else cancels —
+    /// and leaves [`Mode::ConfirmDelete`] either way.
+    ///
+    /// The mode is taken out *first*, with [`std::mem::replace`], so that
+    /// leaving it is not a thing any branch below could forget: whatever
+    /// happens after this line, including the `?` on a store that could not be
+    /// written, the reviewer is back in [`Mode::Browse`] and their keyboard
+    /// does what it did before. A confirmation nobody can dismiss is worse
+    /// than no confirmation at all.
+    ///
+    /// Only a lowercase `y` confirms. Every ambiguity here — a shifted key, a
+    /// stray arrow, a repeated `d` — resolves toward keeping the comment,
+    /// because one of the two mistakes is recoverable by pressing `d` again and
+    /// the other is not recoverable at all.
+    ///
+    /// It deliberately does **not** rewrite `REVIEW-FEEDBACK.md`. That document
+    /// is an *export* (see the storage-model spec): `rv render` produces it from
+    /// the store, and a delete leaves it alone until the next one.
+    fn on_key_confirm_delete(&mut self, key: KeyCode) -> Result<Action> {
+        let Mode::ConfirmDelete { id, label } = std::mem::replace(&mut self.mode, Mode::Browse)
+        else {
+            // Unreachable: `on_key` dispatches here only from `ConfirmDelete`.
+            return Ok(Action::Continue);
+        };
+
+        if key != KeyCode::Char('y') {
+            self.status = format!("deletion cancelled, {label} kept");
+            return Ok(Action::Continue);
+        }
+
+        // Counted before the removal, and from the line rather than the whole
+        // review: "1 of 3" is what a reviewer needs in order to know how much
+        // of what they were looking at is still there.
+        let before = self.stack_len();
+        let removed = self
+            .review
+            .store
+            .remove_comment(&id)
+            .with_context(|| format!("could not delete the comment at {label}"))?;
+        self.reload_comments()?;
+        // A folded comment that is gone is not folded, it is gone. Leaving the
+        // id behind would fold a later comment that hashed to it — the same
+        // body on the same line — under a preference about a comment the
+        // reviewer deleted.
+        self.collapsed.remove(&id);
+        self.status = if removed {
+            format!("deleted {label} (1 of {before} on this line)")
+        } else {
+            // The store had no such comment: another process deleted it, or
+            // this one is re-answering a question about a comment that has
+            // already gone. Idempotent, and said out loud rather than reported
+            // as a deletion that did not happen.
+            format!("nothing to delete at {label}, it was already gone")
+        };
+        self.sync_stack();
+        Ok(Action::Continue)
+    }
+
+    /// Puts the stack cursor back inside the stack after the stack has changed
+    /// under it.
+    ///
+    /// The sibling of [`App::reset_stack`], which is for when the *selection*
+    /// moves: there the cursor should go back to the top, here it should stay
+    /// as close as it can to the comment it was on, because a delete is
+    /// something the reviewer does *inside* a stack they are working through.
+    /// An emptied stack hands the focus back to the diff — a pane with nothing
+    /// in it is not somewhere to leave a cursor.
+    fn sync_stack(&mut self) {
+        match self.stack_len() {
+            0 => {
+                self.comment_index = 0;
+                if self.focus == Focus::Stack {
+                    self.focus = Focus::Diff;
+                }
+            }
+            total => self.comment_index = self.comment_index.min(total - 1),
+        }
     }
 
     /// Enters [`Mode::Comment`] on an empty buffer, unless there is nothing to

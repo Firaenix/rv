@@ -47,6 +47,7 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 use std::sync::OnceLock;
+use std::time::SystemTime;
 
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
@@ -84,7 +85,11 @@ use tempfile::TempDir;
 /// The status line `App::new` starts on. Copied from `app.rs`'s private `HELP`
 /// on purpose: if the help text changes, these cases should be re-read rather
 /// than silently following it.
-const HELP: &str = "j/k line  [/] file  c comment  q quit";
+const HELP: &str = "j/k line  [/] file  c comment  enter stack  d delete  s fold  q quit";
+
+/// What `Enter`, `d` and `s` report on a line carrying no comments. Copied from
+/// `app.rs`'s private constant for the same reason [`HELP`] is.
+const NO_COMMENTS: &str = "no comments on this line";
 
 /// `alpha.rs` at the base of [`Fixture::multi`]. Every line is distinct, so a
 /// diff line can be located in the frame unambiguously.
@@ -674,6 +679,12 @@ fn any_key() -> impl Strategy<Value = KeyCode> {
             Just(KeyCode::Char('[')),
             Just(KeyCode::Char('c')),
             Just(KeyCode::Char('q')),
+            // The comment keys, and the one that answers `d`'s question: a
+            // random walk that could not press them would leave deleting and
+            // collapsing out of every fuzzed invariant below.
+            Just(KeyCode::Char('d')),
+            Just(KeyCode::Char('y')),
+            Just(KeyCode::Char('s')),
             Just(KeyCode::Down),
             Just(KeyCode::Up),
             Just(KeyCode::Enter),
@@ -753,45 +764,60 @@ fn any_body() -> impl Strategy<Value = String> {
 /// Every row of README's **Browsing** table, plus the keys it deliberately
 /// does not bind.
 ///
-/// Cross-checked against `app.rs::on_key_browse`: the two agree exactly —
-/// `j`/`Down`, `k`/`Up`, `Left`, `Right`, `]`, `[`, `c`, `q`, and nothing else.
+/// Cross-checked against `app.rs::on_key_browse`, which binds exactly these and
+/// nothing else: `j`/`Down`, `k`/`Up`, `Left`, `Right`, `]`, `[`, `c`, `d`,
+/// `s`, `Enter`, `Esc`, `q` — every one of which has a row below, and the rows
+/// after them are keys the table deliberately leaves inert.
+///
 /// The start state is a fresh reviewer on `alpha.rs` (five-plus diff lines,
-/// first of five files) with the diff focused, so every direction has somewhere
-/// to go except `k`/`Up` and `Left`, which are checked at their clamp.
+/// first of five files) with the diff focused and **no comments anywhere in the
+/// review**, so every direction has somewhere to go except `k`/`Up` and `Left`,
+/// which are checked at their clamp — and the four comment keys take their
+/// empty-line branch. What each of them does on a line that *has* comments is
+/// pinned end-to-end in `rv/tests/app.rs`, which is where a stack can be built
+/// by typing one; that is also where `d`'s confirmation lives, so no row here
+/// can leave the reviewer in `Mode::ConfirmDelete`.
 ///
 /// The focus column is what makes the movement rows mean anything now that
 /// there is more than one pane: `j` moves the line *because the diff has
-/// focus*, and every row here says which pane the key left the cursor in.
+/// focus*, and every row here says which pane the key left the cursor in. The
+/// status column is the other half of that: a key that refuses has to say so,
+/// and a key that navigates has to leave the help text alone.
 #[rstest]
-#[case::next_line_letter(KeyCode::Char('j'), Action::Continue, Mode::Browse, Focus::Diff, 0, 1)]
-#[case::next_line_arrow(KeyCode::Down, Action::Continue, Mode::Browse, Focus::Diff, 0, 1)]
-#[case::previous_line_letter(KeyCode::Char('k'), Action::Continue, Mode::Browse, Focus::Diff, 0, 0)]
-#[case::previous_line_arrow(KeyCode::Up, Action::Continue, Mode::Browse, Focus::Diff, 0, 0)]
-#[case::focus_sidebar(KeyCode::Left, Action::Continue, Mode::Browse, Focus::Sidebar, 0, 0)]
-#[case::focus_diff(KeyCode::Right, Action::Continue, Mode::Browse, Focus::Diff, 0, 0)]
-#[case::next_file(KeyCode::Char(']'), Action::Continue, Mode::Browse, Focus::Diff, 1, 0)]
-#[case::previous_file(KeyCode::Char('['), Action::Continue, Mode::Browse, Focus::Diff, 0, 0)]
-#[case::comment(KeyCode::Char('c'), Action::Continue, Mode::Comment, Focus::Diff, 0, 0)]
-#[case::quit(KeyCode::Char('q'), Action::Quit, Mode::Browse, Focus::Diff, 0, 0)]
+#[case::next_line_letter(KeyCode::Char('j'), Action::Continue, Mode::Browse, Focus::Diff, (0, 1), None)]
+#[case::next_line_arrow(KeyCode::Down, Action::Continue, Mode::Browse, Focus::Diff, (0, 1), None)]
+#[case::previous_line_letter(KeyCode::Char('k'), Action::Continue, Mode::Browse, Focus::Diff, (0, 0), None)]
+#[case::previous_line_arrow(KeyCode::Up, Action::Continue, Mode::Browse, Focus::Diff, (0, 0), None)]
+#[case::focus_sidebar(KeyCode::Left, Action::Continue, Mode::Browse, Focus::Sidebar, (0, 0), None)]
+#[case::focus_diff(KeyCode::Right, Action::Continue, Mode::Browse, Focus::Diff, (0, 0), None)]
+#[case::next_file(KeyCode::Char(']'), Action::Continue, Mode::Browse, Focus::Diff, (1, 0), None)]
+#[case::previous_file(KeyCode::Char('['), Action::Continue, Mode::Browse, Focus::Diff, (0, 0), None)]
+#[case::comment(KeyCode::Char('c'), Action::Continue, Mode::Comment, Focus::Diff, (0, 0), None)]
+#[case::quit(KeyCode::Char('q'), Action::Quit, Mode::Browse, Focus::Diff, (0, 0), None)]
+// The three comment keys, on a line with no comments on it.
+#[case::enter_an_empty_stack(KeyCode::Enter, Action::Continue, Mode::Browse, Focus::Diff, (0, 0), Some(NO_COMMENTS))]
+#[case::escape_outside_a_stack(KeyCode::Esc, Action::Continue, Mode::Browse, Focus::Diff, (0, 0), None)]
+#[case::delete_nothing(KeyCode::Char('d'), Action::Continue, Mode::Browse, Focus::Diff, (0, 0), Some(NO_COMMENTS))]
+#[case::collapse_nothing(KeyCode::Char('s'), Action::Continue, Mode::Browse, Focus::Diff, (0, 0), Some(NO_COMMENTS))]
 // Not in the table, and therefore inert.
-#[case::unbound_letter(KeyCode::Char('x'), Action::Continue, Mode::Browse, Focus::Diff, 0, 0)]
-#[case::unbound_uppercase(KeyCode::Char('J'), Action::Continue, Mode::Browse, Focus::Diff, 0, 0)]
-#[case::unbound_enter(KeyCode::Enter, Action::Continue, Mode::Browse, Focus::Diff, 0, 0)]
-#[case::unbound_escape(KeyCode::Esc, Action::Continue, Mode::Browse, Focus::Diff, 0, 0)]
-#[case::unbound_backspace(KeyCode::Backspace, Action::Continue, Mode::Browse, Focus::Diff, 0, 0)]
-#[case::unbound_tab(KeyCode::Tab, Action::Continue, Mode::Browse, Focus::Diff, 0, 0)]
-#[case::unbound_function(KeyCode::F(1), Action::Continue, Mode::Browse, Focus::Diff, 0, 0)]
-#[case::unbound_page_down(KeyCode::PageDown, Action::Continue, Mode::Browse, Focus::Diff, 0, 0)]
-#[case::unbound_home(KeyCode::Home, Action::Continue, Mode::Browse, Focus::Diff, 0, 0)]
-#[case::unbound_delete(KeyCode::Delete, Action::Continue, Mode::Browse, Focus::Diff, 0, 0)]
+#[case::unbound_letter(KeyCode::Char('x'), Action::Continue, Mode::Browse, Focus::Diff, (0, 0), None)]
+#[case::unbound_uppercase(KeyCode::Char('J'), Action::Continue, Mode::Browse, Focus::Diff, (0, 0), None)]
+#[case::unbound_backspace(KeyCode::Backspace, Action::Continue, Mode::Browse, Focus::Diff, (0, 0), None)]
+#[case::unbound_tab(KeyCode::Tab, Action::Continue, Mode::Browse, Focus::Diff, (0, 0), None)]
+#[case::unbound_function(KeyCode::F(1), Action::Continue, Mode::Browse, Focus::Diff, (0, 0), None)]
+#[case::unbound_page_down(KeyCode::PageDown, Action::Continue, Mode::Browse, Focus::Diff, (0, 0), None)]
+#[case::unbound_home(KeyCode::Home, Action::Continue, Mode::Browse, Focus::Diff, (0, 0), None)]
+#[case::unbound_delete(KeyCode::Delete, Action::Continue, Mode::Browse, Focus::Diff, (0, 0), None)]
 fn browse_keybindings(
     mut multi_app: App,
     #[case] key: KeyCode,
     #[case] action: Action,
     #[case] mode: Mode,
     #[case] focus: Focus,
-    #[case] file_index: usize,
-    #[case] line_index: usize,
+    // The selection the key should leave behind, as `(file, line)`: one
+    // column rather than two, so a row still reads as a row.
+    #[case] selection: (usize, usize),
+    #[case] status: Option<&str>,
 ) {
     let app = &mut multi_app;
     assert!(
@@ -804,21 +830,30 @@ fn browse_keybindings(
         "alpha.rs has too few diff lines to navigate"
     );
     assert_eq!(app.focus(), Focus::Diff, "a fresh reviewer reads the diff");
+    assert!(
+        shared_tables().comments().is_empty(),
+        "the tables' fixture has comments in it, so the three comment keys \
+         would take a branch these rows do not describe"
+    );
 
     assert_eq!(app.on_key(key).expect("handle the key"), action);
     assert_eq!(app.mode(), mode);
     assert_eq!(app.focus(), focus);
-    assert_eq!(app.file_index(), file_index);
-    assert_eq!(app.line_index(), line_index);
-    // Browsing never writes the status line: the help text is what a reviewer
-    // reads while they navigate, and `c` on a commentable line has nothing to
-    // report.
-    assert_eq!(app.status(), HELP);
+    assert_eq!((app.file_index(), app.line_index()), selection);
+    // Navigating never writes the status line: the help text is what a reviewer
+    // reads while they move around, and `c` on a commentable line has nothing
+    // to report. Only a refusal speaks.
+    assert_eq!(app.status(), status.unwrap_or(HELP));
     // Whatever the key did, it did not start a comment body behind the
     // reviewer's back.
     if mode == Mode::Browse {
         assert_eq!(app.buffer(), "");
     }
+    assert_eq!(
+        app.comment_index(),
+        0,
+        "no browsing key moves the stack cursor off the top"
+    );
 }
 
 /// Every row of README's **Typing a comment** table, plus the keys it does not
@@ -2015,6 +2050,217 @@ fn the_pane_the_status_and_the_anchor_agree_on_the_line() {
         Ok(())
     });
     seen.assert_all();
+}
+
+// ---------------------------------------------------------------------------
+// Deleting a comment
+// ---------------------------------------------------------------------------
+
+/// Every file in the **whole workspace**, as `(path relative to the root,
+/// mtime, bytes)`, sorted: a snapshot of everything on disk an action could
+/// have touched.
+///
+/// Used to assert that an action wrote *nothing at all*, which is a stronger
+/// and more durable claim than checking one filename — it holds whatever the
+/// store keeps its comments in, so it survives the move to `session.toml`.
+///
+/// The whole root rather than `.review/`, which is what this used to walk. A
+/// guard scoped to one directory only forbids writing *there*: a mutant that
+/// spilled the fold set into `rv-folds.txt` beside `.review/` — one level up,
+/// in the workspace the reviewer is reading — passed both collapse guards
+/// untouched. "Nothing reached disk" is the claim, and the workspace is where
+/// disk is.
+///
+/// The mtime is part of the snapshot on purpose. Bytes alone would let a
+/// rewrite that produced the same document pass as "nothing happened", and a
+/// rewrite *is* something that happened: the export exists to be read by
+/// another program, which sees the write whatever the bytes say.
+fn workspace_tree(root: &Path) -> Vec<(String, SystemTime, Vec<u8>)> {
+    let mut files = Vec::new();
+    let mut pending = vec![root.to_path_buf()];
+    while let Some(directory) = pending.pop() {
+        let Ok(entries) = fs::read_dir(&directory) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                pending.push(path);
+            } else {
+                let name = path
+                    .strip_prefix(root)
+                    .expect("a path under the workspace root")
+                    .display()
+                    .to_string();
+                let Ok(metadata) = fs::metadata(&path) else {
+                    // A dangling symlink, or a file that went between the
+                    // listing and the stat. Neither is something `rv` wrote.
+                    continue;
+                };
+                let modified = metadata.modified().expect("an mtime");
+                files.push((name, modified, fs::read(&path).unwrap_or_default()));
+            }
+        }
+    }
+    files.sort();
+    files
+}
+
+/// `d`'s question is answered by *every* key, and the disk agrees with the
+/// answer: `y` deletes, and anything else writes nothing whatsoever.
+///
+/// Both halves matter for different reasons. A confirmation that some key fails
+/// to dismiss is a reviewer stuck in a mode with no way out but Ctrl+C, which is
+/// the failure `on_key_confirm_delete` takes the mode out of the app *before*
+/// branching in order to make unrepresentable. And a cancel that still touched
+/// the workspace would mean "no" cost the reviewer something — checked here as
+/// byte-identity of the whole tree rather than as a comment count, because
+/// the export, the snapshots and the comments are all things a cancel must
+/// leave alone.
+#[test]
+fn no_key_leaves_the_reviewer_stuck_at_a_confirmation() {
+    let fixture = Fixture::multi();
+    let app = RefCell::new(fixture.app());
+
+    // `y` is weighted in rather than left to the key strategy: the confirmed
+    // branch is the one that writes, and sampling it rarely would make the
+    // receipt below flaky instead of informative.
+    let answer = prop_oneof![3 => any_key(), 1 => Just(KeyCode::Char('y'))];
+    let seen = Coverage::new(&["a cancelled deletion", "a confirmed deletion"]);
+    run_cases(64, (answer, 0usize..4), |(key, downs)| {
+        fixture.clear_comments();
+        let app = &mut *app.borrow_mut();
+        rewind(app);
+        press_n(app, KeyCode::Char('j'), downs);
+
+        press(app, KeyCode::Char('c'));
+        prop_assert_eq!(app.mode(), Mode::Comment);
+        type_text(app, "delete me");
+        press(app, KeyCode::Enter);
+        prop_assert_eq!(
+            fixture.comments().len(),
+            1,
+            "the case has nothing to delete"
+        );
+
+        press(app, KeyCode::Char('d'));
+        prop_assert!(
+            matches!(app.mode(), Mode::ConfirmDelete { .. }),
+            "d deleted without asking, or did not ask: {:?}",
+            app.mode()
+        );
+        let before = workspace_tree(fixture.root());
+
+        let action = app
+            .on_key(key)
+            .map_err(|error| TestCaseError::fail(error.to_string()))?;
+        prop_assert_eq!(
+            action,
+            Action::Continue,
+            "{:?} ended the review from inside a confirmation",
+            key
+        );
+        prop_assert_eq!(
+            app.mode(),
+            Mode::Browse,
+            "{:?} left the reviewer waiting at the question",
+            key
+        );
+
+        let confirmed = key == KeyCode::Char('y');
+        seen.hit(usize::from(confirmed));
+        if confirmed {
+            prop_assert!(
+                fixture.comments().is_empty(),
+                "y did not delete: {:?}",
+                fixture.comments()
+            );
+        } else {
+            prop_assert_eq!(
+                fixture.comments().len(),
+                1,
+                "{:?} deleted a comment it was not asked to",
+                key
+            );
+            prop_assert_eq!(
+                workspace_tree(fixture.root()),
+                before,
+                "{:?} wrote to the workspace while cancelling",
+                key
+            );
+        }
+        Ok(())
+    });
+    seen.assert_all();
+}
+
+// ---------------------------------------------------------------------------
+// Collapsing a box
+// ---------------------------------------------------------------------------
+
+/// Folding boxes away writes nothing. Collapse is a view preference of *this*
+/// session: the next reviewer to open this `.review/`, and every LLM reading
+/// the export, must see the review as it is rather than as this reviewer
+/// arranged their screen.
+///
+/// Asserted as byte-identity of the whole **workspace** across a run of `s`
+/// from both focuses, on a folded line and an unfolded one, rather than by
+/// grepping one file for one word: a preference that leaked into `session.toml`
+/// under some other name would pass the grep and fail this.
+///
+/// The workspace, not `.review/`, and that is the difference between this guard
+/// and the one it replaces. Scoped to `.review/`, it only forbade folding from
+/// writing *there*: a mutant that dropped the fold set into `rv-folds.txt` in
+/// the workspace root — one level up, in the tree the reviewer is reading —
+/// passed this test and its sibling in `--test app` both.
+#[test]
+fn collapsing_never_writes_to_the_workspace() {
+    let fixture = Fixture::multi();
+    let mut app = fixture.app();
+
+    // Two comments on one line, and a third on the next: enough for `s` to have
+    // something to do from the diff, from inside a stack, and on a line whose
+    // boxes are in mixed states.
+    for body in ["first finding", "second finding"] {
+        press(&mut app, KeyCode::Char('c'));
+        type_text(&mut app, body);
+        press(&mut app, KeyCode::Enter);
+    }
+    press(&mut app, KeyCode::Char('j'));
+    press(&mut app, KeyCode::Char('c'));
+    type_text(&mut app, "third finding");
+    press(&mut app, KeyCode::Enter);
+    press(&mut app, KeyCode::Char('k'));
+    assert_eq!(fixture.comments().len(), 3, "{:?}", fixture.comments());
+
+    let before = workspace_tree(fixture.root());
+    assert!(!before.is_empty(), "the review wrote nothing to compare");
+
+    for key in [
+        KeyCode::Char('s'), // fold the line, from the diff
+        KeyCode::Enter,     // into the stack
+        KeyCode::Char('s'), // unfold the selected box, leaving the line mixed
+        KeyCode::Char('j'), // onto the other box
+        KeyCode::Char('s'), // and fold that one
+        KeyCode::Esc,       // back to the diff
+        KeyCode::Char('s'), // fold the mixed line together
+        KeyCode::Char('j'), // onto the next line
+        KeyCode::Char('s'), // fold it too
+        KeyCode::Char('s'), // and unfold it
+    ] {
+        press(&mut app, key);
+        assert_eq!(
+            workspace_tree(fixture.root()),
+            before,
+            "{key:?} wrote to the workspace while arranging the screen"
+        );
+    }
+    assert!(
+        !app.collapsed().is_empty(),
+        "nothing ended up folded, so this proves nothing"
+    );
+
+    fixture.clear_comments();
 }
 
 // ---------------------------------------------------------------------------

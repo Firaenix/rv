@@ -71,7 +71,9 @@ const SUPPRESSED_NOTE: &str = "no semantic change — the difference is not visi
 /// Paints the whole reviewer.
 pub fn draw(frame: &mut Frame, app: &App) {
     let bar_rows = match app.mode() {
-        Mode::Browse => 1,
+        // A confirmation is a question in the status line, not a box to type
+        // in, so it takes the same single row browsing does.
+        Mode::Browse | Mode::ConfirmDelete { .. } => 1,
         Mode::Comment => COMMENT_ROWS,
     };
     let [bar, panes] =
@@ -87,7 +89,11 @@ pub fn draw(frame: &mut Frame, app: &App) {
 /// The status line, or the comment being typed.
 fn draw_bar(frame: &mut Frame, app: &App, area: Rect) {
     match app.mode() {
-        Mode::Browse => frame.render_widget(Paragraph::new(app.status()), area),
+        // `ConfirmDelete` puts its question in the status line, so it draws
+        // exactly as browsing does.
+        Mode::Browse | Mode::ConfirmDelete { .. } => {
+            frame.render_widget(Paragraph::new(app.status()), area)
+        }
         Mode::Comment => frame.render_widget(
             Paragraph::new(app.buffer()).block(Block::bordered().title("Comment")),
             area,
