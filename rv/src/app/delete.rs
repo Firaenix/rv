@@ -1,7 +1,7 @@
 //! Deleting a comment, behind the one confirmation in the reviewer.
 //!
-//! A delete goes through the store and stops there: the entry and its snapshot
-//! go, the in-memory copy is re-read, and `REVIEW-FEEDBACK.md` is **not**
+//! A delete goes through the store and stops there: the entry goes, the
+//! in-memory copy is re-read, and `REVIEW-FEEDBACK.md` is **not**
 //! rewritten. The asymmetry with saving is deliberate — the markdown is an
 //! *export* (storage-model spec §5), and a delete that rewrote it would also be
 //! rewriting whatever reply an LLM had appended since.

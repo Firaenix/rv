@@ -206,14 +206,8 @@ fn the_picker_shows_the_query_and_its_matches() {
     type_text(&mut app, "et");
 
     let text = buffer_text(&frame_at(&app, 100, 24));
-    assert!(
-        text.contains("/et"),
-        "the query is not on screen:\n{text}"
-    );
-    assert!(
-        text.contains("beta"),
-        "no candidate is on screen:\n{text}"
-    );
+    assert!(text.contains("/et"), "the query is not on screen:\n{text}");
+    assert!(text.contains("beta"), "no candidate is on screen:\n{text}");
 }
 
 /// A query nothing matches says so and takes the reviewer nowhere.
@@ -227,7 +221,11 @@ fn a_query_that_matches_nothing_jumps_nowhere() {
     type_text(&mut app, "zzzzz");
     app.on_key(KeyCode::Enter).expect("try to jump");
 
-    assert_eq!((app.file_index(), app.line_index()), before, "the cursor moved");
+    assert_eq!(
+        (app.file_index(), app.line_index()),
+        before,
+        "the cursor moved"
+    );
     assert!(
         app.status().contains("no symbol matches"),
         "the miss is not announced: {:?}",
@@ -312,7 +310,8 @@ fn the_scope_follows_the_cursor_between_changes() {
         "the fixture did not offer two changes with files: {seen:?}"
     );
     assert_ne!(
-        seen[0], seen[seen.len() - 1],
+        seen[0],
+        seen[seen.len() - 1],
         "the index was served from the cache after the scope changed: {seen:?}"
     );
 }

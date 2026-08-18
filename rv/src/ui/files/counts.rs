@@ -9,8 +9,8 @@
 use ratatui::style::Style;
 use ratatui::text::Span;
 
-use super::BAR;
 use super::super::text::colour;
+use super::BAR;
 use crate::gradient;
 use crate::gradient::Rgb;
 use crate::gradient::Stat;
@@ -75,4 +75,3 @@ pub(super) fn counts_columns((added, removed): &(String, String)) -> usize {
     }
     added.chars().count() + 1 + removed.chars().count()
 }
-

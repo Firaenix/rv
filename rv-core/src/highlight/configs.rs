@@ -21,7 +21,9 @@ use super::captures::CAPTURES;
 /// Generic over the error type only so that this module can name it without
 /// naming `tree_sitter::QueryError`, and so keep `tree-sitter` out of
 /// `rv-core`'s direct dependencies.
-pub(super) fn configured<E>(built: Result<HighlightConfiguration, E>) -> Option<HighlightConfiguration> {
+pub(super) fn configured<E>(
+    built: Result<HighlightConfiguration, E>,
+) -> Option<HighlightConfiguration> {
     let mut config = built.ok()?;
     let names: Vec<&str> = CAPTURES.iter().map(|(name, _)| *name).collect();
     config.configure(&names);
@@ -285,4 +287,3 @@ pub(super) fn markdown_injection(name: &str) -> Option<&'static HighlightConfigu
         .then(markdown_inline_configuration)
         .flatten()
 }
-

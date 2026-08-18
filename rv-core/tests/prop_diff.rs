@@ -272,10 +272,27 @@ fn render(diff: &FileDiff) -> Vec<String> {
 /// "a", "a"]` against head `["b", "\ttab"]`, difft 0.70 aligns `""` with `"b"`
 /// and then reports no change for the pair. What lines difftastic chooses to
 /// report is its own business; the *order* the module puts them in is not.
+///
+/// That is also why a two-sided step **re-anchors** the walk rather than being
+/// read against the cursors a one-sided step's cross-advance left behind. The
+/// cross-advance assumes every line it steps over is shared, and difftastic
+/// breaks that assumption outright: for base `["+plus", "  indented", "a",
+/// "  indented", "\ttab", "a"]` against head `["+plus", "let x = 1;", "", "a",
+/// "", "let x = 1;", "let x = 1;"]`, difft 0.70's `aligned_lines` pairs base 3
+/// with head 4 and then names that pair in no chunk at all, so the two head
+/// lines stepped over by the insertion at head 5 stand for one base line, not
+/// two. The drift is real and it is difftastic's, so it must not be charged to
+/// the module — and it cannot accumulate past a two-sided step, which names a
+/// line on each side and so pins both files at a position they agree on. A
+/// two-sided step is therefore held only to the last number **explicitly
+/// named** on its own side, which is what `order_entries` re-anchoring at
+/// every pair actually promises.
 fn patch_problems(diff: &FileDiff) -> Vec<String> {
     let mut problems = Vec::new();
     let mut base_cursor = 0usize;
     let mut head_cursor = 0usize;
+    let mut base_named = 0usize;
+    let mut head_named = 0usize;
     let mut index = 0usize;
 
     while let Some(line) = diff.lines.get(index) {
@@ -317,9 +334,10 @@ fn patch_problems(diff: &FileDiff) -> Vec<String> {
             (None, Some(head)) => head
                 .checked_sub(head_cursor)
                 .map(|run| (base_cursor + run, head + 1)),
-            // Two-sided: both cursors are placed outright.
+            // Two-sided: both cursors are placed outright, and the drift a
+            // one-sided cross-advance may have accumulated is discarded.
             (Some(base), Some(head)) => {
-                (base >= base_cursor && head >= head_cursor).then_some((base + 1, head + 1))
+                (base >= base_named && head >= head_named).then_some((base + 1, head + 1))
             }
         };
         let Some((next_base, next_head)) = advanced else {
@@ -329,6 +347,12 @@ fn patch_problems(diff: &FileDiff) -> Vec<String> {
             ));
             break;
         };
+        if let Some(base) = base_at {
+            base_named = base + 1;
+        }
+        if let Some(head) = head_at {
+            head_named = head + 1;
+        }
         base_cursor = next_base;
         head_cursor = next_head;
     }

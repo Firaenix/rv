@@ -38,7 +38,6 @@
 //! safe way to take a span's text when the string in hand is not byte-for-byte
 //! the blob line the span was measured against — a diff line, for instance.
 
-
 use tree_sitter_highlight::HighlightEvent;
 mod bounds;
 mod captures;
@@ -320,4 +319,3 @@ fn span_of(
         capture,
     })
 }
-

@@ -4,6 +4,13 @@ description = "jj-native terminal branch reviewer"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+readme = "../README.md"
+keywords = ["jujutsu", "jj", "code-review", "tui", "diff"]
+categories = ["command-line-utilities", "development-tools"]
 
 # Both a library and a binary: the library is where `session`, `app` and `ui`
 # live so they can be unit tested, and the named binary target is what gives

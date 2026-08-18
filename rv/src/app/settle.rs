@@ -53,7 +53,11 @@ impl App {
         let id = comment.id.clone();
         let label = format!("{}:{}", comment.anchor.file, comment.anchor.line);
         let reopening = comment.state == wanted;
-        let state = if reopening { CommentState::Open } else { wanted };
+        let state = if reopening {
+            CommentState::Open
+        } else {
+            wanted
+        };
 
         self.review
             .store

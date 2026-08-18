@@ -86,12 +86,12 @@ impl App {
                 _ => None,
             })
             .or_else(|| {
-                nodes
-                    .get(self.sidebar_row)
-                    .and_then(|_| nodes.iter().find_map(|node| match node.kind {
+                nodes.get(self.sidebar_row).and_then(|_| {
+                    nodes.iter().find_map(|node| match node.kind {
                         crate::tree::NodeKind::File { index } => Some(index),
                         _ => None,
-                    }))
+                    })
+                })
             })
     }
 
@@ -263,13 +263,11 @@ impl App {
         // The definition's source line, found in the diff by number rather than
         // by position: a diff holds only the lines that changed, so the nth
         // source line is rarely the nth diff line.
-        let found = self
-            .selected_diff()
-            .and_then(|diff| {
-                diff.lines
-                    .iter()
-                    .position(|line| line.right == Some(entry.symbol.line) || line.left == Some(entry.symbol.line))
-            });
+        let found = self.selected_diff().and_then(|diff| {
+            diff.lines.iter().position(|line| {
+                line.right == Some(entry.symbol.line) || line.left == Some(entry.symbol.line)
+            })
+        });
         match found {
             Some(line) => {
                 let row = self.plan().row_of_line(line).unwrap_or(0);

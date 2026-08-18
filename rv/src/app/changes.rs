@@ -82,15 +82,19 @@ impl App {
     fn change_under_cursor_index(&self) -> Option<usize> {
         let nodes = self.nodes();
         let row = self.sidebar_row().min(nodes.len().saturating_sub(1));
-        nodes.get(..=row)?.iter().rev().find_map(|node| match &node.kind {
-            tree::NodeKind::Commit { change_id, .. } => self
-                .review
-                .session
-                .changes
-                .iter()
-                .position(|change| &change.change_id == change_id),
-            _ => None,
-        })
+        nodes
+            .get(..=row)?
+            .iter()
+            .rev()
+            .find_map(|node| match &node.kind {
+                tree::NodeKind::Commit { change_id, .. } => self
+                    .review
+                    .session
+                    .changes
+                    .iter()
+                    .position(|change| &change.change_id == change_id),
+                _ => None,
+            })
     }
 
     /// The change the sidebar cursor is on or inside, as
@@ -107,18 +111,18 @@ impl App {
         }
         let nodes = self.nodes();
         let row = self.sidebar_row().min(nodes.len().saturating_sub(1));
-        nodes.get(..=row)?.iter().rev().find_map(|node| match &node.kind {
-            tree::NodeKind::Commit {
-                short_change,
-                short_commit,
-                subject,
-                ..
-            } => Some((
-                short_change.clone(),
-                short_commit.clone(),
-                subject.clone(),
-            )),
-            _ => None,
-        })
+        nodes
+            .get(..=row)?
+            .iter()
+            .rev()
+            .find_map(|node| match &node.kind {
+                tree::NodeKind::Commit {
+                    short_change,
+                    short_commit,
+                    subject,
+                    ..
+                } => Some((short_change.clone(), short_commit.clone(), subject.clone())),
+                _ => None,
+            })
     }
 }

@@ -220,7 +220,11 @@ impl App {
         let Some(entry) = self.review.files.get(file) else {
             return Ok(());
         };
-        let base_path = entry.source_path.as_deref().unwrap_or(&entry.path).to_owned();
+        let base_path = entry
+            .source_path
+            .as_deref()
+            .unwrap_or(&entry.path)
+            .to_owned();
         let head_path = entry.path.clone();
         let base_commit = self.review.session.base_commit.clone();
         let head_commit = self.review.session.head_commit.clone();

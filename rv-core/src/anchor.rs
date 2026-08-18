@@ -51,7 +51,9 @@ pub fn snapshot_start(text: &str, line: u32) -> u32 {
     if index >= lines {
         return 0;
     }
-    u32::try_from(index.saturating_sub(5)).unwrap_or(0).saturating_add(1)
+    u32::try_from(index.saturating_sub(5))
+        .unwrap_or(0)
+        .saturating_add(1)
 }
 
 pub fn snapshot_of(text: &str, line: u32) -> Vec<String> {

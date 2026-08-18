@@ -50,4 +50,3 @@ pub(super) fn unique_prefix(id: &str, all: &[&str]) -> usize {
         })
         .unwrap_or(ID_SHORT)
 }
-

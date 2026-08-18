@@ -24,7 +24,6 @@ pub enum Capture {
     Other,
 }
 
-
 /// The highlight names rv recognizes, each paired with the [`Capture`] it
 /// becomes. This doubles as the list handed to
 /// `HighlightConfiguration::configure`, so a `Highlight(i)` coming back from

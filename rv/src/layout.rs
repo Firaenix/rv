@@ -276,7 +276,11 @@ pub fn layout(area: Rect, split: Split, chrome: Chrome) -> Layout {
     // that overrode all of that would take the choice away on exactly the
     // screens where the reviewer most needs it. `z` and the chevron are the
     // choice; the degradation is the default.
-    let sidebar_columns = if hidden { 0 } else { split.sidebar_width(shared) };
+    let sidebar_columns = if hidden {
+        0
+    } else {
+        split.sidebar_width(shared)
+    };
     let diff_columns = shared - sidebar_columns;
 
     let sidebar = Rect::new(area.x, area.y, sidebar_columns, pane_rows);
@@ -381,4 +385,3 @@ fn floating(area: Rect) -> Rect {
         height,
     )
 }
-

@@ -117,4 +117,3 @@ pub fn abbreviate(n: u32) -> String {
     // crash.
     n.to_string()
 }
-

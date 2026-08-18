@@ -56,7 +56,6 @@ pub use paint::ascii_from_env;
 pub use paint::fill;
 pub use paint::render;
 
-
 use ratatui::style::{Color, Modifier};
 use ratatui::text::Span;
 

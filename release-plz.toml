@@ -1,0 +1,37 @@
+# release-plz owns the version, the changelog and the tag. `dist`'s
+# release.yml triggers on the tag release-plz pushes and owns everything after
+# it: the binaries, the installers, the Homebrew formula and the GitHub
+# release. Neither tool decides a version, so there is one source of truth.
+
+[workspace]
+# NOT `publish = false`. That still asks crates.io what the latest version is,
+# and the name `rv` there belongs to an unrelated project (promised-ai/rv,
+# currently 0.20.1) — release-plz would read that as this project's released
+# version and propose 0.20.2. `git_only` takes the version from our own tags
+# and skips `cargo publish` entirely, which is the honest description of how
+# this project is distributed: binaries, Homebrew and Nix.
+git_only = true
+
+git_tag_name = "v{{ version }}"
+
+# `dist` writes the GitHub release, uploads the artifacts and fills in the
+# body from this changelog. A release-plz release for the same tag would race
+# it.
+git_release_enable = false
+
+# Release when the release PR is merged, not on every push to master. The
+# alternative publishes whatever is on master the moment it lands, which is
+# the wrong default for a tool whose tag triggers a five-platform build.
+release_always = false
+
+[[package]]
+name = "rv-core"
+# It ships inside the `rv` binary and is not separately consumable, so it gets
+# no tag of its own. Both crates take `version.workspace`, so they cannot
+# drift regardless.
+git_tag_enable = false
+
+[changelog]
+# A commit whose body says it breaks something is never dropped from the
+# changelog by a filter above it.
+protect_breaking_commits = true

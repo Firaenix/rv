@@ -6,11 +6,11 @@ use rv::session;
 use rv::session::Review;
 use rv::stale;
 use rv_core::markdown;
+use rv_core::model::ChangeKind;
+use rv_core::model::Side;
 use rv_core::store::Comment;
 use rv_core::store::CommentState;
 use rv_core::store::SettledBy;
-use rv_core::model::ChangeKind;
-use rv_core::model::Side;
 use serde_json::json;
 
 use crate::NO_DESCRIPTION;
@@ -29,7 +29,9 @@ pub fn settle(review: &Review, id: &str, state: CommentState, by: SettledBy) -> 
     let comment = comments
         .iter()
         .find(|comment| comment.id == id)
-        .with_context(|| format!("no comment {id} in this review — ids are in the export's markers"))?;
+        .with_context(|| {
+            format!("no comment {id} in this review — ids are in the export's markers")
+        })?;
     let (target, said) = if comment.state == state {
         (CommentState::Open, "reopened")
     } else {

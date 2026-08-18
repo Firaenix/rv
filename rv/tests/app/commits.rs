@@ -2,8 +2,8 @@
 
 use crossterm::event::KeyCode;
 use ratatui::style::Modifier;
-use rv::layout::Split;
 use rv::app::SidebarTab;
+use rv::layout::Split;
 use rv::tree::NodeKind;
 
 use rv::app::App;
@@ -24,7 +24,6 @@ fn two_changes() -> Fixture {
     fixture.jj(&["new"]);
     fixture
 }
-
 
 /// Walks the commits list down to its first file row, whichever change holds
 /// it. The first change of a stack is often the empty working copy, which has
@@ -47,8 +46,13 @@ fn down_to_a_change_with_files(app: &mut App) {
     for _ in 0..20 {
         let nodes = app.commit_nodes();
         let row = app.sidebar_row();
-        let is_full_change = matches!(nodes.get(row).map(|n| &n.kind), Some(NodeKind::Commit { .. }))
-            && matches!(nodes.get(row + 1).map(|n| &n.kind), Some(NodeKind::File { .. }));
+        let is_full_change = matches!(
+            nodes.get(row).map(|n| &n.kind),
+            Some(NodeKind::Commit { .. })
+        ) && matches!(
+            nodes.get(row + 1).map(|n| &n.kind),
+            Some(NodeKind::File { .. })
+        );
         if is_full_change {
             return;
         }
@@ -375,7 +379,10 @@ fn the_other_tabs_name_no_change() {
     let workspace = two_changes();
     let mut app = workspace.app();
 
-    assert!(app.change_under_cursor().is_none(), "the files tab named one");
+    assert!(
+        app.change_under_cursor().is_none(),
+        "the files tab named one"
+    );
     to_comments(&mut app);
     assert!(
         app.change_under_cursor().is_none(),
@@ -687,7 +694,10 @@ fn i_puts_the_change_details_away_and_brings_them_back() {
     let mut app = workspace.app();
     to_commits(&mut app);
     app.on_key(KeyCode::Left).expect("focus the sidebar");
-    assert!(app.change_info().is_some(), "nothing was shown to begin with");
+    assert!(
+        app.change_info().is_some(),
+        "nothing was shown to begin with"
+    );
 
     app.on_key(KeyCode::Char('i')).expect("put it away");
     assert!(app.change_info().is_none(), "`i` hid nothing");
@@ -712,7 +722,8 @@ fn the_tooltip_stays_on_screen_and_off_the_sidebar() {
         let sidebar = areas(width, height, Split::default()).sidebar;
         let rows = sidebar_rows(&frame, width, height, Split::default());
         assert!(
-            rows.iter().any(|row| row.contains('.') || row.trim().is_empty()),
+            rows.iter()
+                .any(|row| row.contains('.') || row.trim().is_empty()),
             "the tooltip covered the list it describes at {width}x{height}"
         );
         assert!(sidebar.width <= width, "the sidebar left the frame");
@@ -744,7 +755,11 @@ fn the_change_and_the_commit_are_not_the_same_colour() {
             .position(|(byte, _)| text[byte..].starts_with(needle))
             .expect("the id is on the row")
     };
-    let ink = |at: usize| frame[(u16::try_from(at).expect("a small column"), row)].style().fg;
+    let ink = |at: usize| {
+        frame[(u16::try_from(at).expect("a small column"), row)]
+            .style()
+            .fg
+    };
 
     assert_ne!(
         ink(column(&short_change)),
@@ -763,8 +778,7 @@ fn the_change_and_the_commit_are_not_the_same_colour() {
 #[test]
 fn a_change_that_cannot_be_enumerated_raises_an_alert() {
     let workspace = two_changes();
-    let mut review =
-        rv::session::read(workspace.root(), None, None).expect("build the review");
+    let mut review = rv::session::read(workspace.root(), None, None).expect("build the review");
     // A commit id that names nothing, as a rewritten-away change would.
     review.session.changes[1].commit_id = "f".repeat(40);
     let mut app = rv::app::App::open(review, rv::app::DiffEngine::Structural).expect("open");

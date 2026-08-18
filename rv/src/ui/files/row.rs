@@ -9,11 +9,11 @@ use ratatui::style::Style;
 use ratatui::text::Line;
 use ratatui::text::Span;
 
+use super::super::text::clip;
+use super::super::text::colour;
 use super::MIN_PATH_COLUMNS;
 use super::counts::change_bar;
 use super::counts::counts_columns;
-use super::super::text::clip;
-use super::super::text::colour;
 use crate::gradient;
 use crate::tree::Node;
 use crate::tree::NodeKind;
@@ -173,7 +173,9 @@ fn name_spans(node: &Node, name: &str, lead: usize) -> Vec<Span<'static>> {
         if !bright.is_empty() {
             spans.push(Span::styled(
                 bright,
-                Style::default().fg(colour(ink)).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(colour(ink))
+                    .add_modifier(Modifier::BOLD),
             ));
         }
         if !dim.is_empty() {
@@ -202,8 +204,5 @@ fn name_spans(node: &Node, name: &str, lead: usize) -> Vec<Span<'static>> {
 fn split_at_char(name: &str, at: usize, unique: usize, length: usize) -> (String, String) {
     let id: Vec<char> = name.chars().skip(at).take(length).collect();
     let cut = unique.min(id.len());
-    (
-        id[..cut].iter().collect(),
-        id[cut..].iter().collect(),
-    )
+    (id[..cut].iter().collect(), id[cut..].iter().collect())
 }

@@ -367,5 +367,4 @@ impl App {
         app.load_selected()?;
         Ok(app)
     }
-
 }

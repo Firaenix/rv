@@ -206,7 +206,6 @@ fn run() -> Result<()> {
     }
 }
 
-
 mod commands;
 use commands::ByArg;
 use commands::SideArg;

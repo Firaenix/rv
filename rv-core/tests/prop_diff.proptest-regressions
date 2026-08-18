@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 5401977120cf5b976a75ae656e15fde6850cf03332944cefe1c0fa2708468e57 # shrinks to (old, new) = (["+plus", "  indented", "a", "  indented", "\ttab", "a"], ["+plus", "let x = 1;", "", "a", "", "let x = 1;", "let x = 1;"])

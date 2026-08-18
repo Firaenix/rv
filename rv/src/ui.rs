@@ -82,11 +82,11 @@ use crate::app::Alert;
 use crate::app::App;
 use crate::app::Mode;
 use crate::gradient;
-use crate::statusbar;
 use crate::layout::Chrome;
 use crate::layout::Layout;
 use crate::layout::Split;
 use crate::layout::layout;
+use crate::statusbar;
 
 /// Rows the symbol picker takes along the bottom: its two borders, the query
 /// being typed, and the matches under it.

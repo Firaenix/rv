@@ -163,7 +163,11 @@ impl App {
                     Some(Job::Shutdown) => return,
                     None => continue,
                 };
-                let diff = diff::compute(request.base.as_deref(), request.head.as_deref(), &request.path);
+                let diff = diff::compute(
+                    request.base.as_deref(),
+                    request.head.as_deref(),
+                    &request.path,
+                );
                 if sender
                     .send(Refined {
                         file: request.file,
@@ -190,7 +194,10 @@ impl App {
 
     fn apply_refined(&mut self, refined: Refined) {
         let line = (refined.file == self.file_index)
-            .then(|| self.selected_line().and_then(|line| line.right.or(line.left)))
+            .then(|| {
+                self.selected_line()
+                    .and_then(|line| line.right.or(line.left))
+            })
             .flatten();
         if let Some(slot) = self.diffs.get_mut(refined.file) {
             *slot = Some(refined.diff);

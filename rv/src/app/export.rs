@@ -27,9 +27,10 @@ impl App {
         let path = self.review.store.markdown_path();
         // The file name rather than the whole path: the status bar is one row,
         // and a reviewer knows which review they are in.
-        let name = path
-            .file_name()
-            .map_or_else(|| path.display().to_string(), |name| name.to_string_lossy().into_owned());
+        let name = path.file_name().map_or_else(
+            || path.display().to_string(),
+            |name| name.to_string_lossy().into_owned(),
+        );
         self.status = format!("wrote {name}");
         Ok(())
     }

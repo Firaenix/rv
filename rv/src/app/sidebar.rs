@@ -8,10 +8,10 @@
 use anyhow::Result;
 
 use super::App;
-use crate::tree;
 use super::Focus;
 use super::SidebarTab;
 use super::status::VIEW_KEYS_ARE_FOR_THE_FILE_LIST;
+use crate::tree;
 use crate::tree::NodeKind;
 
 impl App {
@@ -42,8 +42,10 @@ impl App {
         // and the previous tab's diff still on screen — the sidebar naming one
         // thing and the pane showing another, which is the one state this
         // interface must never be in.
-        if let Some(tree::NodeKind::File { index }) =
-            self.nodes().get(self.sidebar_row).map(|node| node.kind.clone())
+        if let Some(tree::NodeKind::File { index }) = self
+            .nodes()
+            .get(self.sidebar_row)
+            .map(|node| node.kind.clone())
         {
             self.select_node_file(index)?;
         }

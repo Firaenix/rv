@@ -122,13 +122,16 @@ pub fn add_comment(
         Side::Right => (file.path.as_str(), review.session.head_commit.as_str()),
     };
     // A refusal a program can act on beats an anchor that never resolves.
-    let blob = review.repo.read_blob(commit, anchored_path)?.with_context(|| {
-        let where_ = match side {
-            Side::Left => "the base",
-            Side::Right => "the head",
-        };
-        format!("{anchored_path} does not exist at {where_} of this review")
-    })?;
+    let blob = review
+        .repo
+        .read_blob(commit, anchored_path)?
+        .with_context(|| {
+            let where_ = match side {
+                Side::Left => "the base",
+                Side::Right => "the head",
+            };
+            format!("{anchored_path} does not exist at {where_} of this review")
+        })?;
     let text = String::from_utf8(blob)
         .with_context(|| format!("{anchored_path} is not text on that side"))?;
     let lines = u32::try_from(text.lines().count()).unwrap_or(u32::MAX);
@@ -137,4 +140,3 @@ pub fn add_comment(
     }
     save_comment(review, anchored_path, side, line, commit, body)
 }
-

@@ -197,10 +197,7 @@ fn status_reports_a_stale_comment_as_outdated() {
 
     // A comment written against a line, by hand — the TUI is not what is under
     // test here — and then the line rewritten under it.
-    let head = workspace
-        .rv(&["status", "--json"])
-        .stdout
-        .clone();
+    let head = workspace.rv(&["status", "--json"]).stdout.clone();
     let head: serde_json::Value =
         serde_json::from_slice(&head).expect("status --json is valid json");
     let head_commit = head["head"].as_str().expect("a head commit");
@@ -229,12 +226,14 @@ fn status_reports_a_stale_comment_as_outdated() {
     let report: serde_json::Value =
         serde_json::from_slice(&output.stdout).expect("status --json is valid json");
     assert_eq!(
-        report["comments"]["outdated"], 1,
+        report["comments"]["outdated"],
+        1,
         "a comment whose hash cannot be found is not reported outdated: {}",
         streams(&output)
     );
     assert_eq!(
-        report["comments"]["open"], 0,
+        report["comments"]["open"],
+        0,
         "and it is not also counted as open: {}",
         streams(&output)
     );
@@ -349,7 +348,10 @@ fn tree(root: &std::path::Path) -> Vec<(String, std::time::SystemTime, Vec<u8>)>
                 pending.push(path);
             } else if let Ok(metadata) = std::fs::metadata(&path) {
                 files.push((
-                    path.strip_prefix(root).expect("under the root").display().to_string(),
+                    path.strip_prefix(root)
+                        .expect("under the root")
+                        .display()
+                        .to_string(),
                     metadata.modified().expect("an mtime"),
                     std::fs::read(&path).unwrap_or_default(),
                 ));
@@ -384,7 +386,8 @@ fn a_degraded_trunk_is_named_rather_than_implied() {
     let report: serde_json::Value =
         serde_json::from_slice(&json.stdout).expect("status --json is valid json");
     assert_eq!(
-        report["degraded_base"], true,
+        report["degraded_base"],
+        true,
         "a script cannot tell the difference: {}",
         streams(&json)
     );
@@ -435,7 +438,12 @@ fn rv_comment_saves_an_anchored_comment_and_refreshes_the_export() {
     workspace.commit("first change");
 
     let output = workspace.rv(&[
-        "comment", "a.rs", "--line", "2", "-m", "this line needs a name",
+        "comment",
+        "a.rs",
+        "--line",
+        "2",
+        "-m",
+        "this line needs a name",
     ]);
     assert!(output.status.success(), "{}", streams(&output));
     let said = String::from_utf8_lossy(&output.stdout);

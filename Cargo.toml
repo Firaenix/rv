@@ -6,6 +6,10 @@ resolver = "3"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.89"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/Firaenix/rv"
+homepage = "https://github.com/Firaenix/rv"
+authors = ["Nick Carton <nick@firaenix.me>"]
 
 [workspace.dependencies]
 anyhow = "1"
@@ -52,3 +56,8 @@ tree-sitter-tags = "0.26"
 tree-sitter-toml-ng = "0.7"
 tree-sitter-typescript = "0.23"
 tree-sitter-yaml = "0.7"
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"

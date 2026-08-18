@@ -193,10 +193,6 @@ fn lead_of(app: &App, node: &Node) -> usize {
     node.depth * 2 + row_mark(app, node).chars().count()
 }
 
-
-
-
-
 /// The sidebar's one- or two-character mark for how a file changed.
 fn marker(kind: ChangeKind) -> &'static str {
     match kind {

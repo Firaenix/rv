@@ -19,11 +19,11 @@ use super::ARROW;
 use super::ARROW_LEFT;
 use super::PIPE;
 use super::RV_ASCII;
-use super::columns;
-use super::printable;
 use super::Segment;
 use super::colour;
+use super::columns;
 use super::neutral;
+use super::printable;
 
 /// The bar, exactly `width` columns wide.
 ///
@@ -189,4 +189,3 @@ fn separator(glyph: &'static str, ink: Rgb, ground: Rgb) -> Span<'static> {
 pub fn fill() -> Rgb {
     neutral(0.86)
 }
-

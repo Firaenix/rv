@@ -196,7 +196,10 @@ impl Fixture {
     /// range case filtered out from under it.
     pub fn stale_line() -> Self {
         let fixture = Self::empty();
-        fixture.write("a.rs", "fn a() {\n    let w = 1;\n    let x = 2;\n    let y = 3;\n}\n");
+        fixture.write(
+            "a.rs",
+            "fn a() {\n    let w = 1;\n    let x = 2;\n    let y = 3;\n}\n",
+        );
         fixture.jj(&["describe", "-m", "first change"]);
         fixture.jj(&["new"]);
         fixture

@@ -3,11 +3,11 @@
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::widgets::Block;
-use ratatui::widgets::BorderType;
 use ratatui::style::Modifier;
 use ratatui::style::Style;
 use ratatui::text::Line;
+use ratatui::widgets::Block;
+use ratatui::widgets::BorderType;
 use ratatui::widgets::Paragraph;
 use rv_core::store::CommentState;
 
@@ -95,7 +95,10 @@ pub(super) fn draw_bar(frame: &mut Frame, app: &App, area: Rect) {
                 Paragraph::new(lines).block(
                     Block::bordered()
                         .border_type(BorderType::Rounded)
-                        .title(format!("Find a symbol ({} in scope)", app.symbols_in_scope())),
+                        .title(format!(
+                            "Find a symbol ({} in scope)",
+                            app.symbols_in_scope()
+                        )),
                 ),
                 area,
             )

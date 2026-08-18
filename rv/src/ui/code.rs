@@ -72,7 +72,6 @@ impl<'a> Highlighting<'a> {
             _ => &[],
         }
     }
-
 }
 
 /// One line of the diff, washed by what kind of line it is, syntax coloured on

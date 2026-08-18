@@ -219,7 +219,9 @@ fn a_comment_outside_the_range_is_not_listed() {
     let stored = workspace.store().comments().expect("read the store");
     assert_eq!(stored.len(), 2, "filtering the list deleted a comment");
     assert!(
-        stored.iter().any(|comment| comment.anchor.file == "gone.rs"),
+        stored
+            .iter()
+            .any(|comment| comment.anchor.file == "gone.rs"),
         "the out-of-range comment left the store"
     );
     drop(app);

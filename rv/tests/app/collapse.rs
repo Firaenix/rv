@@ -62,7 +62,11 @@ fn hiding_the_sidebar_takes_the_focus_with_it() {
 
     app.on_key(KeyCode::Char('z')).expect("hide it");
 
-    assert_eq!(app.focus(), Focus::Diff, "the focus stayed on a hidden pane");
+    assert_eq!(
+        app.focus(),
+        Focus::Diff,
+        "the focus stayed on a hidden pane"
+    );
 }
 
 /// The whole reason the fold exists: a phone over ssh has no comfortable `z`,
@@ -230,8 +234,7 @@ fn a_selection_draws_before_difftastic_has_run() {
 #[test]
 fn the_swap_keeps_the_line_you_were_on() {
     let workspace = Fixture::renamed();
-    let review =
-        rv::session::build(workspace.root(), Some("@--"), None).expect("build the review");
+    let review = rv::session::build(workspace.root(), Some("@--"), None).expect("build the review");
     let mut app = rv::app::App::open(review, rv::app::DiffEngine::Auto).expect("open");
 
     // Onto a line that exists in both engines' output, and remember its number.
@@ -272,7 +275,8 @@ fn r_picks_up_changes_made_since_the_review_was_opened() {
     let workspace = Fixture::new();
     let mut app = workspace.app();
     let before = app.files().len();
-    app.on_key(KeyCode::Char('t')).expect("a preference to keep");
+    app.on_key(KeyCode::Char('t'))
+        .expect("a preference to keep");
 
     // The world moves underneath the open reviewer.
     workspace.write("late.rs", "fn late() {}\n");
@@ -331,8 +335,14 @@ fn a_refresh_picks_up_comments_another_process_wrote() {
 
     // As `rv comment` writes it, through the same store.
     let review = rv::session::read(workspace.root(), None, None).expect("read the range");
-    rv::session::add_comment(&review, "a.rs", rv_core::model::Side::Right, 2, "from outside")
-        .expect("save a comment");
+    rv::session::add_comment(
+        &review,
+        "a.rs",
+        rv_core::model::Side::Right,
+        2,
+        "from outside",
+    )
+    .expect("save a comment");
 
     app.on_key(KeyCode::Char('R')).expect("refresh");
     assert_eq!(
@@ -362,7 +372,10 @@ fn a_dropped_refinement_is_reasked_and_never_orphans_its_flag() {
         app.on_key(KeyCode::Char('[')).expect("previous file");
     }
     app.finish_loading();
-    assert!(!app.refining(), "the selected file's flag survived its answer");
+    assert!(
+        !app.refining(),
+        "the selected file's flag survived its answer"
+    );
 
     // Every file the walk touched either has its structural diff or is
     // re-asked on selection — none is silently pinned to the fast one.

@@ -14,7 +14,6 @@ pub(super) fn text_end(source: &[u8], start: usize, end: usize) -> usize {
     }
 }
 
-
 /// True for a UTF-8 continuation byte — the bytes that are *not* the start of
 /// a character. Works on bytes that are not valid UTF-8 at all, which is the
 /// point: this module clamps blobs it has not validated.
@@ -42,4 +41,3 @@ pub(super) fn floor_byte_boundary(source: &[u8], mut at: usize, floor: usize) ->
 // ---------------------------------------------------------------------------
 // Grammars
 // ---------------------------------------------------------------------------
-

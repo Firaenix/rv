@@ -85,10 +85,7 @@ pub(super) fn draw_diff(frame: &mut Frame, app: &App, area: Rect) {
 
     let highlighting = Highlighting::of(app);
     // The path's own answer, not the cache's: see `NO_GRAMMAR`.
-    let block = pane(
-        title(diff, highlight::language_of(&diff.path)),
-        focused,
-    );
+    let block = pane(title(diff, highlight::language_of(&diff.path)), focused);
     let text = body(app, highlighting, diff, area);
     frame.render_widget(Paragraph::new(text).block(block), area);
 }

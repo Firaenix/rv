@@ -4,6 +4,10 @@ description = "Terminal-free core of rv: jj-lib access, diffs, anchors and .revi
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+categories = ["development-tools"]
 
 [dependencies]
 blake3.workspace = true

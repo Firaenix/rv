@@ -34,18 +34,41 @@ becomes a pull request, or instead of ever becoming one.
   the default for `jj git init` as of jj 0.44. `rv` needs `.git/info/exclude` to
   keep `.review/` out of the change you are reviewing; see
   [Current limits](#current-limits) for what happens without it.
-- Rust 1.89 or newer, edition 2024 (both forced by `jj-lib` 0.44).
+- Rust 1.89 or newer, edition 2024 (both forced by `jj-lib` 0.44) — to build
+  from source. The prebuilt binaries below need none of it.
 - [difftastic](https://difftastic.wilfred.me.uk/) (`difft`) on `PATH`, optional.
   With it you get structural, language-aware diffs. Without it `rv` silently
   falls back to a line diff and labels the pane `fallback` so you always know
   which one you are reading.
 
-## Build
+## Install
+
+```sh
+# macOS and Linux
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/Firaenix/rv/releases/latest/download/rv-installer.sh | sh
+
+# Windows
+powershell -c "irm https://github.com/Firaenix/rv/releases/latest/download/rv-installer.ps1 | iex"
+
+# Homebrew
+brew install Firaenix/tap/rv
+```
+
+Prebuilt binaries are published for macOS (Apple Silicon and Intel), Linux
+(x86-64 and arm64) and Windows (x86-64). Each release also carries the archives
+and their checksums directly, if you would rather not pipe a script into a
+shell.
+
+### From source
 
 ```sh
 cargo build --release        # ./target/release/rv
 cargo install --path rv      # or put it on your PATH
 ```
+
+`rv` is not on crates.io: the name belongs to an unrelated project there, so
+`cargo install rv` installs something else. Install from this repository, or
+use one of the binaries above.
 
 ## Usage
 
@@ -229,10 +252,9 @@ deletes nothing and says so, while `s` still folds the line the diff is on.
 | `Enter` | Save; the status line reports `path:line` |
 | `Esc` | Discard |
 
-Comments are single-line in this milestone. Saving one writes it through to disk
-immediately — `comments.json`, its snapshot, and a rewritten
-`REVIEW-FEEDBACK.md` — so a comment survives the process being killed the
-instant after `Enter`.
+Comments are single-line for now. Saving one writes it through to disk
+immediately — `comments.json` and a rewritten `REVIEW-FEEDBACK.md` — so a
+comment survives the process being killed the instant after `Enter`.
 
 A comment anchors to the side of the diff its line belongs to: a removed line
 anchors to the base revision, added and context lines to the head. The line
@@ -270,8 +292,8 @@ answer.
 
 **Deleting a comment is permanent.** `d` asks first — the status line reads
 `delete comment at <path>:<line>? (y/n)` — and only a lowercase `y` goes
-through; every other key keeps the comment. What `y` removes is the comment and
-its snapshot, out of `comments.json`, with nothing that undoes it.
+through; every other key keeps the comment. What `y` removes is the comment's
+entry in `comments.json`, with nothing that undoes it.
 
 `REVIEW-FEEDBACK.md` is an **export**, not a document kept continuously in step
 with the store. `rv render` writes it, and so does every comment you save in the
@@ -368,8 +390,8 @@ the same label, if `difft` is absent or returns something unexpected.
 
 ## Current limits
 
-This is milestone 1 — the point at which `rv` can review its own development
-stack. Known and deliberate gaps:
+This is 0.1.0 — the point at which `rv` reviews its own development stack, and
+has been doing so for the whole of its own history. Known and deliberate gaps:
 
 - **Line-scoped comments only.** One line, one comment, one line of text. No
   multi-line selections, no multi-line comment bodies, no symbol- or
@@ -422,7 +444,19 @@ radius of a jj-lib upgrade to one module.
 ## Development
 
 ```sh
+nix develop          # cargo, jj and difftastic at the versions CI uses
+
 cargo test --workspace
-cargo clippy --workspace --all-targets
+cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all --check
 ```
+
+The suite spawns a real jj workspace per fixture and shells out to `difft`, so
+both must be on `PATH` — `nix develop` is the shortest way to have exactly the
+versions CI runs. CI runs those three commands inside that same shell, so a
+green run locally means a green run there.
+
+## Licence
+
+MIT or Apache-2.0, at your option. See [LICENSE-MIT](LICENSE-MIT) and
+[LICENSE-APACHE](LICENSE-APACHE).

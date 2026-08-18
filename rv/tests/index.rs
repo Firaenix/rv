@@ -772,10 +772,7 @@ fn the_walk_follows_the_scope_order_not_the_file_numbers() {
     let second = "fn later() {}\n";
     // File 9 comes first in scope and file 2 second: the caller's order is the
     // walk's order, and it is not the numeric one.
-    let scope = vec![
-        added(9, "first.rs", first),
-        added(2, "second.rs", second),
-    ];
+    let scope = vec![added(9, "first.rs", first), added(2, "second.rs", second)];
     let index = Index::of(&scope);
 
     assert_eq!(

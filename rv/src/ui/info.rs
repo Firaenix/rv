@@ -105,7 +105,9 @@ fn labelled(label: &str, value: &str, ink: gradient::Rgb, width: usize) -> Line<
         ),
         Span::styled(
             short,
-            Style::default().fg(colour(ink)).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(colour(ink))
+                .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
             clip(&rest, width.saturating_sub(15)),

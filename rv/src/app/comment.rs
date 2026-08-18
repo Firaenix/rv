@@ -1,6 +1,6 @@
 //! Writing a comment: the buffer, the store, and the export.
 //!
-//! Saving writes `comments.json` and its snapshot atomically through the store
+//! Saving writes `comments.json` atomically through the store
 //! and then rewrites `REVIEW-FEEDBACK.md`, folding in any reply an LLM appended
 //! first — so the file an agent reads is never stale by more than one
 //! keystroke. The in-memory copy is then re-read from the store, so what is on
@@ -137,4 +137,3 @@ impl App {
         Ok(())
     }
 }
-

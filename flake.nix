@@ -32,6 +32,8 @@
 
           meta = {
             description = "A jj-native terminal branch reviewer";
+            homepage = "https://github.com/Firaenix/rv";
+            license = with pkgs.lib.licenses; [ mit asl20 ];
             mainProgram = "rv";
           };
         };

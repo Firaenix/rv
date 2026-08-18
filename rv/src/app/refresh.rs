@@ -43,11 +43,7 @@ impl App {
         // The file, not the index: a rebased stack lists files in a new order,
         // and index 3 of the new list is not what the reviewer was reading.
         if let Some(path) = selected
-            && let Some(index) = fresh
-                .review
-                .files
-                .iter()
-                .position(|file| file.path == path)
+            && let Some(index) = fresh.review.files.iter().position(|file| file.path == path)
         {
             fresh.select_file(index)?;
         }

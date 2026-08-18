@@ -9,7 +9,10 @@ pub enum Mode {
     Comment,
     /// Every key answers this — `y` deletes, anything else cancels — so it cannot
     /// become a state the reviewer is stuck in.
-    ConfirmDelete { id: String, label: String },
+    ConfirmDelete {
+        id: String,
+        label: String,
+    },
     /// The query shares the comment buffer: one place text arrives in this
     /// reviewer, rather than two places to get backspace and escape right.
     Pick,

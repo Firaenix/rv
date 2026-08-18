@@ -323,7 +323,10 @@ impl App {
     /// Which change the commits view's `file`th row belongs to.
     #[must_use]
     pub fn commit_change(&self, file: usize) -> Option<usize> {
-        self.commit_index().pairs.get(file).map(|&(change, _)| change)
+        self.commit_index()
+            .pairs
+            .get(file)
+            .map(|&(change, _)| change)
     }
 }
 

@@ -21,9 +21,9 @@
 //!    see [`bounds_fence`]. An unbalanced one is ordinary text, so a stray fence
 //!    in a body cannot swallow a reply or reach into the next entry.
 
+use crate::model::Anchor;
 use crate::model::Side;
 use crate::store::Comment;
-use crate::model::Anchor;
 use crate::store::CommentState;
 use crate::store::Session;
 
