@@ -131,19 +131,27 @@ and descriptions beside them.
         ╭─ keys ─────────────────────────────────────────────────────╮
         │                                                            │
         │  move                      comments                        │
-        │    j / ↓   next line         c      comment on this line   │
-        │    k / ↑   previous line     enter  open the comment stack │
-        │    ] / [   next / prev file  d      delete (asks first)    │
+        │    ↓  (j)  next row          c      comment on this line   │
+        │    ↑  (k)  previous row      enter  open the comment stack │
+        │    ]  [    next / prev file  d      delete (asks first)    │
         │                              s      fold                   │
         │  focus                                                     │
-        │    ← / →   sidebar / diff  view                            │
-        │    tab     files/comments    t      tree or list           │
-        │                              < / >  resize the panes       │
+        │    ←  (h)  sidebar         view                            │
+        │    →  (l)  diff              t      tree or list           │
+        │    tab     files/comments    < >    resize the panes       │
         │  quit                                                      │
         │    q       quit              ?      close this             │
         │                                                            │
         ╰────────────────────────────────────────────────────────────╯
 ```
+
+**Ruling — the arrows are the binding; `hjkl` are aliases shown in parentheses.**
+Everywhere the keymap is presented — this popup, the status bar, the README — the
+arrow leads and the vim key follows it in brackets. rv is a tool a reviewer may
+open once a week, and the arrows are the keys someone can find without being
+told. `h` and `l` are added as aliases for Left and Right so the vim set is
+complete rather than half-present, but they are the alternative spelling, not the
+name of the binding.
 
 **It must fit without scrolling at 80×24**, which is the size a reviewer over ssh
 actually has. That is what drives the column layout: a single list of twenty
@@ -155,6 +163,45 @@ back to fewer — and only when even one column will not fit does it scroll.
 Files tab, `t` in the Comments tab. A reviewer learning the tool should see that
 the key exists and be told why it is inert here, rather than wondering whether
 they misread the manual.
+
+### It follows what you are looking at
+
+What a key does depends on what is selected, so the popup leads with the context
+you are actually in — the diff, a file, a commit, a comment — and the status bar
+names that context too.
+
+```rust
+pub enum Context { Files, Commit, Comments, Diff, Comment, Typing, Confirm }
+```
+
+| Where the cursor is | Context |
+|---|---|
+| Sidebar, Files tab, on a file | `Files` |
+| Sidebar, Files tab, on a commit node | `Commit` |
+| Sidebar, Comments tab | `Comments` |
+| Diff pane | `Diff` |
+| Inside a line's comment stack | `Comment` |
+| Typing a comment | `Typing` |
+| Answering a delete | `Confirm` |
+
+**Ruling — the context is derived, never stored.** It is a function of the mode,
+the focus, the sidebar tab and the kind of row under the cursor. A stored copy
+would need invalidating on every one of those changes and nothing would be
+watching — the same reasoning that keeps `outdated` derived in the storage spec.
+
+**Ruling — the popup emphasises by context; it never hides by context.** The
+group matching where you are comes first and is titled for it; every other group
+still appears, and bindings inert here are dimmed. Hiding them would make the one
+screen built for learning the tool teach less than it could: a reviewer wants to
+know what `d` does *before* they move onto a comment, not after. Contextual menus
+that hide are how a user ends up believing a feature does not exist.
+
+**Ruling — the `contexts` field drives dispatch as well as display.** A `Binding`
+records which contexts it applies in, `on_key_browse` consults that to decide
+whether a key does anything, and the popup consults the same field to decide what
+to emphasise and what to dim. So a key that is inert cannot be shown as active,
+and a key shown as active cannot be inert — the same one-table discipline that
+keeps the keymap and the help from drifting.
 
 **Ruling — the popup is generated from the same table the key handler dispatches
 from.** A help screen maintained by hand is a help screen that lies; this project
@@ -219,10 +266,52 @@ strength on top.
 - Comment boxes keep their blue borders and render their bodies as prose. Prose
   is not code, and highlighting it would be a category error.
 
-**Ruling — themes are not configurable in v1.** One palette, chosen to be legible
-on both light and dark terminals, mapping tree-sitter capture names to the 16
-ANSI colours rather than to truecolour, so it degrades correctly on a terminal
-that has only 16. A theme system is a config file, and v1 has no config file.
+### The theme is the terminal's, not rv's
+
+**Ruling — code text is painted only in the 16 indexed ANSI colours, never in
+RGB.** This is not a degradation strategy, it is the whole theming design.
+
+When a program emits colour index 4, the terminal substitutes whatever *its*
+scheme calls blue. The 16 indexed colours are therefore already a pass-through to
+the user's preferences: their Solarized, their Gruvbox, their hand-tuned
+one-off, applied automatically and identically to every other tool they run.
+Emitting `38;2;r;g;b` does the opposite — it dictates exact colours and ignores
+the scheme entirely, which is what makes a syntax theme something a user then has
+to configure. rv should never need a theme option, because rv should never be the
+thing deciding.
+
+The mapping is therefore semantic rather than chromatic:
+
+| Capture | Index | Why |
+|---|---|---|
+| Comment | 8 (bright black) | every scheme defines 8 as its muted tone against its own background — this is the one that must never be white |
+| Keyword | 5 (magenta) | |
+| Function | 4 (blue) | |
+| Type, Constructor | 6 (cyan) | |
+| String | 2 (green) | |
+| Number, Constant | 3 (yellow) | |
+| Punctuation, Variable, Other | default | unstyled text inherits the terminal's own foreground |
+
+Light and dark terminals need no special handling: a scheme built for a light
+background defines its own 8 as a dark grey, and one built for a dark background
+defines it as a light grey. Asking rv to detect which is to reimplement, badly, a
+decision the user already made.
+
+**Ruling — rv does not query the terminal's palette.** It could: `OSC 4;n;?`
+returns a palette entry and `OSC 10`/`11` the default foreground and background,
+and most modern emulators answer. But it means writing an escape sequence and
+then *waiting for a reply that a multiplexer may swallow and an older terminal
+never sends*, inside a TUI that must not hang on startup. The indexed colours
+give the same result without asking a question that can go unanswered.
+
+**Ruling — chrome may use RGB where it genuinely must; code text may not.** The
+change gradient cannot exist in 16 colours, so it uses truecolour and degrades to
+the 256-colour cube and then to a hard split. That exception is bounded to the
+sidebar's tint, the alert orange and the focus magenta — decorations rv owns. The
+code a reviewer is reading belongs to their terminal.
+
+**Ruling — themes are not configurable in v1**, and after the above they should
+not need to be. A theme system is a config file, and v1 has no config file.
 
 ## 7. The sidebar: tree or list
 
@@ -282,6 +371,65 @@ knowing a commit is coming.
 
 A commit row aggregates the change gradient of everything beneath it, so a change
 that is mostly deletions reads that way before it is expanded.
+
+### How big, and in what order
+
+The gradient says what *shape* a change is. It does not say how *large*, and a
+reviewer deciding what to read next needs both — a 900-line lockfile update and a
+12-line logic change should not look alike.
+
+**Every row carries its counts**, right-aligned, in the same green and red the
+gradient uses:
+
+```
+▾ ytskpxpw  close the jj_lib alias bypass            +148  −12
+  ▾ rv-core/tests                                     +148  −12
+      constraints.rs                                  +148  −12
+▾ zmomvwzm  enforce the constraints mechanically      +212  −4
+  ▾ rv-core/src
+      store.rs                                         +18  −4
+    ▾ tests
+        store.rs                                      +194  −0
+```
+
+A directory or commit row shows its subtree's total, for the same reason it shows
+its subtree's gradient: a collapsed row that hides its own weight is a row you
+have to expand to evaluate.
+
+Counts come from the `Stat` already computed for the gradient, so this costs
+nothing new — and it inherits the same honesty: they count **lines of text**, and
+the pane remains the authority on meaning. Large numbers abbreviate (`+1.2k`) so
+one enormous file cannot eat the row.
+
+**Ruling — when the sidebar is too narrow, the counts go before the path does.**
+The path is the row's identity; the counts are context. And when they are dropped
+the gradient still conveys the ratio, so the information degrades rather than
+disappears.
+
+### Sorting
+
+`o` cycles the order, and the sidebar's title names it, because a list whose
+order you cannot see is a list you cannot trust.
+
+| Order | Files | Commits |
+|---|---|---|
+| `natural` | path order | stack order, newest first |
+| `added` | most additions first | most additions first |
+| `removed` | most removals first | most removals first |
+
+`natural` is the default and means "the order the thing already has" — file
+structure for files, time for commits — which is why it is one mode rather than
+two.
+
+**Ruling — sorting applies within the current grouping, not across it.** In tree
+mode siblings are sorted against each other and directories keep their children;
+a directory sorts among its siblings by its aggregate. Sorting does not flatten
+the tree, and the tree does not disable sorting — a reviewer asked for both and
+they compose.
+
+**Ruling — the order is session-only and does not touch the review.** Like every
+other view preference here: not in `.review/`, not persisted, and it never
+reorders anything a comment refers to.
 
 ### Every row is a change gradient
 
@@ -403,8 +551,11 @@ Segments, separated by powerline arrows:
  BROWSE  src/app.rs 3/29  trunk()..@  4 open ▏                        ? help 
 ```
 
-- **mode** — `BROWSE`, `COMMENT`, `CONFIRM`, coloured by mode so the reviewer can
-  see at a glance that the next keystroke will type rather than navigate.
+- **mode** — the `Context` from §5: `FILES`, `COMMIT`, `COMMENTS`, `DIFF`,
+  `COMMENT`, `TYPING`, `CONFIRM`, coloured per context. It names what the cursor
+  is on rather than only what typing does, because that is what decides what the
+  next keystroke means — and it is the same value the `?` popup leads with, so
+  the bar and the help can never describe different worlds.
 - **position** — the selected file and how far through the list it is.
 - **scope** — the revset being reviewed.
 - **comments** — how many are open.
@@ -505,7 +656,49 @@ with the timeout derived from the nearest alert deadline — the next fade step,
 expiry — and infinite when no alert is live, so an idle rv with nothing to show
 still costs nothing.
 
-## 10. Testing
+## 10. Scrolling reaches every row
+
+### The defect
+
+A comment taller than the diff pane cannot be read. Not "is awkward to read" —
+cannot be read, because part of it is unreachable at every cursor position.
+
+The pane anchors its window on the row of the **selected diff line**
+(`ui.rs`'s `plan.row_of_line(line)`), and `j` moves the selection to the next
+diff line. A comment box sits between two diff rows. So with a box taller than
+the pane: on the line above it you see the box's top, on the line below it you
+see the box's bottom, and no selection anywhere puts the middle rows inside the
+window. Scrolling appears to "jump through" the comment because it is not
+scrolling the comment at all — it is stepping over it.
+
+### The fix: the cursor moves by row
+
+`↓` and `↑` — and their `j`/`k` aliases — move a cursor over the **rows** of the
+plan, not over diff lines. A comment box is rows, so a comment box is something
+the cursor can walk into, and every row is reachable by construction.
+
+The selection everything else depends on — `c`, `d`, `comments_for_line`, the
+anchor a comment is saved against — becomes **the diff line that owns the row
+under the cursor**: a diff row owns itself, and a box row is owned by the line
+its box hangs from. So `c` on a comment box comments on the line that comment is
+about, which is the only thing it could sensibly mean.
+
+**Ruling — the row cursor is the state; the line index is derived.** The reverse
+would leave two cursors to keep in step, and the whole reason this defect exists
+is that the window's anchor and the user's cursor were different things. One
+cursor, one anchor.
+
+**Ruling — reachability is a property test, not an example.** For any plan and
+any pane height, every row must appear in the window for some cursor position.
+That is the assertion this defect would have failed, and no example test would
+reliably have caught it, because it only bites when a box is taller than the
+pane — which no fixture happened to build.
+
+`]` and `[` still move by file, and `J`/`K` — or the next natural pair — may
+later move by diff line for a reviewer who wants to skip comments entirely; that
+is an addition, not a replacement, and it is not required to fix this.
+
+## 11. Testing
 
 - **Layout and hit-testing are one function's two consumers**, so the central
   property is round-tripping: for every cell of a rendered frame, `hit` returns
@@ -535,7 +728,7 @@ still costs nothing.
   because the panes get zero height and nothing draws — the sizes that catch
   arithmetic errors are the small-but-nonzero ones like 2x5, 9x6 and 12x24.
 
-## 11. Non-goals
+## 12. Non-goals
 
 - No config file, no themes, no persisted layout. Every preference here is
   session-only.
@@ -547,7 +740,7 @@ still costs nothing.
   the row model needs one row per diff line.
 - No split beyond the two panes; no third pane, no vertical stacking.
 
-## 12. Risks
+## 13. Risks
 
 | Risk | Mitigation |
 |---|---|

@@ -58,7 +58,7 @@ use proptest::test_runner::TestRunner;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
-use ratatui::style::Modifier;
+use ratatui::style::Color;
 use rstest::fixture;
 use rstest::rstest;
 use rv::app::Action;
@@ -602,6 +602,12 @@ fn rewind(app: &mut App) {
     assert_eq!(app.buffer(), "");
     assert_eq!(app.sidebar_tab(), SidebarTab::Files);
     assert_eq!(app.browser_index(), 0);
+    // The `Esc` above is also what puts the `?` popup away — a generated `?`
+    // would otherwise leave every key of the next case inert.
+    assert!(!app.help_open());
+    // The split is deliberately *not* restored: no key the reviewer has moves
+    // it back to a named ratio, and nothing downstream of `rewind` asserts on
+    // the geometry. A property that starts doing so has to reset it itself.
 }
 
 fn press(app: &mut App, key: KeyCode) -> Action {
@@ -836,10 +842,13 @@ fn any_body() -> impl Strategy<Value = String> {
 /// Every row of README's **Browsing** table, plus the keys it deliberately
 /// does not bind.
 ///
-/// Cross-checked against `app.rs::on_key_browse`, which binds exactly these and
-/// nothing else: `j`/`Down`, `k`/`Up`, `Left`, `Right`, `]`, `[`, `c`, `d`,
-/// `s`, `Tab`, `Enter`, `Esc`, `q` — every one of which has a row below, and
-/// the rows after them are keys the table deliberately leaves inert.
+/// Cross-checked against `app.rs::BINDINGS`, which is now the *only* thing
+/// `on_key_browse` dispatches from: `j`/`Down`, `k`/`Up`, `Left`, `Right`, `]`,
+/// `[`, `c`, `d`, `s`, `Tab`, `Enter`, `Esc`, `<`, `>`, `?`, `q` — every one of
+/// which has a row below, and the rows after them are keys the table
+/// deliberately leaves inert. A key that reached the handler without a row in
+/// `BINDINGS` would fail one of the `unbound_*` rows here; a row in `BINDINGS`
+/// that reached nothing would fail its own row.
 ///
 /// README's table carries one row more than this one: `Ctrl+C`, which
 /// `on_key_event` answers before the mode is dispatched at all and which the
@@ -888,6 +897,12 @@ fn any_body() -> impl Strategy<Value = String> {
 // reads the rest of the keymap, and is not a place for a navigation key to
 // announce itself. Which tab it left behind is asserted in the body.
 #[case::switch_sidebar_tab(KeyCode::Tab, Action::Continue, Mode::Browse, Focus::Diff, (0, 0), None)]
+// The three view keys. None of them says anything in the status line: they are
+// about how the screen is arranged, and the bar is where the reviewer reads the
+// rest of the keymap. What each of them actually moved is asserted in the body.
+#[case::narrower_sidebar(KeyCode::Char('<'), Action::Continue, Mode::Browse, Focus::Diff, (0, 0), None)]
+#[case::wider_sidebar(KeyCode::Char('>'), Action::Continue, Mode::Browse, Focus::Diff, (0, 0), None)]
+#[case::open_the_help(KeyCode::Char('?'), Action::Continue, Mode::Browse, Focus::Diff, (0, 0), None)]
 // Not in the table, and therefore inert.
 #[case::unbound_letter(KeyCode::Char('x'), Action::Continue, Mode::Browse, Focus::Diff, (0, 0), None)]
 #[case::unbound_uppercase(KeyCode::Char('J'), Action::Continue, Mode::Browse, Focus::Diff, (0, 0), None)]
@@ -953,6 +968,21 @@ fn browse_keybindings(
         },
         "{key:?} left the sidebar listing the wrong thing"
     );
+    // ...and exactly one raises the keymap.
+    assert_eq!(
+        app.help_open(),
+        key == KeyCode::Char('?'),
+        "{key:?} left the help in the wrong state"
+    );
+    // ...and exactly two move the divider, in the two directions their glyphs
+    // point. Asserted as a direction rather than a number, so the size of one
+    // nudge stays `app.rs`'s business.
+    let ratio = app.split().ratio();
+    match key {
+        KeyCode::Char('>') => assert!(ratio > Split::DEFAULT, "> did not widen the sidebar"),
+        KeyCode::Char('<') => assert!(ratio < Split::DEFAULT, "< did not narrow the sidebar"),
+        _ => assert_eq!(ratio, Split::DEFAULT, "{key:?} moved the divider"),
+    }
 }
 
 /// README draws the reviewer as an ASCII mock-up, status bar and all, and that
@@ -1410,13 +1440,18 @@ fn quit_is_exactly_q_in_browse_mode() {
             }
 
             let mode = app.mode();
+            // `q` closes the `?` popup rather than quitting, because quitting
+            // from a help screen surprises the reviewer least sure what the
+            // keys do — so "browsing" is not on its own enough to expect
+            // `Quit`, and the prefix can raise the popup with a generated `?`.
+            let browsing = mode == Mode::Browse && !app.help_open();
             seen.hit(if mode == Mode::Browse { 0 } else { 1 });
             let action = app
                 .on_key(KeyCode::Char('q'))
                 .map_err(|error| TestCaseError::fail(error.to_string()))?;
             prop_assert_eq!(
                 action == Action::Quit,
-                mode == Mode::Browse,
+                browsing,
                 "q in {:?} returned {:?}",
                 mode,
                 action
@@ -1431,12 +1466,13 @@ fn quit_is_exactly_q_in_browse_mode() {
 
             // ...and no other key returns `Quit` in either mode.
             let mode = app.mode();
+            let browsing = mode == Mode::Browse && !app.help_open();
             let action = app
                 .on_key(other)
                 .map_err(|error| TestCaseError::fail(error.to_string()))?;
             prop_assert_eq!(
                 action == Action::Quit,
-                mode == Mode::Browse && other == KeyCode::Char('q'),
+                browsing && other == KeyCode::Char('q'),
                 "{:?} in {:?} returned {:?}",
                 other,
                 mode,
@@ -3160,9 +3196,17 @@ fn render(app: &App, width: u16, height: u16) -> Terminal<TestBackend> {
 }
 
 /// The five-character line number printed on the highlighted row of the diff
-/// pane at a `width` x `height` terminal, found by the `REVERSED` modifier
-/// rather than by matching text — so a duplicated line cannot be mistaken for
-/// the selected one.
+/// pane at a `width` x `height` terminal, found by the **selection's
+/// background** rather than by matching text — so a duplicated line cannot be
+/// mistaken for the selected one.
+///
+/// It used to be found by the `REVERSED` modifier. The wave that put syntax
+/// colours inside the diff took the reverse away deliberately: reversing swaps
+/// the foreground and the background, so on a tinted line it turns the syntax
+/// colours into the wash and the wash into the text. The selection is now a
+/// *brighter* version of the line's own tint, and `ui::line_background` is the
+/// one function that decides both — so this asks it rather than keeping a
+/// second copy of the palette here.
 ///
 /// The geometry is a parameter because it is the interesting variable: the
 /// pane's window only scrolls once the diff is taller than the pane, so a
@@ -3173,10 +3217,16 @@ fn printed_number(app: &App, width: u16, height: u16) -> Option<u32> {
     let area = diff_area(width, height, app.mode());
     let buffer = terminal.backend().buffer().clone();
 
+    let selected: Vec<Color> = [LineKind::Added, LineKind::Removed, LineKind::Context]
+        .into_iter()
+        .filter_map(|kind| ui::line_background(kind, true))
+        .collect();
     let inner_x = area.x + 1;
     let row = (area.y + 1..area.y + area.height.saturating_sub(1)).find(|y| {
-        (inner_x..area.x + area.width - 1)
-            .any(|x| buffer[(x, *y)].modifier.contains(Modifier::REVERSED))
+        buffer[(inner_x, *y)]
+            .style()
+            .bg
+            .is_some_and(|background| selected.contains(&background))
     })?;
     let text: String = (inner_x..inner_x + 5)
         .map(|x| buffer[(x, row)].symbol().to_owned())
@@ -3475,6 +3525,11 @@ fn a_review_with_no_files_is_inert_but_alive() {
                 prop_assert_eq!(app.buffer(), "");
             }
 
+            // `Esc` first: a generated `?` leaves the keymap up, and every
+            // other key is inert behind it — including the `c` this case is
+            // about. `Esc` closes it and is a no-op otherwise.
+            press(app, KeyCode::Esc);
+            prop_assert!(!app.help_open());
             press(app, KeyCode::Char('c'));
             prop_assert_eq!(app.mode(), Mode::Browse);
             prop_assert_eq!(app.status(), "no diff line selected, nothing to comment on");

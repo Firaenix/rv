@@ -47,6 +47,7 @@
 //! computed [`FileDiff`] is cached per file so that stepping back to a file
 //! does not re-run difftastic.
 
+use std::collections::HashMap;
 use std::collections::HashSet;
 
 use anyhow::Context as _;
@@ -63,6 +64,7 @@ use rv_core::diff;
 use rv_core::diff::DiffLine;
 use rv_core::diff::FileDiff;
 use rv_core::diff::LineKind;
+use rv_core::highlight::Highlights;
 use rv_core::model::Anchor;
 use rv_core::model::FileChange;
 use rv_core::model::Side;
@@ -70,6 +72,7 @@ use rv_core::store::Comment;
 use rv_core::store::CommentState;
 use rv_core::store::Session;
 
+use crate::layout::Split;
 use crate::session;
 use crate::session::Review;
 use crate::ui;
@@ -190,6 +193,227 @@ pub enum Action {
     Quit,
 }
 
+/// What a binding acts on, and therefore which heading the `?` popup lists it
+/// under. A reviewer looking for "how do I get to the next file" scans a group,
+/// not an alphabet.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Group {
+    /// Moving the cursor inside whatever pane has it.
+    Move,
+    /// Moving the cursor *between* panes, and between what the sidebar lists.
+    Focus,
+    /// Writing, deleting and folding comments.
+    Comment,
+    /// How the screen is arranged. Session-only, every one of them.
+    View,
+    /// Leaving.
+    Quit,
+}
+
+impl Group {
+    /// Every group, in the order the popup lists them.
+    pub const ALL: &'static [Group] = &[
+        Group::Move,
+        Group::Focus,
+        Group::Comment,
+        Group::View,
+        Group::Quit,
+    ];
+
+    /// The heading the popup writes above the group.
+    #[must_use]
+    pub fn heading(self) -> &'static str {
+        match self {
+            Group::Move => "Move",
+            Group::Focus => "Panes",
+            Group::Comment => "Comments",
+            Group::View => "View",
+            Group::Quit => "Leave",
+        }
+    }
+}
+
+/// What one key does, spelled once.
+///
+/// `keys` and `what` are what the popup prints; `codes` is what actually
+/// matches a key press and `command` is what running it does. All four live in
+/// the same row of [`BINDINGS`] on purpose — see that constant for why.
+pub struct Binding {
+    /// How the popup spells the key, arrows and aliases included.
+    pub keys: &'static str,
+    pub group: Group,
+    /// What it does, short enough to sit beside the key in a column.
+    pub what: &'static str,
+    /// The key presses this row answers. Private: it is the table's business
+    /// which codes a row claims, and a caller comparing codes would be a second
+    /// dispatcher.
+    codes: &'static [KeyCode],
+    /// What running the row does. Private for the same reason.
+    command: Command,
+}
+
+/// Every key [`App::on_key_browse`] answers.
+///
+/// This is the **only** thing that handler dispatches from, which is what makes
+/// the popup and the keyboard impossible to drift apart:
+///
+/// * a key that is not in a row here reaches no code at all, so a binding
+///   cannot ship undocumented;
+/// * a row here names a [`Command`], and [`App::run_command`] matches on
+///   `Command` exhaustively, so a row cannot point at nothing — deleting the
+///   arm that answers it does not compile;
+/// * [`crate::ui`] draws the popup *from this table*, so a row cannot be
+///   dispatched and left out of the manual.
+///
+/// The order is the order the popup reads in, grouped by [`Group`]. It is not
+/// a priority order: no key appears in two rows.
+pub const BINDINGS: &[Binding] = &[
+    Binding {
+        keys: "j / ↓",
+        group: Group::Move,
+        what: "next line",
+        codes: &[KeyCode::Char('j'), KeyCode::Down],
+        command: Command::Forward,
+    },
+    Binding {
+        keys: "k / ↑",
+        group: Group::Move,
+        what: "previous line",
+        codes: &[KeyCode::Char('k'), KeyCode::Up],
+        command: Command::Back,
+    },
+    Binding {
+        keys: "]",
+        group: Group::Move,
+        what: "next file",
+        codes: &[KeyCode::Char(']')],
+        command: Command::NextFile,
+    },
+    Binding {
+        keys: "[",
+        group: Group::Move,
+        what: "previous file",
+        codes: &[KeyCode::Char('[')],
+        command: Command::PreviousFile,
+    },
+    Binding {
+        keys: "←",
+        group: Group::Focus,
+        what: "the file list",
+        codes: &[KeyCode::Left],
+        command: Command::FocusLeft,
+    },
+    Binding {
+        keys: "→",
+        group: Group::Focus,
+        what: "the diff",
+        codes: &[KeyCode::Right],
+        command: Command::FocusRight,
+    },
+    Binding {
+        keys: "Tab",
+        group: Group::Focus,
+        what: "files / comments",
+        codes: &[KeyCode::Tab],
+        command: Command::SwitchTab,
+    },
+    Binding {
+        keys: "Enter",
+        group: Group::Focus,
+        what: "open the stack",
+        codes: &[KeyCode::Enter],
+        command: Command::Enter,
+    },
+    Binding {
+        keys: "Esc",
+        group: Group::Focus,
+        what: "leave the stack",
+        codes: &[KeyCode::Esc],
+        command: Command::Escape,
+    },
+    Binding {
+        keys: "c",
+        group: Group::Comment,
+        what: "write a comment",
+        codes: &[KeyCode::Char('c')],
+        command: Command::Comment,
+    },
+    Binding {
+        keys: "d",
+        group: Group::Comment,
+        what: "delete a comment",
+        codes: &[KeyCode::Char('d')],
+        command: Command::Delete,
+    },
+    Binding {
+        keys: "s",
+        group: Group::Comment,
+        what: "fold a comment",
+        codes: &[KeyCode::Char('s')],
+        command: Command::Fold,
+    },
+    Binding {
+        keys: "<",
+        group: Group::View,
+        what: "narrower sidebar",
+        codes: &[KeyCode::Char('<')],
+        command: Command::Narrower,
+    },
+    Binding {
+        keys: ">",
+        group: Group::View,
+        what: "wider sidebar",
+        codes: &[KeyCode::Char('>')],
+        command: Command::Wider,
+    },
+    Binding {
+        keys: "?",
+        group: Group::View,
+        what: "this keymap",
+        codes: &[KeyCode::Char('?')],
+        command: Command::Help,
+    },
+    Binding {
+        keys: "q",
+        group: Group::Quit,
+        what: "quit the review",
+        codes: &[KeyCode::Char('q')],
+        command: Command::Quit,
+    },
+];
+
+/// What running one row of [`BINDINGS`] does.
+///
+/// Private, and deliberately not a `&'static str` or a function pointer: an
+/// enum is what makes [`App::run_command`]'s match exhaustive, so a row of the
+/// table cannot name a command nothing answers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Command {
+    Forward,
+    Back,
+    NextFile,
+    PreviousFile,
+    FocusLeft,
+    FocusRight,
+    SwitchTab,
+    Enter,
+    Escape,
+    Comment,
+    Delete,
+    Fold,
+    Narrower,
+    Wider,
+    Help,
+    Quit,
+}
+
+/// How many percentage points one press of `<` or `>` moves the divider.
+///
+/// Two rather than one: a keyboard resize the reviewer cannot see happen is a
+/// resize they will hold the key down for, and one column of an 80-column
+/// terminal is below the noise of the pane's own borders.
+const NUDGE: i16 = 2;
+
 /// One interactive review.
 ///
 /// `diffs` is parallel to `review.files`: `None` means "not computed yet",
@@ -243,6 +467,35 @@ pub struct App {
     /// reviewer's way. Keyed by id rather than by position so that folding
     /// survives a delete, a save, or a walk to another file and back.
     collapsed: HashSet<String>,
+    /// How the width is divided between the two panes.
+    ///
+    /// A **session-only view preference**, exactly like `collapsed`: it never
+    /// reaches `.review/`, because how wide one reviewer likes their file list
+    /// is not something another reviewer — or an LLM reading the export —
+    /// should inherit.
+    split: Split,
+    /// Whether the `?` keymap is up.
+    ///
+    /// While it is, every key but the five it answers is inert. That is the
+    /// point rather than a limitation: a reviewer reading about `d` must not
+    /// discover what it does by pressing it.
+    help_open: bool,
+    /// How far the keymap has been scrolled, in rows.
+    ///
+    /// Only ever non-zero on a terminal too small to show the whole table at
+    /// once — [`crate::ui`] clamps it against the geometry it has, because the
+    /// geometry is the one thing this module deliberately does not know.
+    help_scroll: usize,
+    /// Highlight spans per `(commit, path)`, parsed once per blob.
+    ///
+    /// Keyed by the blob rather than by the file, because a diff line's colours
+    /// come from **its own side**: a removed line is text that only exists at
+    /// the base commit, under the base-side path, which for a rename is not the
+    /// path the file is listed under. Filled beside the diff cache in
+    /// [`App::load_selected`], from the same two blobs the diff is computed
+    /// from, so opening a file costs one parse per side and revisiting it costs
+    /// none.
+    highlights: HashMap<(String, String), Highlights>,
     mode: Mode,
     buffer: String,
     status: String,
@@ -312,6 +565,10 @@ impl App {
             browser_index: 0,
             comment_index: 0,
             collapsed,
+            split: Split::default(),
+            help_open: false,
+            help_scroll: 0,
+            highlights: HashMap::new(),
             mode: Mode::Browse,
             buffer: String::new(),
             status: HELP.to_owned(),
@@ -493,6 +750,113 @@ impl App {
             .collect()
     }
 
+    /// How the width is divided between the sidebar and the diff.
+    ///
+    /// Session-only — see the field. [`crate::ui`] hands it straight to
+    /// [`crate::layout::layout`], which is the only thing that turns it into a
+    /// rectangle.
+    pub fn split(&self) -> Split {
+        self.split
+    }
+
+    /// Whether the `?` keymap is up.
+    pub fn help_open(&self) -> bool {
+        self.help_open
+    }
+
+    /// How far the keymap has been scrolled, in rows. Clamped by the renderer
+    /// against the popup it actually has; see the field.
+    pub fn help_scroll(&self) -> usize {
+        self.help_scroll
+    }
+
+    /// The highlight spans for the selected file's blob **on `side`** — the
+    /// base blob at its base-side path for [`Side::Left`], the head blob at the
+    /// file's own path for [`Side::Right`].
+    ///
+    /// `None` for a side the commit has no plain file at (an add has no base,
+    /// a delete has no head) and for a file whose extension names no grammar
+    /// rv ships. [`crate::ui`] shows the second of those in the pane's title
+    /// rather than letting a reviewer wonder whether the colour is broken.
+    ///
+    /// Callers choose `side` through [`anchored_side`] and nothing else: a
+    /// removed line looked up on the head side would be painted with the
+    /// colours of whatever now stands at its number, which is a lie told in a
+    /// colour rather than in words.
+    pub fn highlights(&self, side: Side) -> Option<&Highlights> {
+        let file = self.selected_file()?;
+        let session = &self.review.session;
+        let (commit, path) = match side {
+            Side::Left => (
+                session.base_commit.as_str(),
+                file.source_path.as_deref().unwrap_or(&file.path),
+            ),
+            Side::Right => (session.head_commit.as_str(), file.path.as_str()),
+        };
+        // One allocation per side per frame: `ui` asks once and hands the
+        // answer down its row loop rather than asking per line.
+        self.highlights.get(&(commit.to_owned(), path.to_owned()))
+    }
+
+    /// Whether `binding` would do anything from where the cursor is now.
+    ///
+    /// The popup dims the ones that would not, rather than hiding them: a
+    /// reviewer learning the tool should see that `d` exists and that the file
+    /// list is the wrong place for it, not wonder whether they misread the
+    /// manual.
+    pub fn binding_enabled(&self, binding: &Binding) -> bool {
+        match binding.command {
+            // Always something to do: they change what is on screen, never what
+            // is under the cursor.
+            Command::SwitchTab
+            | Command::Narrower
+            | Command::Wider
+            | Command::Help
+            | Command::Quit => true,
+            Command::Forward => self.can_move_forward(),
+            Command::Back => self.can_move_back(),
+            Command::NextFile => self.file_index + 1 < self.review.files.len(),
+            Command::PreviousFile => self.file_index > 0,
+            // `Left` leads out of every focus except the leftmost; `Right`
+            // stops at the diff.
+            Command::FocusLeft => self.focus != Focus::Sidebar,
+            Command::FocusRight => self.focus == Focus::Sidebar,
+            Command::Enter => match (self.focus, self.sidebar_tab) {
+                (Focus::Sidebar, SidebarTab::Comments) => self.browsed_comment().is_some(),
+                (Focus::Diff, _) => !self.comments_for_line(self.line_index()).is_empty(),
+                _ => false,
+            },
+            Command::Escape => self.focus == Focus::Stack,
+            Command::Comment => self.selected_line().is_some(),
+            Command::Delete => self.delete_target().is_some(),
+            Command::Fold => !self.fold_targets().is_empty(),
+        }
+    }
+
+    /// Whether `j` has anywhere to go in the pane that has the cursor.
+    fn can_move_forward(&self) -> bool {
+        match self.focus {
+            Focus::Sidebar => match self.sidebar_tab {
+                SidebarTab::Files => self.file_index + 1 < self.review.files.len(),
+                SidebarTab::Comments => self.browser_index + 1 < self.comments.len(),
+            },
+            Focus::Diff => self.line_index() + 1 < self.line_count(),
+            Focus::Stack => self.comment_index + 1 < self.stack_len(),
+        }
+    }
+
+    /// The same for `k`.
+    fn can_move_back(&self) -> bool {
+        match self.focus {
+            Focus::Sidebar => match self.sidebar_tab {
+                SidebarTab::Files => self.file_index > 0,
+                SidebarTab::Comments => self.browser_index > 0,
+            },
+            Focus::Diff => self.line_index() > 0,
+            Focus::Stack => self.comment_index > 0,
+        }
+    }
+
     /// The comment being typed, empty outside [`Mode::Comment`].
     pub fn buffer(&self) -> &str {
         &self.buffer
@@ -527,12 +891,47 @@ impl App {
 
     /// Handles one key press. Terminal-free by construction — see the module
     /// docs.
+    ///
+    /// The keymap is answered ahead of the mode because it is a modal window
+    /// rather than a mode: it can only be raised from [`Mode::Browse`] (nothing
+    /// else binds `?`) and nothing raised behind it can change the mode, so
+    /// `help_open` implies browsing and this branch is the whole of what the
+    /// popup consumes.
     pub fn on_key(&mut self, key: KeyCode) -> Result<Action> {
+        if self.help_open {
+            return Ok(self.on_key_help(key));
+        }
         match self.mode {
             Mode::Browse => self.on_key_browse(key),
             Mode::Comment => self.on_key_comment(key),
             Mode::ConfirmDelete { .. } => self.on_key_confirm_delete(key),
         }
+    }
+
+    /// The five keys the `?` popup answers; everything else is inert while it
+    /// is up.
+    ///
+    /// `q` **closes** rather than quits. A reviewer with the manual open is by
+    /// definition the one least sure what the keys do, and ending their review
+    /// is the most expensive way to find out. `?` closes it too, because the
+    /// key that raised a thing is the first one a hand reaches for to be rid of
+    /// it, and `Esc` because that is how everything else in this reviewer is
+    /// dismissed.
+    ///
+    /// `j`/`k` (and their arrows) scroll, which only ever moves anything on a
+    /// terminal too small for the whole table — see [`App::help_scroll`].
+    fn on_key_help(&mut self, key: KeyCode) -> Action {
+        match key {
+            KeyCode::Char('?') | KeyCode::Char('q') | KeyCode::Esc => self.help_open = false,
+            KeyCode::Char('j') | KeyCode::Down => {
+                self.help_scroll = self.help_scroll.saturating_add(1);
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                self.help_scroll = self.help_scroll.saturating_sub(1);
+            }
+            _ => {}
+        }
+        Action::Continue
     }
 
     fn event_loop(&mut self, terminal: &mut DefaultTerminal) -> Result<()> {
@@ -553,29 +952,56 @@ impl App {
         }
     }
 
+    /// Looks `key` up in [`BINDINGS`] and runs whatever row claims it.
+    ///
+    /// A lookup rather than a `match` on purpose: the table is what the `?`
+    /// popup is drawn from, so dispatching through it is what makes an
+    /// undocumented binding unrepresentable. A key no row claims is inert,
+    /// which is what every `unbound_*` case in `rv/tests/app_cases.rs` pins.
     fn on_key_browse(&mut self, key: KeyCode) -> Result<Action> {
-        match key {
-            KeyCode::Char('q') => return Ok(Action::Quit),
-            KeyCode::Left => self.focus_left(),
-            KeyCode::Right => self.focus_right(),
-            KeyCode::Char('j') | KeyCode::Down => self.move_forward()?,
-            KeyCode::Char('k') | KeyCode::Up => self.move_back()?,
-            // Deliberately answered before the focus is consulted: `[` and `]`
-            // mean "the next file" wherever the cursor happens to be, so
-            // walking a review never costs a trip through the sidebar.
-            KeyCode::Char(']') => self.select_file(self.file_index.saturating_add(1))?,
-            KeyCode::Char('[') => self.select_file(self.file_index.saturating_sub(1))?,
-            KeyCode::Char('c') => self.begin_comment(),
-            KeyCode::Char('d') => self.begin_delete(),
-            KeyCode::Char('s') => self.toggle_collapse(),
-            // Answered before the focus is consulted, like `[` and `]`: what
-            // the left column lists is not a question about where the cursor
-            // is, and a reviewer who wants their comments should not have to
-            // travel to the sidebar first to ask for them.
-            KeyCode::Tab => self.switch_tab(),
-            KeyCode::Enter => self.on_enter()?,
-            KeyCode::Esc => self.leave_stack(),
-            _ => {}
+        let Some(binding) = BINDINGS.iter().find(|binding| binding.codes.contains(&key)) else {
+            return Ok(Action::Continue);
+        };
+        self.run_command(binding.command)
+    }
+
+    /// Runs one row of [`BINDINGS`].
+    ///
+    /// Exhaustive over [`Command`] by construction: a row that named a command
+    /// nothing answered would not compile, which is the other half of the
+    /// anti-drift guarantee the table's doc comment claims.
+    fn run_command(&mut self, command: Command) -> Result<Action> {
+        match command {
+            Command::Quit => return Ok(Action::Quit),
+            Command::FocusLeft => self.focus_left(),
+            Command::FocusRight => self.focus_right(),
+            Command::Forward => self.move_forward()?,
+            Command::Back => self.move_back()?,
+            // `[` and `]` mean "the next file" wherever the cursor happens to
+            // be — they consult no focus at all — so walking a review never
+            // costs a trip through the sidebar.
+            Command::NextFile => self.select_file(self.file_index.saturating_add(1))?,
+            Command::PreviousFile => self.select_file(self.file_index.saturating_sub(1))?,
+            Command::Comment => self.begin_comment(),
+            Command::Delete => self.begin_delete(),
+            Command::Fold => self.toggle_collapse(),
+            // Focus-free, like `[` and `]`: what the left column lists is not a
+            // question about where the cursor is, and a reviewer who wants
+            // their comments should not have to travel to the sidebar first to
+            // ask for them.
+            Command::SwitchTab => self.switch_tab(),
+            Command::Enter => self.on_enter()?,
+            Command::Escape => self.leave_stack(),
+            Command::Narrower => self.split = self.split.nudged(-NUDGE),
+            Command::Wider => self.split = self.split.nudged(NUDGE),
+            Command::Help => {
+                self.help_open = true;
+                // Opened at the top, always: a popup that remembered where it
+                // was last scrolled to would open somewhere the reviewer did
+                // not leave it, since the geometry it was scrolled against may
+                // have changed.
+                self.help_scroll = 0;
+            }
         }
         Ok(Action::Continue)
     }
@@ -857,23 +1283,7 @@ impl App {
     ///
     /// Nothing here writes: see [`App::collapsed`].
     fn toggle_collapse(&mut self) {
-        let ids: Vec<String> = match (self.focus, self.sidebar_tab) {
-            (Focus::Stack, _) => self
-                .selected_comment()
-                .map(|comment| comment.id.clone())
-                .into_iter()
-                .collect(),
-            (Focus::Sidebar, SidebarTab::Comments) => self
-                .browsed_comment()
-                .map(|comment| comment.id.clone())
-                .into_iter()
-                .collect(),
-            (Focus::Diff | Focus::Sidebar, _) => self
-                .comments_for_line(self.line_index())
-                .iter()
-                .map(|comment| comment.id.clone())
-                .collect(),
-        };
+        let ids = self.fold_targets();
         if ids.is_empty() {
             // Said about the review from the browser, which is not showing a
             // line, and about the line everywhere else — the same split `d`
@@ -894,6 +1304,46 @@ impl App {
             } else {
                 self.collapsed.insert(id);
             }
+        }
+    }
+
+    /// Which comments `s` would fold, as ids. Empty where it would fold
+    /// nothing, which is also how [`App::binding_enabled`] knows to dim it —
+    /// one rule, asked twice, rather than a copy in the renderer that could
+    /// disagree with the key.
+    fn fold_targets(&self) -> Vec<String> {
+        match (self.focus, self.sidebar_tab) {
+            (Focus::Stack, _) => self
+                .selected_comment()
+                .map(|comment| comment.id.clone())
+                .into_iter()
+                .collect(),
+            (Focus::Sidebar, SidebarTab::Comments) => self
+                .browsed_comment()
+                .map(|comment| comment.id.clone())
+                .into_iter()
+                .collect(),
+            (Focus::Diff | Focus::Sidebar, _) => self
+                .comments_for_line(self.line_index())
+                .iter()
+                .map(|comment| comment.id.clone())
+                .collect(),
+        }
+    }
+
+    /// Which comment `d` would ask about, or `None` where it would refuse.
+    ///
+    /// The rules differ by cursor because the situations do; see
+    /// [`App::begin_delete`], which is the only caller that acts on the answer.
+    /// [`App::binding_enabled`] asks the same question to decide whether to dim
+    /// the row, so the popup cannot claim `d` is live somewhere it refuses.
+    fn delete_target(&self) -> Option<&Comment> {
+        match self.focus {
+            Focus::Stack => self.selected_comment(),
+            Focus::Diff => self.comments_for_line(self.line_index()).last().copied(),
+            // `browsed_comment` is already `None` on the Files tab, so this
+            // covers both of the sidebar's shapes.
+            Focus::Sidebar => self.browsed_comment(),
         }
     }
 
@@ -924,14 +1374,7 @@ impl App {
     /// and stays in [`Mode::Browse`] rather than opening a confirmation about
     /// nothing.
     fn begin_delete(&mut self) {
-        let target = match self.focus {
-            Focus::Stack => self.selected_comment(),
-            Focus::Diff => self.comments_for_line(self.line_index()).last().copied(),
-            // `browsed_comment` is already `None` on the Files tab, so the
-            // refusal below covers both of the sidebar's shapes.
-            Focus::Sidebar => self.browsed_comment(),
-        };
-        let Some(comment) = target else {
+        let Some(comment) = self.delete_target() else {
             self.status = match (self.focus, self.sidebar_tab) {
                 (Focus::Sidebar, SidebarTab::Files) => DELETE_NEEDS_A_COMMENT,
                 (Focus::Sidebar, SidebarTab::Comments) => NO_COMMENTS_IN_REVIEW,
@@ -1072,27 +1515,55 @@ impl App {
         }
 
         let session = &self.review.session;
-        let base_path = file.source_path.as_deref().unwrap_or(&file.path);
+        let base_commit = session.base_commit.clone();
+        let head_commit = session.head_commit.clone();
+        let base_path = file.source_path.as_deref().unwrap_or(&file.path).to_owned();
+        let head_path = file.path.clone();
         let old = self
             .review
             .repo
-            .read_blob(&session.base_commit, base_path)
+            .read_blob(&base_commit, &base_path)
             .with_context(|| format!("could not read {base_path} at the base of the review"))?;
         let new = self
             .review
             .repo
-            .read_blob(&session.head_commit, &file.path)
-            .with_context(|| format!("could not read {} at the head of the review", file.path))?;
+            .read_blob(&head_commit, &head_path)
+            .with_context(|| format!("could not read {head_path} at the head of the review"))?;
 
         let diff = if self.force_fallback {
-            diff::compute_with(old.as_deref(), new.as_deref(), &file.path, false)
+            diff::compute_with(old.as_deref(), new.as_deref(), &head_path, false)
         } else {
-            diff::compute(old.as_deref(), new.as_deref(), &file.path)
+            diff::compute(old.as_deref(), new.as_deref(), &head_path)
         };
         self.diffs[self.file_index] = Some(diff);
+        // Parsed from the very blobs the diff was computed from, so the spans a
+        // line is painted with describe the text that line came from. Lazy per
+        // file, like the diff beside it: a review of a hundred files parses the
+        // two the reviewer has opened.
+        self.cache_highlights(base_commit, base_path, old.as_deref());
+        self.cache_highlights(head_commit, head_path, new.as_deref());
         // The clamp is [`App::select_file`]'s, applied once the diff it clamps
         // against is in place.
         Ok(())
+    }
+
+    /// Parses `blob`'s highlight spans under `(commit, path)` unless they are
+    /// already there.
+    ///
+    /// A side the commit has no plain file at — an add's base, a delete's head
+    /// — caches nothing, so [`App::highlights`] answers `None` for it and the
+    /// renderer draws that side plain. [`Highlights::of`] itself never fails,
+    /// including on bytes that are not UTF-8.
+    fn cache_highlights(&mut self, commit: String, path: String, blob: Option<&[u8]>) {
+        let Some(bytes) = blob else {
+            return;
+        };
+        let key = (commit, path);
+        if self.highlights.contains_key(&key) {
+            return;
+        }
+        let highlights = Highlights::of(bytes, &key.1);
+        self.highlights.insert(key, highlights);
     }
 
     /// Where a comment on `line` of the selected file belongs.

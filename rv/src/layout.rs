@@ -46,6 +46,13 @@ const DIVIDER: u16 = 1;
 /// *not* be counted as content.
 const TOP_BORDER: u16 = 1;
 
+/// The same for the bottom border. Kept separate from [`TOP_BORDER`] rather
+/// than folded into one "borders: 2", because the two are subtracted at
+/// different ends of the pane and a single constant used twice is how an
+/// off-by-one hides: this module shipped with the bottom border reporting a
+/// content row one past the last row [`crate::ui`] paints.
+const BOTTOM_BORDER: u16 = 1;
+
 /// How much of the area the help popup covers, in tenths. Large enough to hold
 /// the keymap, small enough that the panes stay visible around it — a reviewer
 /// reading about a key wants to see what it would act on.
@@ -185,9 +192,11 @@ pub struct Layout {
 /// What is under the pointer.
 ///
 /// The two row variants are indices **within the pane's inner area**: row 0 is
-/// the first row under the pane's top border. They are not diff line numbers
-/// and not list indices — the caller adds its own scroll offset, because the
-/// scroll offset is state and this module has none.
+/// the first row under the pane's top border and the last is the row above its
+/// bottom border, so a pane of `height` rows answers for `height - 2` of them
+/// and for no others. They are not diff line numbers and not list indices — the
+/// caller adds its own scroll offset, because the scroll offset is state and
+/// this module has none.
 ///
 /// There is no `Toast` variant. A toast is drawn over the panes but takes no
 /// key and no gesture, so a click where one floats reaches the pane beneath it.
@@ -250,9 +259,10 @@ pub fn layout(area: Rect, split: Split, chrome: Chrome) -> Layout {
 /// deliberately absent — it is painted over the panes but is not a target, so
 /// a click passes straight through it.
 ///
-/// A click on a pane's top border is *nothing* rather than its first row: that
-/// row carries the title, and rounding it down to row 0 would move a
-/// reviewer's selection every time they aimed slightly high.
+/// A click on either of a pane's horizontal borders is *nothing* rather than a
+/// row: the top row carries the title, the bottom row carries nothing at all,
+/// and a pane of `height` rows paints only the `height - 2` between them. See
+/// [`pane_row`].
 #[must_use]
 pub fn hit(layout: &Layout, column: u16, row: u16) -> Option<Target> {
     if let Some(popup) = layout.popup
@@ -284,13 +294,23 @@ fn within(rect: Rect, column: u16, row: u16) -> bool {
 /// Which row of a pane's content a point is on, counting from zero under the
 /// top border.
 ///
-/// The bottom border counts as a row, one past the last one drawn. It is a
-/// single cell of slop at the edge of a pane the reviewer is aiming into, and
-/// the alternative — a dead row along the bottom of both panes — is the more
-/// surprising of the two. The caller clamps the index to what it actually has.
+/// Both borders are excluded, so the rows this answers for are exactly the
+/// `height - 2` rows a bordered pane paints into and nothing else. It used to
+/// count the bottom border as one more row — sold as a cell of slop for a
+/// reviewer aiming at the edge — but a pane of `h` rows draws its last one at
+/// `bottom() - 2`, so that row was an index past the end of every list on
+/// screen: a click there selects nothing, or whatever the caller's clamp
+/// happens to land on. Slop that points at a row that was never drawn is not
+/// slop.
+///
+/// The columns are the pane's full width, borders included: which pane a click
+/// is in is the only thing they decide, and a vertical border does not make the
+/// row under the pointer any less clear.
 fn pane_row(rect: Rect, column: u16, row: u16) -> Option<usize> {
-    (column >= rect.x && column < rect.right() && row >= rect.y + TOP_BORDER && row < rect.bottom())
-        .then(|| usize::from(row - rect.y - TOP_BORDER))
+    let first = rect.y.saturating_add(TOP_BORDER);
+    let past_last = rect.bottom().saturating_sub(BOTTOM_BORDER);
+    (column >= rect.x && column < rect.right() && row >= first && row < past_last)
+        .then(|| usize::from(row - first))
 }
 
 /// A rectangle `tenths` of the area's size, centred in it.

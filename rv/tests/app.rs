@@ -23,14 +23,20 @@ use crossterm::event::KeyModifiers;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
+use ratatui::layout::Rect;
 use ratatui::style::Color;
 use ratatui::style::Modifier;
 use rstest::rstest;
 use rv::app::Action;
 use rv::app::App;
+use rv::app::BINDINGS;
 use rv::app::Focus;
 use rv::app::Mode;
 use rv::app::SidebarTab;
+use rv::gradient;
+use rv::layout::Chrome;
+use rv::layout::Split;
+use rv::layout::layout;
 use rv::session;
 use rv::ui;
 use rv_core::anchor;
@@ -61,6 +67,38 @@ const BASE_SIDE: &str = "fn a() {\n    let x = 1;\n    let y = 2;\n    let z = 3
 /// number on each side (2 on the left, 3 on the right). A comment on its
 /// removed half must anchor to the left number, never the right.
 const HEAD_SIDE: &str = "// header\nfn a() {\n    let x = 42;\n    let y = 2;\n    let z = 3;\n}\n";
+
+/// The base side of [`Fixture::rewritten`]: `rewrite.rs`, whose second line
+/// ends in a **string literal**.
+///
+/// The trap this fixture exists to set is a *rewrite that does not move*: the
+/// changed line is line 2 on both sides, in a file that is not renamed, and the
+/// token at columns 16..21 has a different capture on each side — a string here
+/// and a number in [`REWRITE_HEAD`]. So the only thing that can tell the two
+/// halves apart is the **side**, and a highlight lookup that reads the head
+/// blob for a removed line paints the string yellow-turned-magenta.
+///
+/// A rename cannot catch that, because a rename already encodes the side in the
+/// path: read the wrong side and the path is wrong too, so the lookup misses
+/// entirely and the line renders plain rather than wrongly coloured.
+const REWRITE_BASE: &str = "fn rewrite() {\n    let value = \"aaa\";\n}\n";
+
+/// The head side of [`Fixture::rewritten`]: the same line, same length, same
+/// number — a number literal where the base had a string.
+const REWRITE_HEAD: &str = "fn rewrite() {\n    let value = 12345;\n}\n";
+
+/// The one changed line of [`Fixture::rewritten`], as it stands on each side.
+const REWRITE_BASE_LINE: &str = "    let value = \"aaa\";";
+
+/// See [`REWRITE_BASE_LINE`].
+const REWRITE_HEAD_LINE: &str = "    let value = 12345;";
+
+/// Where the literal starts in both of them, counted in characters from the
+/// start of the line. The two sides agree, which is the whole point.
+const REWRITE_LITERAL_COLUMN: usize = 16;
+
+/// [`Fixture::plain`]'s one file: a `.txt`, for which rv ships no grammar.
+const PLAIN_TEXT: &str = "just some prose\nand a second line\n";
 
 struct Fixture {
     tempdir: TempDir,
@@ -99,6 +137,42 @@ impl Fixture {
         fs::remove_file(fixture.root().join("a.rs")).expect("remove a.rs");
         fixture.write("b.rs", HEAD_SIDE);
         fixture.jj(&["describe", "-m", "rename and edit"]);
+        fixture.jj(&["new"]);
+        fixture
+    }
+
+    /// Creates a workspace whose second change rewrites one line of
+    /// `rewrite.rs` **in place** — same path, same line number on both sides.
+    /// See [`REWRITE_BASE`] for why that is the only shape that catches a
+    /// side-blind highlight lookup.
+    ///
+    /// Reviewed from `@--` (see [`Fixture::app_from`]), like
+    /// [`Fixture::renamed`]: from the default `trunk()` the whole file is one
+    /// addition with no base side at all, and a removed line is exactly what
+    /// this fixture is for.
+    fn rewritten() -> Self {
+        let fixture = Self {
+            tempdir: tempfile::tempdir().expect("create temp dir"),
+        };
+        fixture.jj(&["git", "init", "--colocate"]);
+        fixture.write("rewrite.rs", REWRITE_BASE);
+        fixture.jj(&["describe", "-m", "first change"]);
+        fixture.jj(&["new"]);
+
+        fixture.write("rewrite.rs", REWRITE_HEAD);
+        fixture.jj(&["describe", "-m", "rewrite a line in place"]);
+        fixture.jj(&["new"]);
+        fixture
+    }
+
+    /// Creates a workspace whose one file has no grammar rv ships.
+    fn plain() -> Self {
+        let fixture = Self {
+            tempdir: tempfile::tempdir().expect("create temp dir"),
+        };
+        fixture.jj(&["git", "init", "--colocate"]);
+        fixture.write("notes.txt", PLAIN_TEXT);
+        fixture.jj(&["describe", "-m", "some prose"]);
         fixture.jj(&["new"]);
         fixture
     }
@@ -2826,4 +2900,780 @@ fn the_readme_explains_inline_comments(#[case] phrase: &str) {
         section.contains(phrase),
         "the README's inline-comments section never mentions {phrase:?}:\n{section}"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Resizing the panes
+// ---------------------------------------------------------------------------
+
+/// Where each pane is at `width` x `height`, asked of the very function
+/// [`rv::ui::draw`] paints from — so a test that reads a column out of the
+/// buffer is reading the column the renderer wrote to, rather than one this
+/// file computed for itself.
+///
+/// The one place these tests are allowed to talk about geometry: see
+/// `rv/src/layout.rs` for why nothing else may compute a `Rect`.
+fn areas(width: u16, height: u16, split: Split) -> rv::layout::Layout {
+    layout(
+        Rect::new(0, 0, width, height),
+        split,
+        Chrome {
+            bar_rows: 1,
+            help_open: false,
+            toast: false,
+        },
+    )
+}
+
+#[test]
+fn angle_brackets_resize_the_panes() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    let start = app.split().ratio();
+    assert_eq!(
+        start,
+        Split::DEFAULT,
+        "a reviewer opens on the default split"
+    );
+
+    app.on_key(KeyCode::Char('>')).expect(">");
+    assert!(
+        app.split().ratio() > start,
+        "the sidebar grew: {}",
+        app.split().ratio()
+    );
+    app.on_key(KeyCode::Char('<')).expect("<");
+    assert_eq!(app.split().ratio(), start, "and shrank back");
+}
+
+#[test]
+fn resizing_never_leaves_the_bounds_however_long_you_hold_it() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+
+    for _ in 0..200 {
+        app.on_key(KeyCode::Char('>')).expect(">");
+    }
+    assert!(
+        app.split().ratio() <= Split::MAX_RATIO,
+        "held past the right bound: {}",
+        app.split().ratio()
+    );
+    for _ in 0..400 {
+        app.on_key(KeyCode::Char('<')).expect("<");
+    }
+    assert!(
+        app.split().ratio() >= Split::MIN_RATIO,
+        "held past the left bound: {}",
+        app.split().ratio()
+    );
+}
+
+/// The accessor is not the point — the pane on screen is. A resize that moved
+/// `App::split` without moving the divider would pass every test above.
+#[test]
+fn a_resized_pane_actually_renders_at_its_new_width() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    let before = frame_at(&app, 100, 24);
+
+    for _ in 0..5 {
+        app.on_key(KeyCode::Char('>')).expect(">");
+    }
+    let after = frame_at(&app, 100, 24);
+    assert_ne!(before, after, "the frame does not reflect the resize");
+
+    // ...and the divider is where `layout` says it is for the *new* split, not
+    // the old one: the two panes' borders moved with it.
+    let divider = areas(100, 24, app.split()).divider.x;
+    assert!(
+        divider > areas(100, 24, Split::default()).divider.x,
+        "the divider did not move: {divider}"
+    );
+    assert_eq!(
+        after[(divider - 1, 1)].symbol(),
+        "│",
+        "the sidebar's right border is not against the divider:\n{}",
+        buffer_text(&after)
+    );
+    assert_eq!(
+        after[(divider + 1, 1)].symbol(),
+        "│",
+        "the diff's left border is not against the divider:\n{}",
+        buffer_text(&after)
+    );
+}
+
+/// A split is a view preference, like folding: it never reaches `.review/`, and
+/// a reviewer who reopens the review gets the default back.
+#[test]
+fn the_split_is_not_written_anywhere() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    let before = workspace_tree(workspace.root());
+    assert!(!before.is_empty(), "the review wrote nothing to compare");
+
+    for _ in 0..3 {
+        app.on_key(KeyCode::Char('>')).expect(">");
+    }
+    assert_ne!(app.split().ratio(), Split::DEFAULT, "nothing was resized");
+    assert_eq!(
+        workspace_tree(workspace.root()),
+        before,
+        "resizing wrote to the workspace; it is a view preference, not review state"
+    );
+
+    let reopened = workspace.app();
+    assert_eq!(
+        reopened.split().ratio(),
+        Split::DEFAULT,
+        "the split survived the session it was a preference of"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// The binding table and the `?` popup
+// ---------------------------------------------------------------------------
+
+/// The cell holding the key of the popup row that describes `what`.
+///
+/// Found by the description rather than by the key, because a single-character
+/// key is a substring of half the screen: the row is located by the sentence
+/// only it carries, and the key is then the last occurrence of `keys` in the
+/// columns to its left.
+fn cell_of_binding(buffer: &Buffer, keys: &str, what: &str) -> (u16, u16) {
+    let rows = rows_of(buffer);
+    let (y, row) = rows
+        .iter()
+        .enumerate()
+        .find(|(_, row)| row.contains(what))
+        .unwrap_or_else(|| panic!("{what:?} is not on screen:\n{}", buffer_text(buffer)));
+    let at = row.find(what).expect("the row holds it");
+    let before = &row[..at];
+    let start = before
+        .rfind(keys)
+        .unwrap_or_else(|| panic!("{keys:?} is not left of {what:?} on row {y}: {row:?}"));
+    let column = before[..start].chars().count();
+    (
+        u16::try_from(column).expect("a small column"),
+        u16::try_from(y).expect("a small row"),
+    )
+}
+
+/// Whether the cell at `at` is drawn dim — how the popup says a key does
+/// nothing from where the cursor is.
+fn is_dim(buffer: &Buffer, at: (u16, u16)) -> bool {
+    buffer[at].modifier.contains(Modifier::DIM)
+}
+
+#[test]
+fn question_mark_opens_the_help_and_esc_closes_it() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    assert!(
+        !app.help_open(),
+        "a reviewer opens on the review, not the manual"
+    );
+
+    app.on_key(KeyCode::Char('?')).expect("?");
+    assert!(app.help_open());
+    let frame = buffer_text(&frame_at(&app, 100, 24));
+    assert!(
+        frame.contains("comment"),
+        "the popup lists what the keys do:\n{frame}"
+    );
+
+    app.on_key(KeyCode::Esc).expect("esc");
+    assert!(!app.help_open());
+    assert!(
+        !buffer_text(&frame_at(&app, 100, 24)).contains("narrower sidebar"),
+        "the popup is still on screen once it is closed"
+    );
+}
+
+/// `?` is a toggle as well as an opener: the key that raised the manual is the
+/// first one a reviewer presses again to get rid of it.
+#[test]
+fn question_mark_closes_the_help_it_opened() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    app.on_key(KeyCode::Char('?')).expect("?");
+    app.on_key(KeyCode::Char('?')).expect("? again");
+    assert!(!app.help_open());
+}
+
+#[test]
+fn q_closes_the_help_rather_than_quitting() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    app.on_key(KeyCode::Char('?')).expect("?");
+
+    let action = app.on_key(KeyCode::Char('q')).expect("q");
+    assert_eq!(action, Action::Continue, "q in help closes the help");
+    assert!(!app.help_open());
+    assert_eq!(
+        app.on_key(KeyCode::Char('q')).expect("q"),
+        Action::Quit,
+        "and quits once it is closed"
+    );
+}
+
+/// While the manual is up every other key is inert — including the one that
+/// destroys written work.
+#[rstest]
+#[case(KeyCode::Char('c'))]
+#[case(KeyCode::Char('d'))]
+#[case(KeyCode::Char('j'))]
+#[case(KeyCode::Enter)]
+#[case(KeyCode::Tab)]
+#[case(KeyCode::Left)]
+#[case(KeyCode::Char(']'))]
+#[case(KeyCode::Char('s'))]
+#[case(KeyCode::Char('>'))]
+fn keys_are_inert_while_the_help_is_open(#[case] key: KeyCode) {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    write_comment(&mut app, "a finding");
+    let before = workspace_tree(workspace.root());
+
+    app.on_key(KeyCode::Char('?')).expect("?");
+    let state = (
+        app.mode(),
+        app.focus(),
+        app.file_index(),
+        app.line_index(),
+        app.sidebar_tab(),
+        app.split().ratio(),
+        app.collapsed().len(),
+    );
+
+    app.on_key(key).expect("key");
+
+    assert_eq!(
+        (
+            app.mode(),
+            app.focus(),
+            app.file_index(),
+            app.line_index(),
+            app.sidebar_tab(),
+            app.split().ratio(),
+            app.collapsed().len(),
+        ),
+        state,
+        "{key:?} did something while the help was open"
+    );
+    assert!(app.help_open(), "{key:?} closed the help");
+    assert_eq!(
+        workspace_tree(workspace.root()),
+        before,
+        "{key:?} wrote to the workspace from behind the help"
+    );
+}
+
+#[test]
+fn every_binding_the_handler_dispatches_appears_in_the_popup() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    app.on_key(KeyCode::Char('?')).expect("?");
+    let frame = buffer_text(&frame_at(&app, 120, 40));
+
+    assert!(!BINDINGS.is_empty(), "the binding table is empty");
+    for binding in BINDINGS {
+        assert!(
+            frame.contains(binding.keys),
+            "the popup does not list {}:\n{frame}",
+            binding.keys
+        );
+        assert!(
+            frame.contains(binding.what),
+            "the popup lists {} without saying what it does:\n{frame}",
+            binding.keys
+        );
+    }
+}
+
+/// 80x24 is what a reviewer over ssh actually has, and a keymap you must scroll
+/// to read is a keymap you will not read. This is what forces the column
+/// layout: sixteen bindings and their headings need twenty-one rows in one
+/// list, and the popup has fourteen.
+#[test]
+fn the_whole_keymap_fits_at_80x24_without_scrolling() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    app.on_key(KeyCode::Char('?')).expect("?");
+    let frame = buffer_text(&frame_at(&app, 80, 24));
+
+    for binding in BINDINGS {
+        assert!(
+            frame.contains(binding.keys),
+            "{} is off screen at 80x24:\n{frame}",
+            binding.keys
+        );
+        assert!(
+            frame.contains(binding.what),
+            "{}'s description is off screen at 80x24:\n{frame}",
+            binding.keys
+        );
+    }
+    assert!(
+        !frame.contains("more"),
+        "something is hidden behind a scroll indicator:\n{frame}"
+    );
+}
+
+/// `d` means nothing in the Files tab. A reviewer learning the tool should see
+/// that the key exists and why it is inert here, not wonder whether they
+/// misread the manual.
+///
+/// The control is in the same frame on purpose: if every row were dimmed,
+/// nothing would be.
+#[test]
+fn a_binding_that_does_nothing_here_is_dimmed_rather_than_hidden() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    app.on_key(KeyCode::Left).expect("focus the sidebar");
+    assert_eq!(app.sidebar_tab(), SidebarTab::Files);
+    app.on_key(KeyCode::Char('?')).expect("?");
+
+    let frame = frame_at(&app, 100, 30);
+    assert!(
+        buffer_text(&frame).contains("delete a comment"),
+        "the binding was hidden rather than dimmed:\n{}",
+        buffer_text(&frame)
+    );
+    assert!(
+        is_dim(&frame, cell_of_binding(&frame, "d", "delete a comment")),
+        "`d` is not shown as inactive in the file list:\n{}",
+        buffer_text(&frame)
+    );
+    assert!(
+        !is_dim(&frame, cell_of_binding(&frame, "q", "quit the review")),
+        "every row is dimmed, so dimming says nothing:\n{}",
+        buffer_text(&frame)
+    );
+}
+
+/// ...and the same key is *not* dimmed where it does something, so the dimming
+/// follows the cursor rather than being a property of the key.
+#[test]
+fn the_same_binding_is_live_where_it_acts_on_something() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    write_comment(&mut app, "a finding");
+    app.on_key(KeyCode::Char('?')).expect("?");
+
+    let frame = frame_at(&app, 100, 30);
+    assert!(
+        !is_dim(&frame, cell_of_binding(&frame, "d", "delete a comment")),
+        "`d` is dimmed on a line that has a comment to delete:\n{}",
+        buffer_text(&frame)
+    );
+}
+
+#[rstest]
+#[case(20, 6)]
+#[case(1, 1)]
+#[case(80, 1)]
+#[case(2, 40)]
+#[case(40, 3)]
+#[case(12, 12)]
+fn the_help_renders_in_a_pane_too_small_for_it(#[case] width: u16, #[case] height: u16) {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    write_comment(&mut app, "a finding");
+    app.on_key(KeyCode::Char('?')).expect("?");
+
+    let _ = frame_at(&app, width, height);
+    // ...and scrolling a popup that cannot show its whole keymap is still just
+    // drawing.
+    for _ in 0..40 {
+        app.on_key(KeyCode::Char('j')).expect("scroll");
+    }
+    let _ = frame_at(&app, width, height);
+    for _ in 0..80 {
+        app.on_key(KeyCode::Char('k')).expect("scroll back");
+    }
+    let _ = frame_at(&app, width, height);
+}
+
+/// The popup is drawn *over* the panes rather than beside them: what was
+/// underneath is covered, which is what makes it readable.
+#[test]
+fn the_popup_covers_what_is_beneath_it() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    let beneath = frame_at(&app, 100, 24);
+    let popup = layout(
+        Rect::new(0, 0, 100, 24),
+        Split::default(),
+        Chrome {
+            bar_rows: 1,
+            help_open: true,
+            toast: false,
+        },
+    )
+    .popup
+    .expect("the popup has a rect at 100x24");
+
+    app.on_key(KeyCode::Char('?')).expect("?");
+    let over = frame_at(&app, 100, 24);
+
+    let changed = (popup.y..popup.bottom())
+        .flat_map(|y| (popup.x..popup.right()).map(move |x| (x, y)))
+        .filter(|at| beneath[*at].symbol() != over[*at].symbol())
+        .count();
+    assert!(
+        changed > 0,
+        "the popup left the panes beneath it showing through:\n{}",
+        buffer_text(&over)
+    );
+    // The bar is outside the popup and keeps its own row.
+    assert_eq!(last_row(&beneath), last_row(&over), "the popup ate the bar");
+}
+
+// ---------------------------------------------------------------------------
+// Syntax colours inside the green and the red
+// ---------------------------------------------------------------------------
+
+/// The diff pane's rows at `width` x `height`, as `(frame row, text)` pairs
+/// with the pane's own borders taken off.
+fn diff_rows(buffer: &Buffer, area: Rect) -> Vec<(u16, String)> {
+    ((area.y + 1)..area.bottom().saturating_sub(1))
+        .map(|y| {
+            let text = ((area.x + 1)..area.right().saturating_sub(1))
+                .map(|x| buffer[(x, y)].symbol())
+                .collect();
+            (y, text)
+        })
+        .collect()
+}
+
+/// The frame row the diff pane draws its first line carrying `sigil` on.
+///
+/// The sigil is column 6 of the pane's inner area — a five-wide number field
+/// and a space — so this cannot be fooled by a `+` inside a line's text.
+fn row_of_sigil(buffer: &Buffer, area: Rect, sigil: char) -> u16 {
+    diff_rows(buffer, area)
+        .into_iter()
+        .find(|(_, text)| text.chars().nth(6) == Some(sigil))
+        .map(|(y, _)| y)
+        .unwrap_or_else(|| {
+            panic!(
+                "no diff line carries the sigil {sigil:?}:\n{}",
+                buffer_text(buffer)
+            )
+        })
+}
+
+/// The background the diff pane painted row `y` with, or `None` where the row
+/// is left on the terminal's own ground.
+fn diff_bg(buffer: &Buffer, area: Rect, y: u16) -> Option<Color> {
+    match buffer[(area.x + 1, y)].style().bg {
+        None | Some(Color::Reset) => None,
+        colour => colour,
+    }
+}
+
+/// Every distinct foreground the diff pane used on row `y`, ignoring the cells
+/// that hold nothing.
+fn distinct_foregrounds(buffer: &Buffer, area: Rect, y: u16) -> Vec<Color> {
+    let mut seen: Vec<Color> = Vec::new();
+    for x in (area.x + 1)..area.right().saturating_sub(1) {
+        let cell = &buffer[(x, y)];
+        if cell.symbol().trim().is_empty() {
+            continue;
+        }
+        let fg = cell.style().fg.unwrap_or(Color::Reset);
+        if !seen.contains(&fg) {
+            seen.push(fg);
+        }
+    }
+    seen
+}
+
+/// Whether `target` sits on the ramp from `from` to the ink the diff washes
+/// with — which is what "the diff and the sidebar share one green" means in
+/// cells rather than in prose.
+fn on_the_ramp(target: Color, from: gradient::Rgb) -> bool {
+    (0..=1000).any(|step| {
+        let gradient::Rgb(r, g, b) =
+            gradient::oklab_mix(from, gradient::INK_DARK, step as f32 / 1000.0);
+        Color::Rgb(r, g, b) == target
+    })
+}
+
+#[test]
+fn an_added_line_has_a_green_wash_and_coloured_code() {
+    let workspace = Fixture::new();
+    let app = workspace.app();
+    let frame = frame_at(&app, 100, 24);
+    let area = areas(100, 24, Split::default()).diff;
+    let added = row_of_sigil(&frame, area, '+');
+
+    let background = diff_bg(&frame, area, added);
+    assert!(
+        background.is_some(),
+        "an added line carries no background tint:\n{}",
+        buffer_text(&frame)
+    );
+    let foregrounds = distinct_foregrounds(&frame, area, added);
+    assert!(
+        foregrounds.len() > 1,
+        "the code is one flat colour rather than syntax coloured: {foregrounds:?}\n{}",
+        buffer_text(&frame)
+    );
+}
+
+/// The wash is drawn from `gradient::ADDED` and `gradient::REMOVED` rather than
+/// from a second green and a second red beside them — so the diff and the
+/// sidebar's change bar cannot drift into two palettes.
+#[test]
+fn the_wash_is_the_palettes_own_green_and_red() {
+    for (kind, hue) in [
+        (LineKind::Added, gradient::ADDED),
+        (LineKind::Removed, gradient::REMOVED),
+    ] {
+        for selected in [false, true] {
+            let colour = ui::line_background(kind, selected)
+                .unwrap_or_else(|| panic!("{kind:?} selected={selected} has no tint"));
+            assert!(
+                on_the_ramp(colour, hue),
+                "{kind:?} selected={selected} is tinted {colour:?}, which is not \
+                 {hue:?} taken toward the ink"
+            );
+        }
+    }
+    assert_eq!(
+        ui::line_background(LineKind::Context, false),
+        None,
+        "a context line is tinted, so the tint no longer means added or removed"
+    );
+}
+
+/// Reversing swaps the foreground and the background, which on a tinted line
+/// turns the syntax colours into the wash and the wash into the text —
+/// legible in neither direction. The selection is a *brighter* tint instead.
+#[test]
+fn the_selected_line_is_brighter_rather_than_reversed() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    let area = areas(100, 24, Split::default()).diff;
+
+    let frame = frame_at(&app, 100, 24);
+    let selected = area.y + 1;
+    assert_eq!(app.line_index(), 0, "the reviewer opens on the first line");
+    for x in (area.x + 1)..area.right() - 1 {
+        assert!(
+            !frame[(x, selected)].modifier.contains(Modifier::REVERSED),
+            "the selected line is drawn with reversed video:\n{}",
+            buffer_text(&frame)
+        );
+    }
+
+    let bright = diff_bg(&frame, area, selected).expect("the selection is tinted");
+    let neighbour = diff_bg(&frame, area, selected + 1).expect("its neighbour is tinted");
+    assert_ne!(
+        bright,
+        neighbour,
+        "the selected line is drawn exactly like the line under it:\n{}",
+        buffer_text(&frame)
+    );
+
+    // ...and the brightness moves with the cursor rather than being a property
+    // of the first row.
+    app.on_key(KeyCode::Char('j')).expect("j");
+    let moved = frame_at(&app, 100, 24);
+    assert_eq!(
+        diff_bg(&moved, area, selected + 1),
+        Some(bright),
+        "the highlight did not move onto the next line:\n{}",
+        buffer_text(&moved)
+    );
+    assert_eq!(
+        diff_bg(&moved, area, selected),
+        Some(neighbour),
+        "the highlight did not leave the line it was on:\n{}",
+        buffer_text(&moved)
+    );
+}
+
+/// A removed line takes its colours from the **base** blob.
+///
+/// The fixture is a rewrite that does not move: `rewrite.rs` line 2 on both
+/// sides, a string literal on the base and a number on the head, at the same
+/// columns. A lookup that ignored the side would paint the removed line's
+/// string with the number's colour — and a renamed file could not catch that,
+/// because a rename already encodes the side in the path.
+#[test]
+fn a_removed_line_takes_its_colours_from_the_base_blob() {
+    let workspace = Fixture::rewritten();
+    let app = workspace.app_from("@--");
+    let area = areas(100, 24, Split::default()).diff;
+    let frame = frame_at(&app, 100, 24);
+
+    let removed = row_of_sigil(&frame, area, '-');
+    let added = row_of_sigil(&frame, area, '+');
+    let text_of = |y: u16| {
+        diff_rows(&frame, area)
+            .into_iter()
+            .find(|(row, _)| *row == y)
+            .map(|(_, text)| text)
+            .expect("the row is in the pane")
+    };
+    assert!(
+        text_of(removed).contains(REWRITE_BASE_LINE),
+        "the removed half does not show the base blob's text:\n{}",
+        buffer_text(&frame)
+    );
+    assert!(
+        text_of(added).contains(REWRITE_HEAD_LINE),
+        "the added half does not show the head blob's text:\n{}",
+        buffer_text(&frame)
+    );
+
+    // Column 7 of the pane's inner area is where a line's own text starts: a
+    // five-wide number, a space and the sigil.
+    let literal = area.x + 1 + 7 + u16::try_from(REWRITE_LITERAL_COLUMN).expect("a small column");
+    assert_eq!(
+        frame[(literal, removed)].symbol(),
+        "\"",
+        "the base side's literal is not where this test looks for it:\n{}",
+        buffer_text(&frame)
+    );
+    assert_eq!(
+        frame[(literal, added)].symbol(),
+        "1",
+        "the head side's literal is not where this test looks for it:\n{}",
+        buffer_text(&frame)
+    );
+
+    let base_colour = frame[(literal, removed)].style().fg;
+    let head_colour = frame[(literal, added)].style().fg;
+    assert_ne!(
+        base_colour,
+        head_colour,
+        "the two sides colour that column the same way, so this proves nothing:\n{}",
+        buffer_text(&frame)
+    );
+    assert_eq!(
+        base_colour,
+        Some(ui::capture_colour(rv_core::highlight::Capture::String)),
+        "the removed line's literal is not coloured as the string the base blob \
+         has there — its spans came from the head side:\n{}",
+        buffer_text(&frame)
+    );
+    assert_eq!(
+        head_colour,
+        Some(ui::capture_colour(rv_core::highlight::Capture::Constant)),
+        "the added line's literal is not coloured as the number the head blob \
+         has there:\n{}",
+        buffer_text(&frame)
+    );
+}
+
+/// A file rv has no grammar for renders plain, and the pane says why rather
+/// than leaving the reviewer to guess whether the colour is broken.
+#[test]
+fn a_file_with_no_grammar_renders_plain_and_says_so() {
+    let workspace = Fixture::plain();
+    let app = workspace.app();
+    let frame = frame_at(&app, 100, 24);
+    let area = areas(100, 24, Split::default()).diff;
+    let text = buffer_text(&frame);
+
+    assert!(
+        text.contains("no highlighting"),
+        "the title does not say why the code is plain:\n{text}"
+    );
+    let added = row_of_sigil(&frame, area, '+');
+    assert_eq!(
+        distinct_foregrounds(&frame, area, added).len(),
+        2,
+        "a file with no grammar was coloured anyway: {:?}\n{text}",
+        distinct_foregrounds(&frame, area, added)
+    );
+}
+
+/// ...and a file rv *does* have a grammar for is not labelled as plain.
+#[test]
+fn a_highlighted_file_is_not_labelled_as_plain() {
+    let workspace = Fixture::new();
+    let app = workspace.app();
+    let text = buffer_text(&frame_at(&app, 100, 24));
+    assert!(
+        !text.contains("no highlighting"),
+        "a Rust file is labelled as having no grammar:\n{text}"
+    );
+}
+
+/// The wash is a band across the whole pane rather than a tint that stops
+/// wherever the line's text happens to end: a ragged right edge reads as a
+/// rendering fault rather than as a marked line.
+#[test]
+fn the_wash_reaches_the_edge_of_the_pane_and_no_further() {
+    let workspace = Fixture::new();
+    let app = workspace.app();
+    let frame = frame_at(&app, 100, 24);
+    let area = areas(100, 24, Split::default()).diff;
+    let added = row_of_sigil(&frame, area, '+');
+    let wash = diff_bg(&frame, area, added).expect("the line is tinted");
+
+    assert_eq!(
+        frame[(area.right() - 2, added)].style().bg,
+        Some(wash),
+        "the tint stops short of the pane's last column:\n{}",
+        buffer_text(&frame)
+    );
+    assert_ne!(
+        frame[(area.right() - 1, added)].style().bg,
+        Some(wash),
+        "the tint spilled onto the pane's own border:\n{}",
+        buffer_text(&frame)
+    );
+}
+
+/// Every key the README's **Browsing** table documents is a row of
+/// [`BINDINGS`], which is what chains the page to the code rather than to
+/// [`BROWSE_KEYS`]'s hand-kept list of spellings.
+///
+/// `Ctrl+C` is the exception, and the only one: [`rv::app::App::on_key_event`]
+/// answers it before the mode is dispatched at all — it is the universal abort,
+/// and it works from behind the `?` popup too, because an abort that first asks
+/// you to press `Esc` is not an abort.
+#[test]
+fn every_documented_browse_key_is_a_row_of_the_binding_table() {
+    for key in BROWSE_KEYS {
+        if *key == "`Ctrl+C`" {
+            continue;
+        }
+        let spelled = key.replace('`', "");
+        assert!(
+            BINDINGS.iter().any(|binding| binding.keys == spelled),
+            "the README documents {key}, which is not a row of BINDINGS: {:?}",
+            BINDINGS.iter().map(|b| b.keys).collect::<Vec<_>>()
+        );
+    }
+}
+
+/// The three bindings this wave added are deliberately **not** in
+/// [`BROWSE_KEYS`], and so are not yet held to the README.
+///
+/// README is not this wave's file to edit — Task 12 of the viewport plan owns
+/// the page, the `? help` entry in the status bar, and the mouse gestures, and
+/// documents them in one change. Until then a reviewer can only find `?` by
+/// pressing it, which is a real gap and is written down here rather than left
+/// in a report nobody reads: the moment the page grows those rows, this fails
+/// and whoever added them is told to put the keys in [`BROWSE_KEYS`] — where
+/// the two directions above will hold them — and delete this test.
+#[test]
+fn the_readme_still_owes_rows_for_this_waves_bindings() {
+    let documented = table_keys("**Browsing**");
+    for key in ["`<`", "`>`", "`?`"] {
+        assert!(
+            !documented.iter().any(|row| row == key),
+            "the README now has a Browsing row for {key}: add it to BROWSE_KEYS, \
+             which holds the table and the binding table to each other, and delete \
+             this test"
+        );
+    }
 }

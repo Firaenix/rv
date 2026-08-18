@@ -6,10 +6,19 @@
 //! paints from a [`rv::layout::Layout`] and [`rv::layout::hit`] reads from the
 //! same one, so a click cannot land somewhere other than what was drawn.
 //!
-//! The property at the bottom is the one that matters. Every cell either pane
-//! paints must hit *something*, at every geometry a terminal can be, because
-//! the failure this module exists to prevent is silent: a click that resolves
-//! to the wrong row looks exactly like a click that resolved to the right one.
+//! The property at the bottom is the one that matters. Every cell of either
+//! pane must answer with exactly the row that was painted there — and with
+//! *nothing* on the two rows that are border rather than content — at every
+//! geometry a terminal can be, because the failure this module exists to
+//! prevent is silent: a click that resolves to the wrong row looks exactly like
+//! a click that resolved to the right one.
+//!
+//! That property is only as good as the range it walks. Its first version
+//! asked whether each cell hit *something* over `rect.y + 1..rect.bottom()`,
+//! which skipped the top border deliberately and stopped one row short of the
+//! bottom border by accident — so the bottom border sat inside the range,
+//! answering with a content row one past the last one drawn, and the property
+//! reported green at every terminal size.
 
 use proptest::prelude::*;
 use ratatui::layout::Rect;
@@ -256,6 +265,47 @@ fn a_click_on_a_panes_top_border_reports_nothing() {
     assert_eq!(hit(&l, l.sidebar.x + 1, l.sidebar.y), None);
 }
 
+/// And neither does the bottom one. A pane is a bordered block, so a rect of
+/// height `h` paints `h - 2` rows inside it and the last one a click can land
+/// on is `bottom() - 2`. Counting `bottom() - 1` as content hands the caller a
+/// row index one past everything that was drawn: a click on the bottom edge of
+/// the file list selects nothing, or — once the caller clamps — the wrong file.
+#[test]
+fn a_click_on_a_panes_bottom_border_reports_nothing() {
+    let l = layout(Rect::new(0, 0, 100, 24), Split::new(30), browsing());
+    assert_eq!(hit(&l, l.diff.x + 3, l.diff.bottom() - 1), None);
+    assert_eq!(hit(&l, l.sidebar.x + 1, l.sidebar.bottom() - 1), None);
+    assert_eq!(
+        hit(&l, l.diff.x + 3, l.diff.bottom() - 2),
+        Some(Target::DiffRow(usize::from(l.diff.height) - 3)),
+        "the row above it is the last one the pane draws"
+    );
+    assert_eq!(
+        hit(&l, l.sidebar.x + 1, l.sidebar.bottom() - 2),
+        Some(Target::SidebarRow(usize::from(l.sidebar.height) - 3)),
+    );
+}
+
+/// A pane with no room between its borders has no rows to click at all, rather
+/// than one row that is both borders at once.
+#[rstest]
+#[case(3)] // two pane rows under the bar: both of them border
+#[case(2)] // one pane row: the top border, with no bottom to reach
+fn a_pane_too_short_for_content_reports_no_rows(#[case] height: u16) {
+    let l = layout(Rect::new(0, 0, 100, height), Split::new(30), browsing());
+    for row in 0..height {
+        for column in [l.sidebar.x + 1, l.diff.x + 1] {
+            assert!(
+                !matches!(
+                    hit(&l, column, row),
+                    Some(Target::SidebarRow(_) | Target::DiffRow(_))
+                ),
+                "({column},{row}) is a content row in a {height}-row terminal"
+            );
+        }
+    }
+}
+
 #[test]
 fn the_popup_takes_priority_over_whatever_is_beneath_it() {
     let l = layout(
@@ -370,41 +420,68 @@ fn the_split_hands_out_the_columns_the_panes_share() {
 // ---------------------------------------------------------------------------
 
 proptest! {
+    /// Every cell of a pane answers with the row that was painted there, and
+    /// the pane's two border rows answer with nothing at all.
+    ///
+    /// The whole rect is walked, borders included, because both edges of the
+    /// range are where the arithmetic goes wrong. A predecessor of this test
+    /// walked `rect.y + 1..rect.bottom()` and only asked whether the answer was
+    /// `Some`: it never saw that the bottom border was reporting content row
+    /// `height - 2`, one past the last row `draw` paints, at every size a
+    /// terminal can be.
     #[test]
-    fn every_painted_cell_hits_the_pane_that_painted_it(
+    fn every_cell_of_a_pane_round_trips_to_the_row_that_was_painted_there(
         width in 8u16..120, height in 4u16..40, ratio in 5u16..80,
     ) {
         let area = Rect::new(0, 0, width, height);
         let l = layout(area, Split::new(ratio), browsing());
-        for (rect, name) in [(l.sidebar, "sidebar"), (l.diff, "diff")] {
-            for row in rect.y + 1..rect.bottom() {
+        for (rect, name, row_target) in [
+            (l.sidebar, "sidebar", Target::SidebarRow as fn(usize) -> Target),
+            (l.diff, "diff", Target::DiffRow as fn(usize) -> Target),
+        ] {
+            for row in rect.y..rect.bottom() {
+                // On a pane one row tall the single row is both borders; the
+                // arithmetic must not decide it is neither.
+                let border = row == rect.y || row + 1 == rect.bottom();
+                let expected = (!border).then(|| row_target(usize::from(row - rect.y - 1)));
                 for column in rect.x..rect.right() {
-                    let target = hit(&l, column, row);
-                    prop_assert!(target.is_some(), "{name} cell ({column},{row}) hits nothing");
+                    prop_assert_eq!(
+                        hit(&l, column, row), expected,
+                        "{} cell ({}, {}) in {:?}", name, column, row, rect
+                    );
                 }
             }
+
+            // And the rows that do answer are exactly the ones inside the
+            // borders: as many as `draw` has to paint into, numbered from zero.
+            let inner = usize::from(rect.height.saturating_sub(2));
+            let answered = (rect.y..rect.bottom())
+                .filter(|&row| hit(&l, rect.x, row).is_some())
+                .count();
+            prop_assert_eq!(answered, inner, "{} answered {} of {} rows", name, answered, inner);
         }
         prop_assert_eq!(hit(&l, l.divider.x, l.divider.y), Some(Target::Divider));
     }
 
     /// A cell in one pane never answers with the other pane's rows: the
     /// divider is the fence, and a click one column either side of it belongs
-    /// to exactly one list.
+    /// to exactly one list. Borders included — a border that leaked would leak
+    /// into the *neighbouring* pane's rows, which is the worse failure.
     #[test]
     fn no_cell_belongs_to_both_panes(
         width in 8u16..120, height in 4u16..40, ratio in 5u16..80,
     ) {
         let l = layout(Rect::new(0, 0, width, height), Split::new(ratio), browsing());
-        for row in l.sidebar.y + 1..l.sidebar.bottom() {
+        for row in l.sidebar.y..l.sidebar.bottom() {
             for column in l.sidebar.x..l.sidebar.right() {
                 prop_assert!(
-                    matches!(hit(&l, column, row), Some(Target::SidebarRow(_))),
+                    !matches!(hit(&l, column, row), Some(Target::DiffRow(_))),
                     "sidebar cell ({column},{row}) answered {:?}", hit(&l, column, row)
                 );
             }
             for column in l.diff.x..l.diff.right() {
                 prop_assert!(
-                    matches!(hit(&l, column, row), Some(Target::DiffRow(_))),
+                    !matches!(hit(&l, column, row), Some(Target::SidebarRow(_))),
                     "diff cell ({column},{row}) answered {:?}", hit(&l, column, row)
                 );
             }

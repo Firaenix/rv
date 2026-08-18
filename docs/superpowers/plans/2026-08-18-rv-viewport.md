@@ -21,6 +21,7 @@
 - **One side rule.** Anything that asks "which side does this diff line belong to" calls `rv::app::anchored_side(kind)` — `Side::Left` for `LineKind::Removed`, `Side::Right` otherwise. This project shipped one bug where the pane and the anchor disagreed, and nearly shipped a second where a jump ignored the side; a third copy of that logic is how it comes back.
 - **One layout.** After Task 1 no file computes a `Rect` outside `layout()`. If you need a rectangle, get it from the `Layout`.
 - **One binding table.** After Task 3 no key is dispatched that is not in `BINDINGS`, and no entry is in `BINDINGS` that is not dispatched.
+- **The arrows are the binding; `hjkl` are aliases.** Everywhere the keymap is presented — the `?` popup, the status bar, the README — the arrow leads and the vim key follows in parentheses: `↓ (j)`, `↑ (k)`, `← (h)`, `→ (l)`. rv is a tool a reviewer may open once a week, and the arrows are the keys someone can find without being told. Add `h` and `l` as aliases for Left and Right so the vim set is complete rather than half-present. This changes presentation order and adds two aliases; it removes nothing.
 - **Every new preference is session-only.** No config file, no persistence, nothing new in `.review/`.
 - **Never mutate a file in this repository to show a test can fail.** Vendor a copy into the scratch directory and mutate that. A coordinator once read a source file while another agent had it temporarily mutated, mistook the mutation for a shipped bug, and reported it up the chain before checking against git.
 - Commits use jj: `jj describe -m "…" && jj new`, with the repo's two trailer lines.
@@ -1141,7 +1142,402 @@ jj describe -m "feat(rv): alerts that float at the top and fade out" && jj new
 
 ---
 
-## Task 12: Document it
+## Task 11a: The syntax colours come from the terminal's theme (defect)
+
+**Files:** Modify `rv/src/ui.rs`, `rv/tests/app.rs`, `rv/tests/app_cases.rs`
+
+**This is a defect report from a user running the tool: comments render too white.**
+
+The cause is that code text is being painted in colours rv chose rather than colours the terminal chose. The 16 indexed ANSI colours are a pass-through to the user's own scheme — emit index 4 and the terminal substitutes whatever *its* theme calls blue — while any `Color::Rgb` dictates an exact value and ignores the scheme entirely. Comments in particular must map to **index 8, bright black**, which every scheme defines as its muted tone against its own background; `Color::White` (index 7) or any RGB grey is wrong on every theme at once.
+
+- [ ] **Step 1: Audit and write the failing tests**
+
+Read `ui.rs`'s capture-to-style mapping and report what each capture currently produces. Then:
+
+```rust
+#[test]
+fn code_is_painted_only_in_indexed_colours() {
+    // Indexed colours are the user's theme. An Rgb value overrides it, which is
+    // how a tool ends up needing a theme option it should never have needed.
+    let app = rust_workspace().app();
+    let frame = frame_at(&app, 100, 30);
+    for (column, row) in diff_pane_cells(&frame) {
+        let fg = frame[(column, row)].fg;
+        assert!(
+            !matches!(fg, Color::Rgb(..)),
+            "code cell ({column},{row}) dictates an exact colour instead of using the terminal's"
+        );
+    }
+}
+
+#[test]
+fn a_comment_uses_the_terminals_muted_tone() {
+    let app = rust_workspace().app();          // fixture must contain a `// comment`
+    let frame = frame_at(&app, 100, 30);
+    assert_eq!(
+        colour_of_first_comment(&frame),
+        Color::DarkGray,
+        "comments are index 8, the tone every scheme defines for exactly this"
+    );
+}
+
+#[rstest]
+#[case(Capture::Keyword, Color::Magenta)]
+#[case(Capture::Function, Color::Blue)]
+#[case(Capture::Type, Color::Cyan)]
+#[case(Capture::String, Color::Green)]
+#[case(Capture::Comment, Color::DarkGray)]
+fn every_capture_maps_to_an_indexed_colour(#[case] capture: Capture, #[case] expected: Color) {
+    assert_eq!(ui::capture_colour(capture), expected);
+}
+```
+
+- [ ] **Step 2: Run to verify they fail.** Paste what the comment colour actually is today.
+
+- [ ] **Step 3: Fix the mapping** to the table in the spec's §6, and leave punctuation, variables and anything unrecognised **unstyled** so they inherit the terminal's own foreground rather than a colour rv guessed.
+
+- [ ] **Step 4: Run to verify they pass**
+
+- [ ] **Step 5: Confirm the exception is bounded.** The sidebar's change gradient, the alert orange and the focus magenta may use RGB — they are decorations rv owns and the gradient cannot exist in 16 colours. Assert that the diff pane's *text* contains no `Color::Rgb` while allowing the sidebar's to, so the boundary is enforced rather than remembered.
+
+- [ ] **Step 6: Commit**
+
+```bash
+jj describe -m "fix(rv): let the terminal's own theme colour the code" && jj new
+```
+
+---
+
+## Task 11b: A long comment can actually be read (defect)
+
+**Files:** Modify `rv/src/app.rs`, `rv/src/ui.rs`, `rv/src/rows.rs`, `rv/tests/app.rs`, `rv/tests/rows.rs`, `rv/tests/app_cases.rs`
+
+**This is a defect in shipped behaviour, not a feature.** Do it before the remaining feature tasks.
+
+**The defect:** a comment taller than the diff pane cannot be read — not "is awkward", cannot. The pane anchors its window on the row of the selected *diff line* (`rv/src/ui.rs`, `plan.row_of_line(line)`), and `j` moves the selection to the next diff line. A comment box sits between two diff rows, so with a box taller than the pane you see its top from the line above and its bottom from the line below, and **no cursor position anywhere puts the middle rows in the window.** Scrolling looks like it "jumps through" the comment because it is not scrolling the comment at all — it is stepping over it.
+
+**The fix:** `j`/`k` move a cursor over the plan's **rows**, not over diff lines. A box is rows, so the cursor can walk into it and every row becomes reachable by construction. The selection everything else depends on — `c`, `d`, `comments_for_line`, the anchor a comment saves against — becomes the diff line that **owns** the row under the cursor: a diff row owns itself, a box row is owned by the line its box hangs from.
+
+**The row cursor is the state and the line index is derived, not the reverse.** Two cursors kept in step is precisely what caused this: the window's anchor and the user's cursor were different things.
+
+- [ ] **Step 1: Write the failing tests**
+
+```rust
+#[test]
+fn every_row_of_a_tall_comment_can_be_brought_on_screen() {
+    // The defect, stated as a test. A box taller than the pane must not have
+    // rows that no cursor position can show.
+    let mut app = workspace().app();
+    write_comment(&mut app, &"a very long finding. ".repeat(40));
+    let height = 10;
+
+    let mut seen = std::collections::HashSet::new();
+    for _ in 0..80 {
+        for row in visible_row_indices(&app, 100, height) { seen.insert(row); }
+        app.on_key(KeyCode::Char('j')).expect("j");
+    }
+    let total = row_count(&app, 100);
+    let missed: Vec<usize> = (0..total).filter(|r| !seen.contains(r)).collect();
+    assert!(missed.is_empty(), "rows unreachable at any cursor position: {missed:?}");
+}
+
+#[test]
+fn j_walks_into_a_comment_box_rather_than_over_it() {
+    let mut app = workspace().app();
+    write_comment(&mut app, &"a long finding. ".repeat(20));
+    let line = app.line_index();
+    app.on_key(KeyCode::Char('j')).expect("j");
+    assert_eq!(app.line_index(), line, "the cursor is still inside this line's comment");
+    assert!(app.cursor_row() > 0, "and it has moved down a row");
+}
+
+#[test]
+fn commenting_from_inside_a_box_targets_the_line_the_box_belongs_to() {
+    let mut app = workspace().app();
+    write_comment(&mut app, &"a long finding. ".repeat(20));
+    let line = app.line_index();
+    app.on_key(KeyCode::Char('j')).expect("step into the box");
+    write_comment(&mut app, "a second finding");
+    assert_eq!(app.comments_for_line(line).len(), 2, "both comments are on the same line");
+}
+
+#[test]
+fn stepping_past_the_last_row_of_a_box_lands_on_the_next_diff_line() {
+    let mut app = workspace().app();
+    write_comment(&mut app, "short");
+    let line = app.line_index();
+    for _ in 0..8 { app.on_key(KeyCode::Char('j')).expect("j"); }
+    assert!(app.line_index() > line, "the cursor eventually leaves the box");
+}
+```
+
+Write `visible_row_indices` and `row_count` as helpers that build the same plan and window `ui::body` does; if that is awkward from a test, expose exactly what is needed rather than duplicating the arithmetic.
+
+- [ ] **Step 2: Run to verify they fail**
+
+Run: `cargo test -p rv --test app` — expect the reachability test to fail with a non-empty list of unreachable rows. **Paste that list**; it is the defect, measured.
+
+- [ ] **Step 3: Implement the row cursor**
+
+`App` holds `cursor_row: usize` over the current file's plan. `line_index()` derives from it. Clamp on file change, on collapse or expand, and after a delete — anything that rebuilds the plan can shorten it.
+
+- [ ] **Step 4: Run to verify they pass**
+
+- [ ] **Step 5: Add the reachability property**
+
+```rust
+proptest! {
+    #[test]
+    fn every_row_is_reachable(rows in 1usize..60, height in 1usize..20) {
+        let mut seen = std::collections::HashSet::new();
+        for cursor in 0..rows {
+            for row in window(rows, cursor, height) { seen.insert(row); }
+        }
+        prop_assert_eq!(seen.len(), rows, "some row is in no window at any cursor");
+    }
+}
+```
+
+This is the assertion the defect would have failed, and no example test would reliably have caught it — it only bites when a box is taller than the pane, which no fixture happened to build. Prove it can fail by vendoring a copy and restoring line-anchored windowing.
+
+- [ ] **Step 6: Commit**
+
+```bash
+jj describe -m "fix(rv): let the cursor walk into a comment so a long one can be read" && jj new
+```
+
+---
+
+## Task 11c: Counts and sorting in the sidebar
+
+**Files:** Modify `rv/src/tree.rs`, `rv/src/app.rs`, `rv/src/ui.rs`, `rv/tests/tree.rs`, `rv/tests/app.rs`
+
+**Consumes:** `Stat` and the palette from `gradient` (Task 8), `Node`/`NodeKind` (Task 6).
+
+**Produces:**
+
+```rust
+pub enum Sort { Natural, Added, Removed }
+impl App { pub fn sort(&self) -> Sort; }
+pub fn abbreviate(n: u32) -> String;   // 42 -> "42", 1234 -> "1.2k"
+// tree::build and build_grouped gain a `sort: Sort` parameter and a stats lookup
+```
+
+The counts are the `Stat` the gradient already computes at startup — this task renders and orders them, it does not compute anything new.
+
+- [ ] **Step 1: Write the failing tests**
+
+```rust
+#[test]
+fn every_row_shows_what_it_costs_to_review() {
+    let app = mixed_workspace().app();       // added.rs +40 −0, removed.rs +0 −25
+    let frame = buffer_text(&frame_at(&app, 100, 24));
+    assert!(frame.contains("+40"), "additions are shown: {frame}");
+    assert!(frame.contains("25"), "and removals");
+}
+
+#[test]
+fn a_directory_shows_its_subtrees_total() {
+    let nodes = build(&["src/a.rs", "src/b.rs"], &HashSet::new(), true, Sort::Natural, &stats_of([("src/a.rs", 10, 2), ("src/b.rs", 5, 3)]));
+    let dir = nodes.iter().find(|n| n.label == "src").expect("the directory row");
+    assert_eq!(dir.stat, Stat { added: 15, removed: 5 }, "a collapsed row that hides its weight is a row you must expand to judge");
+}
+
+#[rstest]
+#[case(42, "42")]
+#[case(999, "999")]
+#[case(1234, "1.2k")]
+#[case(45678, "46k")]
+fn large_counts_abbreviate(#[case] n: u32, #[case] expected: &str) {
+    assert_eq!(abbreviate(n), expected);
+}
+
+#[test]
+fn o_cycles_the_order_and_the_title_says_which() {
+    let mut app = mixed_workspace().app();
+    assert!(sidebar_title(&frame_at(&app, 100, 24)).contains("natural"));
+    app.on_key(KeyCode::Char('o')).expect("o");
+    assert!(sidebar_title(&frame_at(&app, 100, 24)).contains("added"));
+    app.on_key(KeyCode::Char('o')).expect("o");
+    assert!(sidebar_title(&frame_at(&app, 100, 24)).contains("removed"));
+    app.on_key(KeyCode::Char('o')).expect("o");
+    assert!(sidebar_title(&frame_at(&app, 100, 24)).contains("natural"), "it cycles");
+}
+
+#[test]
+fn sorting_by_additions_puts_the_biggest_first() {
+    let stats = stats_of([("small.rs", 3, 0), ("huge.rs", 300, 0), ("mid.rs", 30, 0)]);
+    let order: Vec<&str> = build(&["small.rs", "huge.rs", "mid.rs"], &HashSet::new(), false, Sort::Added, &stats)
+        .iter().map(|n| n.label.as_str()).collect();
+    assert_eq!(order, ["huge.rs", "mid.rs", "small.rs"]);
+}
+
+#[test]
+fn sorting_does_not_flatten_the_tree() {
+    // A reviewer asked for both; they compose. Siblings sort against each other
+    // and directories keep their children.
+    let stats = stats_of([("src/small.rs", 1, 0), ("src/huge.rs", 99, 0), ("top.rs", 50, 0)]);
+    let nodes = build(&["src/small.rs", "src/huge.rs", "top.rs"], &HashSet::new(), true, Sort::Added, &stats);
+    assert!(nodes.iter().any(|n| matches!(n.kind, NodeKind::Dir { .. })), "still a tree");
+    let files_under_src: Vec<&str> = nodes.iter().filter(|n| n.depth > 0).map(|n| n.label.as_str()).collect();
+    assert_eq!(files_under_src, ["huge.rs", "small.rs"], "siblings sorted, nesting intact");
+}
+
+#[test]
+fn a_directory_sorts_among_its_siblings_by_its_aggregate() {
+    let stats = stats_of([("a/x.rs", 1, 0), ("b/y.rs", 5, 0), ("b/z.rs", 5, 0)]);
+    let nodes = build(&["a/x.rs", "b/y.rs", "b/z.rs"], &HashSet::new(), true, Sort::Added, &stats);
+    let dirs: Vec<&str> = nodes.iter().filter(|n| matches!(n.kind, NodeKind::Dir { .. })).map(|n| n.label.as_str()).collect();
+    assert_eq!(dirs, ["b", "a"], "b totals 10 and outranks a's 1");
+}
+
+#[test]
+fn a_narrow_sidebar_drops_the_counts_before_the_path() {
+    let mut app = mixed_workspace().app();
+    for _ in 0..30 { app.on_key(KeyCode::Char('<')).expect("<"); }   // squeeze the sidebar
+    let frame = buffer_text(&frame_at(&app, 60, 24));
+    assert!(frame.contains("added.rs") || frame.contains("added"), "the path survives");
+    // the gradient still carries the ratio, so nothing is truly lost
+}
+
+#[test]
+fn the_order_never_reaches_disk() {
+    let workspace = mixed_workspace();
+    let mut app = workspace.app();
+    let tree = workspace_tree(&workspace);
+    app.on_key(KeyCode::Char('o')).expect("o");
+    assert_eq!(workspace_tree(&workspace), tree, "a view preference, not review state");
+}
+```
+
+- [ ] **Step 2-4: Run (expect FAIL), implement, run (expect PASS)**
+
+`natural` means "the order the thing already has" — path order for files, stack order for commits — which is why it is one mode rather than two. Add `o` to `BINDINGS` with its contexts, never beside it.
+
+- [ ] **Step 5: Add the conservation property** — under every `Sort` and both groupings, the set of files in the tree is unchanged; only their order moves. A sort that loses a file is worse than no sort, and this is the same property the tree already carries for grouping.
+
+- [ ] **Step 6: Commit**
+
+```bash
+jj describe -m "feat(rv): show what each file costs to review, and sort by it" && jj new
+```
+
+---
+
+## Task 12: The keymap follows what you are looking at
+
+**Files:** Modify `rv/src/app.rs`, `rv/src/ui.rs`, `rv/src/statusbar.rs`, `rv/tests/app.rs`, `rv/tests/app_cases.rs`
+
+**Consumes:** `BINDINGS` (Task 3), the status bar (Task 9), the tree's `NodeKind` (Task 6).
+
+**Produces:**
+
+```rust
+pub enum Context { Files, Commit, Comments, Diff, Comment, Typing, Confirm }
+impl App { pub fn context(&self) -> Context; }
+// Binding gains:
+pub struct Binding { pub keys: &'static str, pub group: Group, pub what: &'static str, pub contexts: &'static [Context] }
+```
+
+- [ ] **Step 1: Write the failing tests**
+
+```rust
+#[rstest]
+#[case::diff(&[], Context::Diff)]
+#[case::files(&[KeyCode::Left], Context::Files)]
+#[case::comments(&[KeyCode::Tab, KeyCode::Left], Context::Comments)]
+fn the_context_follows_the_cursor(#[case] keys: &[KeyCode], #[case] expected: Context) {
+    let mut app = workspace().app();
+    for key in keys { app.on_key(*key).expect("key"); }
+    assert_eq!(app.context(), expected);
+}
+
+#[test]
+fn stepping_into_a_comment_stack_is_its_own_context() {
+    let mut app = workspace().app();
+    write_comment(&mut app, "a finding");
+    app.on_key(KeyCode::Enter).expect("enter the stack");
+    assert_eq!(app.context(), Context::Comment);
+}
+
+#[test]
+fn typing_and_confirming_are_contexts_too() {
+    let mut app = workspace().app();
+    app.on_key(KeyCode::Char('c')).expect("c");
+    assert_eq!(app.context(), Context::Typing);
+    app.on_key(KeyCode::Esc).expect("esc");
+    write_comment(&mut app, "a finding");
+    app.on_key(KeyCode::Char('d')).expect("d");
+    assert_eq!(app.context(), Context::Confirm);
+}
+
+#[test]
+fn the_status_bar_names_the_context_not_just_the_mode() {
+    let mut app = workspace().app();
+    assert!(bar_text(&frame_at(&app, 100, 24)).contains("DIFF"));
+    app.on_key(KeyCode::Left).expect("focus the sidebar");
+    assert!(bar_text(&frame_at(&app, 100, 24)).contains("FILES"));
+}
+
+#[test]
+fn the_popup_leads_with_the_context_you_are_in() {
+    let mut app = workspace().app();
+    app.on_key(KeyCode::Left).expect("focus the sidebar");
+    app.on_key(KeyCode::Char('?')).expect("?");
+    let frame = buffer_text(&frame_at(&app, 100, 30));
+    let files_at = frame.find("files").expect("the files group is titled");
+    let diff_at = frame.find("diff").expect("the diff group is still listed");
+    assert!(files_at < diff_at, "the context you are in comes first");
+}
+
+#[test]
+fn the_popup_still_lists_everything_it_does_not_hide_by_context() {
+    // A keymap that hides is a keymap that teaches less: a reviewer wants to
+    // know what `d` does BEFORE they move onto a comment, not after.
+    let mut app = workspace().app();
+    app.on_key(KeyCode::Left).expect("focus the sidebar");
+    app.on_key(KeyCode::Char('?')).expect("?");
+    let frame = buffer_text(&frame_at(&app, 100, 30));
+    for binding in rv::app::BINDINGS {
+        assert!(frame.contains(binding.keys), "{} is listed even here", binding.keys);
+    }
+}
+
+#[test]
+fn a_binding_inert_in_this_context_is_dimmed_and_does_nothing() {
+    // One table drives both: a key shown as active cannot be inert, and a key
+    // that is inert cannot be shown as active.
+    let workspace = workspace();
+    let mut app = workspace.app();
+    write_comment(&mut app, "a finding");
+    app.on_key(KeyCode::Left).expect("focus the file list");
+    let before = workspace_tree(&workspace);
+
+    app.on_key(KeyCode::Char('d')).expect("d");
+    assert_eq!(app.mode(), Mode::Browse, "d is inert on a file row");
+    assert_eq!(workspace_tree(&workspace), before, "and wrote nothing");
+
+    app.on_key(KeyCode::Char('?')).expect("?");
+    let frame = frame_at(&app, 100, 30);
+    assert!(is_dim(&frame, cell_of_binding(&frame, "d")), "and the popup says so");
+}
+```
+
+- [ ] **Step 2-4: Run (expect FAIL), implement, run (expect PASS)**
+
+`context()` is derived from the mode, the focus, the sidebar tab and the kind of row under the cursor — **never stored**, because a stored copy would need invalidating on every one of those changes and nothing would be watching. `Context::Commit` is reachable once the commits view lands; until then derive it from the node kind under the sidebar cursor so it is correct the moment that view exists.
+
+Give `Binding` its `contexts` field and have **both** `on_key_browse` and the popup consult it. That is what makes the dimming honest rather than decorative.
+
+- [ ] **Step 5: Commit**
+
+```bash
+jj describe -m "feat(rv): the keymap and the status bar follow what you are looking at" && jj new
+```
+
+---
+
+## Task 13: Document it
 
 **Files:** Modify `README.md`, `rv/tests/app_cases.rs`
 
@@ -1153,9 +1549,9 @@ jj describe -m "feat(rv): alerts that float at the top and fade out" && jj new
 
 ## Self-review
 
-Spec coverage: §3 → Task 1; §4 → Tasks 1-2 and the drag in 7; §5 → Task 3; §6 → Tasks 4-5; §7's tree and commit nodes → Task 6, §7's change gradient → Task 8; §8 → Task 7; §9's status bar → Task 9, its focus border → Task 10, its alerts → Task 11; §10's test list is distributed across the tasks that own each behaviour. §10's non-goals are respected — no config file, no themes, no rv-side selection, no destructive gesture, no horizontal scrolling, no third pane.
+Spec coverage: §3 → Task 1; §4 → Tasks 1-2 and the drag in 7; §5 → Task 3; §6 → Tasks 4-5; §7's tree and commit nodes → Task 6, §7's change gradient → Task 8; §8 → Task 7; §9's status bar → Task 9, its focus border → Task 10, its alerts → Task 11; §5's contextual keymap and §9's context-aware mode indicator → Task 12; §10's test list is distributed across the tasks that own each behaviour. §10's non-goals are respected — no config file, no themes, no rv-side selection, no destructive gesture, no horizontal scrolling, no third pane.
 
-Ordering: Task 1 has no dependencies and everything visual depends on it; Task 4 is independent of 1-3 and can run alongside; Task 5 needs 1 and 4; Task 6 needs 1; Task 7 needs 1, 2 and 6; Task 8 needs 6, because a directory row aggregates its subtree; Task 9 needs all. Tasks 2, 3, 5, 6, 7 and 8 all touch `rv/src/app.rs` and must not run concurrently with each other.
+Ordering: Task 1 has no dependencies and everything visual depends on it; Task 4 is independent of 1-3 and can run alongside; Task 5 needs 1 and 4; Task 6 needs 1; Task 7 needs 1, 2 and 6; Task 8 needs 6, because a directory row aggregates its subtree; Task 12 needs 3, 6 and 9, since it extends the binding table with contexts, derives one of them from the tree's node kind, and renames what the bar's first segment shows; Task 13 needs all. Tasks 2, 3, 5, 6, 7 and 8 all touch `rv/src/app.rs` and must not run concurrently with each other.
 
 Type consistency: `Split` and `Layout` are defined in Task 1 and consumed by 2, 5, 6, 7 and 8; `Capture`/`Highlights` in Task 4 and consumed only by Task 5; `Node` in Task 6 and consumed by Task 8's directory aggregation; `Target` in Task 1 and consumed only by Task 7; `Stat`/`Rgb` in Task 8 and consumed only by its own renderer.
 
