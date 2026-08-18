@@ -228,8 +228,8 @@ impl App {
             rv_core::diff::compute(old.as_deref(), new.as_deref(), &head_path)
         };
         self.commit_diffs.insert(pair, diff);
-        self.cache_highlights(from, base_path, old.as_deref());
-        self.cache_highlights(to, head_path, new.as_deref());
+        self.parse_highlights(from, base_path, old.as_deref());
+        self.parse_highlights(to, head_path, new.as_deref());
         Ok(())
     }
 

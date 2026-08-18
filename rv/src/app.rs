@@ -33,6 +33,7 @@ mod keys;
 mod mode;
 mod mouse;
 mod navigate;
+mod paint;
 mod query;
 mod run;
 mod settle;
@@ -199,6 +200,10 @@ pub struct App {
     /// Set to skip difftastic for every file in this review — see
     /// [`App::with_fallback_diffs`].
     force_fallback: bool,
+    /// Blobs whose highlight spans are being parsed on another thread, and the
+    /// channel they come back on — see [`paint`].
+    parsing: HashSet<(String, String)>,
+    painter: paint::Painter,
     /// Which commits-view row is selected, and that row's own diff.
     ///
     /// Keyed by the row's pair number rather than by file, because two changes
@@ -306,6 +311,8 @@ impl App {
             buffer: String::new(),
             status: HELP.to_owned(),
             force_fallback,
+            parsing: HashSet::new(),
+            painter: paint::Painter::default(),
             commit_pair: None,
             commit_diffs: HashMap::new(),
             symbol_index: crate::index::Index::default(),

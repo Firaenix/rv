@@ -151,3 +151,40 @@ fn enter_on_a_file_row_folds_nothing() {
     assert_eq!(app.nodes().len(), before, "a file row folded something");
     assert_eq!(app.focus(), Focus::Sidebar, "the focus moved");
 }
+
+/// Highlighting is off the drawing thread: the diff is on screen before the
+/// parse lands, and the colour arrives after.
+///
+/// Plain is the interim state and it is not a new one — a file whose language
+/// ships no grammar has always drawn plain, so a blob whose parse has not landed
+/// is, for one frame, a blob with no grammar. The claim here is that both frames
+/// are drawable and the second is the coloured one.
+#[test]
+fn the_code_draws_before_it_is_coloured() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+
+    // The lines are there immediately, whatever the parse is doing.
+    let early = frame_at(&app, 100, 24);
+    assert!(
+        buffer_text(&early).contains("fn a()"),
+        "the diff waited for the highlighter:\n{}",
+        buffer_text(&early)
+    );
+
+    app.finish_painting();
+    let painted = frame_at(&app, 100, 24);
+    assert_eq!(
+        buffer_text(&painted),
+        buffer_text(&early),
+        "the swap moved the text as well as the colour"
+    );
+
+    // And the `fn` keyword is now carrying a colour of its own.
+    let row = u16::try_from(row_holding(&painted, "fn a()")).expect("a small row");
+    let keyword = style_of_text(&painted, row, "fn");
+    assert!(
+        keyword.fg.is_some(),
+        "the keyword is still unpainted after the parse landed: {keyword:?}"
+    );
+}

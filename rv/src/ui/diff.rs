@@ -22,6 +22,7 @@ use ratatui::text::Text;
 use ratatui::widgets::Paragraph;
 use rv_core::diff::DiffSource;
 use rv_core::diff::FileDiff;
+use rv_core::highlight::Highlights;
 
 use super::BORDER_ROWS;
 use super::BOX_PADDING;
@@ -53,6 +54,11 @@ const SUPPRESSED_NOTE: &str = "no semantic change — the difference is not visi
 /// Said out loud rather than left to be inferred from a screen of white text: a
 /// tool that presents "I could not" as "there was nothing to find" is guessing
 /// on the reader's behalf.
+///
+/// Decided from the **path**, not from whether a parse has landed. Highlighting
+/// runs off the drawing thread, so for the first frames of a large file there are
+/// no spans yet — and a title reading "no highlighting" over a Rust file that is
+/// merely still being parsed is the same guess in the other direction.
 const NO_GRAMMAR: &str = " — no highlighting";
 
 pub(super) fn draw_diff(frame: &mut Frame, app: &App, area: Rect) {
@@ -78,7 +84,11 @@ pub(super) fn draw_diff(frame: &mut Frame, app: &App, area: Rect) {
     };
 
     let highlighting = Highlighting::of(app);
-    let block = pane(title(diff, highlighting.language()), focused);
+    // The path's own answer, not the cache's: see `NO_GRAMMAR`.
+    let block = pane(
+        title(diff, Highlights::language_of(&diff.path)),
+        focused,
+    );
     let text = body(app, highlighting, diff, area);
     frame.render_widget(Paragraph::new(text).block(block), area);
 }

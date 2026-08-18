@@ -24,12 +24,21 @@ use crossterm::event::Event;
 use crossterm::event::KeyEventKind;
 use crossterm::execute;
 use ratatui::DefaultTerminal;
+use std::time::Duration;
 use std::time::Instant;
 
 use super::Action;
 use super::App;
 use crate::session::Review;
 use crate::ui;
+
+/// How long the loop waits for a keystroke while a blob is still being parsed.
+///
+/// Short enough that colour arriving reads as immediate, long enough that a
+/// reviewer who has walked away is not being woken sixty times a second. The
+/// wait ends the moment a key arrives, so this is a ceiling on the delay before
+/// a swap is painted, not a frame rate.
+const PAINT_POLL: Duration = Duration::from_millis(30);
 
 impl App {
     /// Runs the reviewer on the terminal until the user quits.
@@ -72,13 +81,22 @@ impl App {
         loop {
             let now = Instant::now();
             self.expire_alerts(now);
+            // Before the frame, so a parse that landed while the reviewer was
+            // reading is painted on this pass rather than the next.
+            self.collect_highlights();
             terminal
                 .draw(|frame| ui::draw(frame, self, now))
                 .context("could not draw the review")?;
 
             // Nothing arrived before the deadline: go round and paint the next
-            // step of the fade.
-            if let Some(timeout) = self.next_deadline(Instant::now())
+            // step of the fade — or the colour that has just been parsed.
+            let deadline = match (self.next_deadline(Instant::now()), self.painting()) {
+                (Some(fade), true) => Some(fade.min(PAINT_POLL)),
+                (Some(fade), false) => Some(fade),
+                (None, true) => Some(PAINT_POLL),
+                (None, false) => None,
+            };
+            if let Some(timeout) = deadline
                 && !event::poll(timeout).context("could not wait for an event")?
             {
                 continue;

@@ -32,7 +32,8 @@ fn a_file_with_no_grammar_renders_plain_and_says_so() {
 #[test]
 fn a_highlighted_file_is_not_labelled_as_plain() {
     let workspace = Fixture::new();
-    let app = workspace.app();
+    let mut app = workspace.app();
+    app.finish_painting();
     let text = buffer_text(&frame_at(&app, 100, 24));
     assert!(
         !text.contains("no highlighting"),

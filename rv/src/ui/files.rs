@@ -171,7 +171,11 @@ fn file_row(
         return Line::from(clip(head, width));
     }
 
-    let name = clip(head, names);
+    // A commit row gives up its subject before it gives up an id, and gives up
+    // the second id whole rather than half: half a hash cannot be pasted, so
+    // printing five characters of one is worse than printing none.
+    let fitted = fit_commit(node, head, lead, names);
+    let name = clip(fitted.as_deref().unwrap_or(head), names);
     let mut spans = name_spans(node, &name, lead);
     spans.push(Span::raw(" ".repeat(names + 1 - name.chars().count())));
 
@@ -217,6 +221,44 @@ fn lead_of(app: &App, node: &Node) -> usize {
     node.depth * 2 + row_mark(app, node).chars().count()
 }
 
+/// A change row's name, cut down to what `names` columns can hold.
+///
+/// Three forms, widest first: both ids and the subject, both ids, the change id
+/// alone. `None` for any other row, and for a change row whose full form already
+/// fits.
+///
+/// The ids come before the subject because they are what a reviewer *acts* on —
+/// pasted into `jj show`, typed to select the change — and the subject is on the
+/// bar whenever the cursor is in the change anyway. And an id is kept whole or
+/// dropped: `e…` is not a commit hash, it is a hash-shaped hole, and a row that
+/// prints one invites a paste that cannot work.
+fn fit_commit(node: &Node, head: &str, lead: usize, names: usize) -> Option<String> {
+    let NodeKind::Commit {
+        short_change,
+        short_commit,
+        subject,
+        ..
+    } = &node.kind
+    else {
+        return None;
+    };
+    let room = names.saturating_sub(lead);
+    let full = format!("{short_change} {short_commit} {subject}");
+    if full.chars().count() <= room {
+        return None;
+    }
+    let ids = format!("{short_change} {short_commit}");
+    let text = if ids.chars().count() <= room {
+        ids
+    } else {
+        short_change.clone()
+    };
+    // The row's own lead, not blanks: it carries the fold mark, and a change row
+    // that lost its `▾` would look like a change with nothing under it.
+    let prefix: String = head.chars().take(lead).collect();
+    Some(format!("{prefix}{text}"))
+}
+
 /// A row's name, as one span for a file or a directory and several for a change.
 ///
 /// A change row prints two ids and a subject, and the leading characters of each
@@ -247,6 +289,9 @@ fn name_spans(node: &Node, name: &str, lead: usize) -> Vec<Span<'static>> {
     let mut spans = vec![Span::raw(name.chars().take(lead).collect::<String>())];
     let mut at = lead;
     for id in [short_change, short_commit] {
+        if at >= name.chars().count() {
+            break;
+        }
         let (bright, dim) = split_at_char(name, at, *unique, id.chars().count());
         if !bright.is_empty() {
             spans.push(Span::styled(

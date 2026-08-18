@@ -22,7 +22,8 @@ use crate::support::*;
 #[test]
 fn a_comment_uses_the_terminals_muted_tone() {
     let workspace = Fixture::commented();
-    let app = workspace.app();
+    let mut app = workspace.app();
+    app.finish_painting();
     let frame = frame_at(&app, 100, 24);
     let area = areas(100, 24, Split::default()).diff;
     assert_eq!(
@@ -107,7 +108,8 @@ fn code_is_painted_only_in_indexed_colours() {
 #[test]
 fn an_added_line_has_a_green_wash_and_coloured_code() {
     let workspace = Fixture::new();
-    let app = workspace.app();
+    let mut app = workspace.app();
+    app.finish_painting();
     let frame = frame_at(&app, 100, 24);
     let area = areas(100, 24, Split::default()).diff;
     let added = row_of_sigil(&frame, area, '+');
@@ -209,7 +211,8 @@ fn the_selected_line_is_brighter_rather_than_reversed() {
 #[test]
 fn a_removed_line_takes_its_colours_from_the_base_blob() {
     let workspace = Fixture::rewritten();
-    let app = workspace.app_from("@--");
+    let mut app = workspace.app_from("@--");
+    app.finish_painting();
     let area = areas(100, 24, Split::default()).diff;
     let frame = frame_at(&app, 100, 24);
 

@@ -119,6 +119,18 @@ pub struct Highlights {
 }
 
 impl Highlights {
+    /// The language `path`'s name claims, without reading or parsing a byte.
+    ///
+    /// A caller that parses off the main thread needs this: while a parse is in
+    /// flight there is no [`Highlights`] to ask, and answering "no language" for
+    /// the interval would tell a reviewer their Rust file has no grammar. The
+    /// question "is this a language rv can colour" is about the *path* and is
+    /// answerable at once.
+    #[must_use]
+    pub fn language_of(path: &str) -> Option<&'static str> {
+        grammar_for_path(path).map(|grammar| grammar.name)
+    }
+
     /// Highlights `source` using whichever grammar `path`'s name selects.
     ///
     /// Never fails: a path with no known name, a grammar that cannot be

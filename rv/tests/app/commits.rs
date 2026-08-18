@@ -2,6 +2,7 @@
 
 use crossterm::event::KeyCode;
 use ratatui::style::Modifier;
+use rv::layout::Split;
 use rv::app::SidebarTab;
 use rv::tree::NodeKind;
 
@@ -484,4 +485,70 @@ fn a_comment_written_under_a_change_is_anchored_to_that_change() {
         !comment.anchor.context.is_empty(),
         "the anchor quotes nothing"
     );
+}
+
+/// A narrow sidebar gives up the subject before either id, and gives up the
+/// second id **whole** rather than half.
+///
+/// `e…` is not a commit hash, it is a hash-shaped hole: a reviewer who pastes it
+/// gets nothing, and the row that printed it invited them to. The ids are what a
+/// row is acted on through, and the subject is on the bar whenever the cursor is
+/// in the change anyway.
+///
+/// Swept over widths rather than asserted at three chosen ones: which form fits
+/// depends on the counts column, the change bar and the split, and a test that
+/// hard-coded the crossover would be re-deriving the layout instead of checking
+/// the rule.
+#[test]
+fn a_narrow_commit_row_drops_the_subject_before_an_id() {
+    let workspace = two_changes();
+    let mut app = workspace.app();
+    to_commits(&mut app);
+
+    let change = app
+        .changes()
+        .iter()
+        .find(|change| change.description.starts_with("a second change"))
+        .expect("the described change")
+        .clone();
+    let short_change: String = change.change_id.chars().take(8).collect();
+    let short_commit: String = change.commit_id.chars().take(8).collect();
+
+    // Wide enough, and the row says everything.
+    let wide = sidebar_text(&frame_at(&app, 200, 24), 200, 24, Split::default());
+    assert!(
+        wide.contains(&format!("{short_change} {short_commit}")),
+        "a wide row does not carry both ids:\n{wide}"
+    );
+    assert!(
+        wide.contains("a second change"),
+        "a wide row does not carry the subject:\n{wide}"
+    );
+
+    // And at every width, the change row is one of the three whole forms — never
+    // a partly-printed id, and never without its fold mark.
+    for width in (40u16..=200).step_by(4) {
+        let text = sidebar_text(&frame_at(&app, width, 24), width, 24, Split::default());
+        let Some(line) = text.lines().find(|line| line.contains(&short_change)) else {
+            // Too narrow for even the change id: the row is clipped to nothing
+            // recognisable, which is the file list's existing behaviour.
+            continue;
+        };
+        // Four characters, not one: a one- or two-character "prefix" of a hash
+        // coincides with the change id or the counts on most rows, and calling
+        // that a half-printed hash would fail on a row that is entirely correct.
+        // Four is long enough that a coincidence is a millionth and short enough
+        // that any real truncation is caught.
+        let partial = (4..short_commit.len())
+            .map(|cut| &short_commit[..cut])
+            .any(|prefix| line.contains(prefix) && !line.contains(&short_commit));
+        assert!(
+            !partial,
+            "at {width} columns the row prints part of the commit hash: {line:?}"
+        );
+        assert!(
+            line.contains('▾') || line.contains('▸'),
+            "at {width} columns the row lost its fold mark: {line:?}"
+        );
+    }
 }

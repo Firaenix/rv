@@ -3,7 +3,6 @@
 use anyhow::Context as _;
 use anyhow::Result;
 use rv_core::diff;
-use rv_core::highlight::Highlights;
 
 use super::App;
 use super::Focus;
@@ -185,31 +184,11 @@ impl App {
         };
         self.diffs[self.file_index] = Some(diff);
         // Parsed from the very blobs the diff was computed from, so the spans a
-        // line is painted with describe the text that line came from.
-        self.cache_highlights(base_commit, base_path, old.as_deref());
-        self.cache_highlights(head_commit, head_path, new.as_deref());
+        // line is painted with describe the text that line came from — and parsed
+        // *off* this thread, so a large file draws now and colours in a moment.
+        self.parse_highlights(base_commit, base_path, old.as_deref());
+        self.parse_highlights(head_commit, head_path, new.as_deref());
         Ok(())
     }
 
-    /// Parses `blob`'s highlight spans under `(commit, path)` unless they are
-    /// already there.
-    ///
-    /// A side the commit has no plain file at caches nothing, so
-    /// [`App::highlights`] answers `None` and the renderer draws it plain.
-    pub(super) fn cache_highlights(
-        &mut self,
-        commit: String,
-        path: String,
-        blob: Option<&[u8]>,
-    ) {
-        let Some(bytes) = blob else {
-            return;
-        };
-        let key = (commit, path);
-        if self.highlights.contains_key(&key) {
-            return;
-        }
-        let highlights = Highlights::of(bytes, &key.1);
-        self.highlights.insert(key, highlights);
-    }
 }

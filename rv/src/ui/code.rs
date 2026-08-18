@@ -73,16 +73,6 @@ impl<'a> Highlighting<'a> {
         }
     }
 
-    /// What the pane's title calls the grammar in use, or `None` where there is
-    /// none to name.
-    ///
-    /// The head side answers where it can, because that is the version of the
-    /// file the review is about; a deleted file has only a base side.
-    pub(super) fn language(&self) -> Option<&'static str> {
-        self.right
-            .and_then(Highlights::language)
-            .or_else(|| self.left.and_then(Highlights::language))
-    }
 }
 
 /// One line of the diff, washed by what kind of line it is, syntax coloured on

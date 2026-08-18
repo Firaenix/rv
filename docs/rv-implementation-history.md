@@ -180,7 +180,152 @@ suspicion.
 
 ---
 
+## Inline comments, and the pane that draws them
+
+Comments render as blue bordered boxes beneath the line they annotate, drawn
+inside the diff pane's own `Text` rather than as nested widgets — ratatui cannot
+nest a `Block` inside a `Paragraph`, and hand-drawn borders keep the pane a pure
+`state → Text` function a `TestBackend` can assert on cell by cell.
+
+Two defects the wave produced and paid for:
+
+1. **The cursor walked diff lines while the pane drew rows.** A box is several
+   rows tall, so a cursor moving by line *stepped over* it: with a box taller
+   than the pane, its middle rows were in no window at any cursor position, and
+   the comment could not be read at all. The cursor is now a row of the plan and
+   the line index is derived from it — the reverse would leave two cursors to
+   keep in step, which is what caused the defect.
+2. **A comment id blind to the side.** `same.rs` rewrites a line without moving
+   it, so its two halves are `same.rs:2` on opposite sides; an id seeded without
+   the side made one body typed on each half overwrite itself, under a "comment
+   saved" status line. The id is eight hex characters, not the spec's four: at
+   four, the birthday bound gives a ~7% chance of losing a comment on a
+   hundred-comment review.
+
+---
+
+## The viewport wave — a screen you can arrange
+
+Panes you can resize by key or by drag, a `?` keymap popup drawn *from the
+binding table itself*, syntax highlighting inside the diff's green and red
+washes, a file list that is a tree or a flat list, and a zellij-style segmented
+status bar along the bottom.
+
+The rules that came out of it, each paid for:
+
+- **One layout.** No other module computes a `Rect`. Painting and hit-testing
+  read the same `Layout`, because a click that resolves to the wrong row looks
+  exactly like a click that resolved to the right one — there is no red test,
+  only a reviewer whose comment landed on the wrong line.
+- **Two colour layers, split by channel rather than by hue.** The diff owns green
+  and red as *backgrounds*; the syntax palette owns them as *foregrounds* and
+  emits indexed colours only, so code takes the terminal's own theme. A comment
+  rendering as terminal-white was the defect that forced the split.
+- **The keymap cannot drift.** `BINDINGS` is the only thing the browse handler
+  dispatches from, and the popup and README are both held to it. A key not in the
+  table reaches no code; a row pointing at nothing does not compile.
+- **No background wash on a sidebar row.** Two rounds of looking at the running
+  tool settled it: thirty files became thirty slabs of green and the tree stopped
+  looking like a tree. The colour lives in the counts — `+204` green, `-12` red —
+  and selection is the only full-row background.
+
+---
+
+## Splitting what had grown
+
+Four files had passed the point where they could be held in one reading:
+`tests/app.rs` at 5,657 lines, `tests/app_cases.rs` at 3,966, `src/app.rs` at
+2,900 and `src/ui.rs` at 1,799 — with doc comments running to 40% of `app.rs`,
+most of it rationale that belonged in a spec where it could be revised once
+instead of echoed everywhere.
+
+`src/app.rs` is now 354 lines and fifteen modules, one per what-a-keystroke-does;
+`src/ui.rs` is 175 and eleven, one per thing it draws; each test file is one
+binary with topic modules over shared fixtures. The proof that nothing was lost
+is the count, not the author's word: **1,097 tests before, 1,097 after**, and the
+same 161 test attributes and 71 rstest cases.
+
+A concurrent split agent and a live session editing the same tree also cost
+something worth recording: five finished files were deleted as scratch by the
+session that had not written them, and had to be regenerated. **A working copy
+shared with another agent is not a source of truth about that agent's progress.**
+
+---
+
+## The lifecycle, and reading a stack
+
+**Resolve and abandon** are separate states, not one "dismissed". They record two
+different facts — *this was fixed* and *this was dropped without being fixed* —
+and a summary adding them together misreports what the review concluded. Both
+keys are their own undo, which is why neither asks first; deleting still asks,
+because it is the only one that cannot be taken back. `settled_by` records
+**who**: an agent may resolve its own finding, but the file and the box say it
+was the agent. Forbidding the action would only push it into prose nobody reads.
+
+**The commits tab** lists the stack's changes, each holding the files it touched,
+and a file row shows *that change's* diff of the file — computed between the
+change's parent and the change itself, cached per row, so two changes touching
+one file are two rows with two diffs. The anchor follows the screen: a comment
+written there is filed between the change's own commits, because `commit` on an
+anchor exists so the quoted text can be read back from the revision it names.
+
+**Symbol navigation.** `n`, `N` and a `/` picker over a tree-sitter index built on
+first use and cached per *scope*: the whole bookmark from the Files tab, one
+change's files from the Commits tab. Neither key wraps — a jump from the last
+symbol to the first looks exactly like a jump that failed.
+
+**Comments outside the range are no longer listed.** `.review/` outlives any one
+revset, so a comment can be anchored to a file the open range does not touch. The
+browser used to show it and answer `Enter` with an alert: a row existing only to
+refuse, inflating the count of comments a reviewer thought they could reach.
+Nothing is deleted — the store keeps every one, and a wider range shows them
+again.
+
+### What the tests caught that reading did not
+
+Five defects in this stretch were found by a test disagreeing with a plausible
+implementation, and they are the argument for the suite:
+
+1. **`Repository::stack` lists the newest change first**, and the commits view
+   walked it as though it were oldest-first. Not an off-by-one you see on screen:
+   it attributes every file to its neighbour and gives the oldest change a diff
+   made entirely of removals. Only a fixture whose two changes touch *different*
+   files makes it visible.
+2. **`t` and `o` had shipped dispatched and undocumented.** `BINDINGS` and the
+   README were each held to `BROWSE_KEYS` in one direction only, so a key in
+   neither shipped documented nowhere with the suite green. The missing direction
+   — every dispatched binding must reach the manual — found four such keys.
+3. **The `?` popup silently stopped fitting.** Twenty-one bindings in five groups
+   cannot be dealt into two columns of fourteen without splitting a group, so it
+   fell back to a scrolling column and hid three keys.
+4. **Switching tabs highlighted a row without selecting it**, leaving the sidebar
+   naming one thing and the diff pane showing another.
+5. **A selected commits-view pair outlived its tab**, pairing a stale diff with
+   whatever file was selected later — one file's lines under another file's name.
+   A state-invariant property found it in a single keystroke.
+
+And one test that was lying by construction: the walk order of the symbol index
+is the *caller's scope order*, and every fixture numbered its files ascending, so
+a mutant ranking by file number passed all twenty-seven. A fixture numbering them
+descending kills it, and nothing else does.
+
+### A guard that fired on the sampler
+
+`distinct_comments_are_never_lost_to_each_other` failed about one run in three,
+always on its coverage receipt: the shape it exists for — one body on both halves
+of one same-position rewrite — turned up in two thirds of samples at 32 cases. A
+guard that fires on the random sampler rather than on the code is worse than no
+guard, because it teaches its reader to re-run the suite. The case is driven
+outright now, before the random ones, and the receipt is a receipt.
+
+---
+
 ## In progress
+
+**Six source files remain over the 400-line rule** — `rv-core`'s highlight,
+markdown, diff, store and vcs modules, and `rv/src/tree.rs`. They are split as
+they are touched rather than in one sweep, which is the ruling this session was
+given; the four largest files in the project have been.
 
 **Property-based test suites.** `rstest` and `proptest` across five modules, with
 each property required to demonstrate that it can fail: the markdown round-trip
