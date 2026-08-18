@@ -1424,6 +1424,268 @@ jj describe -m "feat(rv): show what each file costs to review, and sort by it" &
 
 ---
 
+## Task 11d: Responsive layout and a collapsible sidebar
+
+**Files:** Modify `rv/src/layout.rs`, `rv/src/app.rs`, `rv/src/ui.rs`, `rv/tests/layout.rs`, `rv/tests/app.rs`
+
+**Consumes:** `Layout`, `hit`, `Target` (Task 1); `Split` (Task 2); the mouse routing (Task 7).
+
+**Produces:** `Layout::sidebar_toggle: Rect`, `Target::SidebarToggle`, `App::sidebar_collapsed() -> bool`, and `z` bound in `BINDINGS`.
+
+**Why:** a reviewer on a phone over ssh has forty columns. Two panes do not fit in forty columns at any ratio, and "read this diff on my phone" is exactly when someone reaches for a terminal instead of a browser.
+
+- [ ] **Step 1: Write the failing tests**
+
+```rust
+#[test]
+fn z_collapses_the_sidebar_and_gives_the_diff_the_width() {
+    let mut app = workspace().app();
+    let wide = diff_pane_width(&frame_at(&app, 120, 30));
+    app.on_key(KeyCode::Char('z')).expect("z");
+    assert!(app.sidebar_collapsed());
+    assert!(diff_pane_width(&frame_at(&app, 120, 30)) > wide, "the diff took the space");
+    app.on_key(KeyCode::Char('z')).expect("z again");
+    assert!(!app.sidebar_collapsed());
+}
+
+#[test]
+fn clicking_the_chevron_collapses_it_too() {
+    // A control that exists only for the mouse is a control an ssh user without
+    // mouse reporting does not have — and that user is who this is for.
+    let mut app = workspace().app();
+    let l = layout_of(&app, 120, 30);
+    let cell = (l.sidebar_toggle.x, l.sidebar_toggle.y);
+    assert_eq!(hit(&l, cell.0, cell.1), Some(Target::SidebarToggle));
+    app.on_mouse(click(cell.0, cell.1)).expect("click the chevron");
+    assert!(app.sidebar_collapsed());
+}
+
+#[rstest]
+#[case(40, 20)]
+#[case(50, 24)]
+#[case(60, 30)]
+fn a_narrow_terminal_shows_one_pane_and_still_renders(#[case] width: u16, #[case] height: u16) {
+    let app = workspace().app();
+    let l = layout(Rect::new(0, 0, width, height), Split::new(30), Chrome { bar_rows: 1, help_open: false, toast: false });
+    assert!(l.sidebar.width == 0 || l.diff.width == 0, "one pane at a time under 80 columns");
+    let _ = frame_at(&app, width, height);   // must not panic at phone size
+}
+
+#[test]
+fn widening_restores_the_ratio_the_reviewer_chose() {
+    // The breakpoint overrides the split; it must not overwrite it, or the
+    // reviewer sets their layout twice.
+    let mut app = workspace().app();
+    for _ in 0..5 { app.on_key(KeyCode::Char('>')).expect(">"); }
+    let chosen = app.split().ratio();
+    let _ = frame_at(&app, 40, 20);          // render narrow, forcing one pane
+    let _ = frame_at(&app, 120, 30);         // and back to wide
+    assert_eq!(app.split().ratio(), chosen, "the preference survived the breakpoint");
+}
+
+#[test]
+fn the_chevron_shows_which_way_it_will_go() {
+    let mut app = workspace().app();
+    assert!(buffer_text(&frame_at(&app, 120, 30)).contains('▾'), "expanded points down");
+    app.on_key(KeyCode::Char('z')).expect("z");
+    assert!(buffer_text(&frame_at(&app, 120, 30)).contains('▸'), "collapsed points right");
+}
+```
+
+- [ ] **Step 2-4: Run (expect FAIL), implement, run (expect PASS)**
+
+The breakpoint lives in `layout()`, which is where every rectangle is already decided; `App` holds only the collapsed flag and the remembered ratio. Add `z` to `BINDINGS` with its contexts, never beside it.
+
+- [ ] **Step 4b: Fold a folder with `Enter` or `Space`**
+
+```rust
+#[rstest]
+#[case(KeyCode::Enter)]
+#[case(KeyCode::Char(' '))]
+fn a_directory_row_folds_with_enter_or_space(#[case] key: KeyCode) {
+    let mut app = workspace().app();
+    app.on_key(KeyCode::Char('t')).expect("tree view");
+    app.on_key(KeyCode::Left).expect("focus the sidebar");
+    select_first_directory_row(&mut app);
+    let rows = sidebar_row_count(&frame_at(&app, 100, 30));
+
+    app.on_key(key).expect("fold");
+    assert!(sidebar_row_count(&frame_at(&app, 100, 30)) < rows, "its children are hidden");
+    app.on_key(key).expect("unfold");
+    assert_eq!(sidebar_row_count(&frame_at(&app, 100, 30)), rows, "and back");
+}
+
+#[rstest]
+#[case(KeyCode::Enter)]
+#[case(KeyCode::Char(' '))]
+fn on_a_file_row_both_keys_still_move_to_the_diff(#[case] key: KeyCode) {
+    // A file is a thing to look at; a directory is a thing to open.
+    let mut app = workspace().app();
+    app.on_key(KeyCode::Left).expect("focus the sidebar");
+    app.on_key(key).expect("open");
+    assert_eq!(app.focus(), Focus::Diff);
+}
+```
+
+Add `Space` to `BINDINGS` beside `Enter`, with its contexts, and present it as `enter / space` wherever the keymap is shown. `s` keeps working everywhere — it stays the general verb; these are the keys a reviewer will reach for first in a tree.
+
+- [ ] **Step 5: Sweep phone-sized frames** — every state (sidebar focused, diff focused, comment open, help open, toast up) at 40x20, 50x24 and 60x30, asserting no panic and no overlap. Small terminals are where layout arithmetic breaks, and a 1x1 sweep does not reach this code because the panes get zero height before the interesting paths run.
+
+- [ ] **Step 6: Commit**
+
+```bash
+jj describe -m "feat(rv): collapse the sidebar, and fit on a phone" && jj new
+```
+
+---
+
+## Task 11e: Resolve and abandon a comment
+
+**Files:** Modify `rv-core/src/store.rs`, `rv-core/src/markdown.rs`, `rv-core/tests/store.rs`, `rv-core/tests/markdown.rs`, `rv/src/app.rs`, `rv/src/ui.rs`, `rv/tests/app.rs`, `rv/tests/app_cases.rs`, `README.md`
+
+**Spec:** `docs/superpowers/specs/2026-08-17-rv-storage-model-design.md` §3.
+
+Deleting, resolving and abandoning are **three different acts**. Deleting says the comment should never have existed and removes the record. Resolving says it was **addressed**. Abandoning says it was **dropped without being addressed** — and a reviewer returning to a stack needs to tell those two apart, because one is work that happened and the other is work that was decided against.
+
+**Produces:** `CommentState::{Open, Resolved, Abandoned, Outdated}` replacing whatever is in the tree, a `settled_by` field recording `user` or `agent`, and `r` / `a` bound in `BINDINGS`.
+
+- [ ] **Step 1: Write the failing tests**
+
+```rust
+#[rstest]
+#[case(KeyCode::Char('r'), CommentState::Resolved)]
+#[case(KeyCode::Char('a'), CommentState::Abandoned)]
+fn a_comment_can_be_settled_without_being_deleted(#[case] key: KeyCode, #[case] expected: CommentState) {
+    let workspace = workspace();
+    let mut app = workspace.app();
+    write_comment(&mut app, "needs a doc");
+
+    app.on_key(key).expect("settle it");
+
+    let stored = fresh_store(&workspace).comments().expect("read");
+    assert_eq!(stored.len(), 1, "settling is not deleting — the record survives");
+    assert_eq!(stored[0].state, expected);
+    assert_eq!(stored[0].settled_by.as_deref(), Some("user"));
+}
+
+#[rstest]
+#[case(KeyCode::Char('r'))]
+#[case(KeyCode::Char('a'))]
+fn settling_asks_no_question_because_it_can_be_undone(#[case] key: KeyCode) {
+    // Confirm what cannot be undone; do not interrupt what can.
+    let mut app = workspace().app();
+    write_comment(&mut app, "needs a doc");
+    app.on_key(key).expect("settle");
+    assert_eq!(app.mode(), Mode::Browse, "no confirmation prompt");
+    app.on_key(key).expect("again");
+    assert_eq!(app.comments()[0].state, CommentState::Open, "the same key returns it to open");
+}
+
+#[test]
+fn deleting_still_asks_because_it_cannot_be_undone() {
+    let mut app = workspace().app();
+    write_comment(&mut app, "needs a doc");
+    app.on_key(KeyCode::Char('d')).expect("d");
+    assert!(matches!(app.mode(), Mode::ConfirmDelete { .. }));
+}
+
+#[test]
+fn a_settled_comment_renders_collapsed_and_says_which_it_is() {
+    let mut app = workspace().app();
+    write_comment(&mut app, "needs a doc");
+    app.on_key(KeyCode::Char('r')).expect("resolve");
+    let text = buffer_text(&frame_at(&app, 100, 30));
+    assert!(text.contains("resolved"), "the box says what happened to it: {text}");
+    app.on_key(KeyCode::Char('a')).expect("abandon it instead");
+    assert!(buffer_text(&frame_at(&app, 100, 30)).contains("abandoned"));
+}
+
+#[test]
+fn the_export_separates_what_was_fixed_from_what_was_dropped() {
+    // Counting them together would misreport what the review concluded.
+    let session = sample_session();
+    let comments = vec![
+        comment_in(CommentState::Open, "still open"),
+        comment_in(CommentState::Resolved, "was fixed"),
+        comment_in(CommentState::Abandoned, "was dropped"),
+    ];
+    let doc = markdown::render(&session, &comments);
+    assert!(doc.contains("## Open (1)"));
+    assert!(doc.contains("## Resolved (1)"));
+    assert!(doc.contains("## Abandoned (1)"));
+}
+
+#[test]
+fn the_sidebar_counts_only_what_is_still_open() {
+    let mut app = workspace().app();
+    write_comment(&mut app, "one");
+    write_comment(&mut app, "two");
+    app.on_key(KeyCode::Char('r')).expect("resolve one");
+    assert!(bar_text(&frame_at(&app, 110, 30)).contains("1 open"), "settled comments leave the count");
+}
+```
+
+- [ ] **Step 2-4: Run (expect FAIL), implement, run (expect PASS)**
+
+`r` and `a` act on the same target `d` does: the selected comment in the stack or the browser, the line's newest from the diff. Add both to `BINDINGS` with their contexts. An agent writing a reply does not settle anything — `settled_by` distinguishes `user` from `agent` precisely so an agent-settled comment renders distinctly rather than being indistinguishable from a human's decision.
+
+- [ ] **Step 4b: `e` exports the markdown without leaving the reviewer**
+
+```rust
+#[test]
+fn e_writes_the_export_and_says_where_it_went() {
+    let workspace = workspace();
+    let mut app = workspace.app();
+    write_comment(&mut app, "needs a doc");
+    let path = workspace.root().join(".review/REVIEW-FEEDBACK.md");
+    let _ = std::fs::remove_file(&path);
+
+    app.on_key(KeyCode::Char('e')).expect("export");
+
+    let doc = std::fs::read_to_string(&path).expect("the export exists");
+    assert!(doc.contains("needs a doc"), "and holds the review");
+    assert!(app.status().contains("REVIEW-FEEDBACK.md"), "the status names the file: {}", app.status());
+}
+
+#[test]
+fn exporting_ingests_replies_first_so_nothing_a_model_wrote_is_lost() {
+    let workspace = workspace();
+    let mut app = workspace.app();
+    write_comment(&mut app, "needs a doc");
+    app.on_key(KeyCode::Char('e')).expect("export");
+    append_reply(&workspace, "Fixed in the next change.");
+
+    app.on_key(KeyCode::Char('e')).expect("export again");
+
+    assert_eq!(
+        fresh_store(&workspace).comments().expect("read")[0].reply.as_deref(),
+        Some("Fixed in the next change."),
+        "a reply written into the export survives the next export"
+    );
+}
+
+#[test]
+fn the_bar_stops_calling_the_export_stale_once_it_is_written() {
+    let mut app = workspace().app();
+    write_comment(&mut app, "needs a doc");
+    assert!(bar_text(&frame_at(&app, 110, 30)).contains("stale"), "a save makes the export stale");
+    app.on_key(KeyCode::Char('e')).expect("export");
+    assert!(!bar_text(&frame_at(&app, 110, 30)).contains("stale"));
+}
+```
+
+`e` goes through the same path `rv render` does — **ingest replies, then write** — so the two cannot diverge. Without this a reviewer has to quit to produce the file the whole LLM loop depends on, which is a strange thing to make someone leave the tool for. Add `e` to `BINDINGS` with its contexts.
+
+- [ ] **Step 5: Migrate honestly.** A `.review/` written before this change may carry the older state vocabulary. Read it, map it to the nearest new state, and say in the report which mapping you chose — never silently drop a comment whose state you do not recognise; an unknown state becomes `Open`, because showing a reviewer something they must look at again is the safe direction.
+
+- [ ] **Step 6: Commit**
+
+```bash
+jj describe -m "feat(rv): resolve or abandon a comment, which is not the same as deleting it" && jj new
+```
+
+---
+
 ## Task 12: The keymap follows what you are looking at
 
 **Files:** Modify `rv/src/app.rs`, `rv/src/ui.rs`, `rv/src/statusbar.rs`, `rv/tests/app.rs`, `rv/tests/app_cases.rs`

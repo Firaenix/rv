@@ -325,14 +325,48 @@ Match on the symbol name primarily and the path secondarily, so `store write` fi
 
 ```rust
 #[test]
-fn one_and_two_switch_between_the_bookmark_and_the_commits() {
+fn tab_cycles_files_then_commits_then_comments() {
+    // A reviewer reaches for Tab to change what the left column shows, and
+    // having reached for it should arrive. One mechanism, not two.
     let mut app = workspace().app();
-    assert_eq!(app.view(), View::Bookmark);
-    app.on_key(KeyCode::Char('2')).expect("2");
-    assert_eq!(app.view(), View::Commits);
+    assert_eq!(app.sidebar_tab(), SidebarTab::Files);
+    app.on_key(KeyCode::Tab).expect("tab");
+    assert_eq!(app.sidebar_tab(), SidebarTab::Commits);
     assert!(buffer_text(&frame_at(&app, 100, 30)).contains("second change"), "commits are listed");
+    app.on_key(KeyCode::Tab).expect("tab");
+    assert_eq!(app.sidebar_tab(), SidebarTab::Comments);
+    app.on_key(KeyCode::Tab).expect("tab");
+    assert_eq!(app.sidebar_tab(), SidebarTab::Files, "it cycles");
+}
+
+#[test]
+fn a_commit_expands_to_the_files_it_touched() {
+    let mut app = two_change_workspace().app();
+    app.on_key(KeyCode::Tab).expect("commits tab");
+    app.on_key(KeyCode::Left).expect("focus the sidebar");
+    let collapsed = sidebar_row_count(&frame_at(&app, 100, 30));
+    app.on_key(KeyCode::Enter).expect("expand the commit");
+    assert!(sidebar_row_count(&frame_at(&app, 100, 30)) > collapsed, "its files appeared");
+}
+
+#[rstest]
+#[case(true)]
+#[case(false)]
+fn t_chooses_whether_a_commits_files_are_a_tree_or_a_flat_list(#[case] tree: bool) {
+    let mut app = two_change_workspace().app();
+    app.on_key(KeyCode::Tab).expect("commits tab");
+    if tree { app.on_key(KeyCode::Char('t')).expect("tree"); }
+    let text = buffer_text(&frame_at(&app, 100, 30));
+    assert_eq!(text.contains("src"), tree, "a directory row appears only in tree mode");
+}
+
+#[test]
+fn one_and_two_jump_straight_to_a_tab_without_cycling() {
+    let mut app = workspace().app();
+    app.on_key(KeyCode::Char('2')).expect("2");
+    assert_eq!(app.sidebar_tab(), SidebarTab::Commits);
     app.on_key(KeyCode::Char('1')).expect("1");
-    assert_eq!(app.view(), View::Bookmark);
+    assert_eq!(app.sidebar_tab(), SidebarTab::Files);
 }
 
 #[test]

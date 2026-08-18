@@ -26,6 +26,22 @@
 //! [`Chrome`] — see [`crate::layout::layout`] for why that is a number rather
 //! than a [`Mode`].
 //!
+//! [`draw`] hands the `Layout` it painted back to [`App::note_layout`], and the
+//! three questions a pointer asks about *what is inside* a pane — which plan row
+//! is under this pane row ([`diff_row_at`]), which list entry
+//! ([`sidebar_index_at`]), and where the wheel moves the view to
+//! ([`diff_scrolled`], [`sidebar_scrolled`]) — are answered here as well, for
+//! the same reason: the window's offset, the note above a suppressed diff and a
+//! list's scroll are this module's arithmetic, and a hit test with its own copy
+//! of any of them would resolve clicks against a screen that was never painted.
+//!
+//! # Time
+//!
+//! [`draw`] takes a `now`. The only thing on screen that ages is the alert
+//! toast, whose border steps down in Oklab lightness over its last second, and
+//! taking the instant as an argument is what keeps the renderer — like [`App`]
+//! itself — free of the clock. See `rv/src/app.rs`'s module docs.
+//!
 //! # Comment boxes
 //!
 //! A comment is drawn beneath the diff line it is anchored to, in a box made of
@@ -103,6 +119,7 @@
 //! somebody.
 
 use std::ops::Range;
+use std::time::Instant;
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -130,6 +147,7 @@ use rv_core::model::Side;
 use rv_core::store::Comment;
 use rv_core::store::CommentState;
 
+use crate::app::Alert;
 use crate::app::App;
 use crate::app::BINDINGS;
 use crate::app::Binding;
@@ -142,6 +160,7 @@ use crate::gradient;
 use crate::gradient::Rgb;
 use crate::gradient::Stat;
 use crate::layout::Chrome;
+use crate::layout::Layout;
 use crate::layout::Split;
 use crate::layout::layout;
 use crate::rows::BodyKind;
@@ -231,10 +250,19 @@ const HELP_GAP: usize = 2;
 ///
 /// The path is the row's *identity* and the counts are context: a row reading
 /// `+40 -0` and nothing else names no file, while a row reading `added.…` still
-/// does — and the gradient behind it still carries the ratio the counts would
-/// have spelled, so nothing is truly lost. Eight columns is a short name and
-/// the clip marker.
+/// does. Eight columns is a short name and the clip marker.
 const MIN_PATH_COLUMNS: usize = 8;
+
+/// How many columns the change bar takes on a row wide enough to carry one.
+///
+/// Six, which is enough to read a proportion at a glance — a third against two
+/// thirds is two cells against four — and few enough that a row only has to be
+/// eight columns wider than its own name to earn one.
+const BAR_COLUMNS: usize = 6;
+
+/// The glyph the change bar is drawn with. Drawn as a **foreground**, on the
+/// terminal's own ground: see [`change_bar`].
+const BAR: char = '█';
 
 /// The mark a file list row that holds others carries: pointing down when its
 /// contents are shown, right when they are folded away.
@@ -245,19 +273,33 @@ const OPEN: &str = "▾  ";
 /// See [`OPEN`].
 const FOLDED: &str = "▸  ";
 
-/// Paints the whole reviewer.
+/// Paints the whole reviewer, as it stands at `now`.
 ///
 /// Every rectangle comes from [`layout`]; nothing is computed here. That is
 /// what makes a click land on what the reviewer can see — [`crate::layout::hit`]
-/// reads the same `Layout` this paints from.
-pub fn draw(frame: &mut Frame, app: &App) {
-    let rects = layout(frame.area(), app.split(), chrome(app));
+/// reads the same `Layout` this paints from, and this is where that `Layout` is
+/// handed to [`App::note_layout`] for it.
+///
+/// `now` is a parameter rather than a call to the clock for the same reason
+/// nothing inside [`App`] reads one: the only thing on screen that ages is the
+/// toast, and its fade being a function of an argument is what makes "it is dim
+/// at four and a half seconds" an assertion rather than a sleep.
+pub fn draw(frame: &mut Frame, app: &App, now: Instant) {
+    let alerts: Vec<&Alert> = app.alerts().iter().filter(|a| a.live(now)).collect();
+    let rects = layout(frame.area(), app.split(), chrome(app, !alerts.is_empty()));
+    // Before anything is painted, so that a gesture arriving between this frame
+    // and the next resolves against the geometry this frame had.
+    app.note_layout(rects);
 
     draw_bar(frame, app, rects.bar);
     draw_sidebar(frame, app, rects.sidebar);
     draw_diff(frame, app, rects.diff);
-    // Last, and only if the layout gave it room: it is drawn *over* the panes,
-    // which is why `hit` tests it first.
+    // Over the panes, and under the keymap: a reviewer who asked for the manual
+    // is reading it, and an alert that covered it would be interrupting the one
+    // thing they asked to see.
+    if let Some(toast) = rects.toast {
+        draw_toast(frame, &alerts, toast, now);
+    }
     if let Some(popup) = rects.popup {
         draw_help(frame, app, popup);
     }
@@ -266,8 +308,9 @@ pub fn draw(frame: &mut Frame, app: &App) {
 /// What the layout needs to know about the frame being painted.
 ///
 /// The bar's height is the only thing a [`Mode`] decides about the geometry, so
-/// it is the only thing that crosses over.
-fn chrome(app: &App) -> Chrome {
+/// it is the only thing that crosses over. `toast` is a `bool` for the same
+/// reason: how many alerts there are does not change where the panel goes.
+fn chrome(app: &App, toast: bool) -> Chrome {
     Chrome {
         bar_rows: match app.mode() {
             // A confirmation is a question in the status line, not a box to
@@ -276,8 +319,29 @@ fn chrome(app: &App) -> Chrome {
             Mode::Comment => COMMENT_ROWS,
         },
         help_open: app.help_open(),
-        toast: false,
+        toast,
     }
+}
+
+/// The geometry of a frame nobody has painted yet: an 80x24 terminal at the
+/// default split, browsing.
+///
+/// The narrowest terminal anyone reviews in, so what [`App`] assumes before its
+/// first frame can only be *smaller* than what it gets. Two things read it: the
+/// width a comment box wraps at ([`default_body_width`]) and the rectangles a
+/// gesture resolves against, which is what makes a click arriving before the
+/// first frame land somewhere plausible rather than nowhere.
+#[must_use]
+pub fn default_layout() -> Layout {
+    layout(
+        Rect::new(0, 0, 80, 24),
+        Split::default(),
+        Chrome {
+            bar_rows: 1,
+            help_open: false,
+            toast: false,
+        },
+    )
 }
 
 /// The status bar, the confirmation being answered, or the comment being typed.
@@ -319,7 +383,11 @@ fn draw_bar(frame: &mut Frame, app: &App, area: Rect) {
         Mode::Comment => {
             let width = usize::from(area.width.saturating_sub(BORDER_ROWS));
             frame.render_widget(
-                Paragraph::new(tail(app.buffer(), width)).block(Block::bordered().title("Comment")),
+                Paragraph::new(tail(app.buffer(), width)).block(
+                    Block::bordered()
+                        .border_type(BorderType::Rounded)
+                        .title("Comment"),
+                ),
                 area,
             )
         }
@@ -371,44 +439,99 @@ fn draw_sidebar(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 /// The file list: one row per file, per directory that holds files, or per
-/// change that touched them — marked by how it changed, tinted by the shape of
-/// that change, and counted.
+/// change that touched them — marked by how it changed, counted, and where the
+/// row has columns to spare, measured by a small change bar.
 ///
 /// Every row comes from [`App::sidebar_nodes`], which is [`crate::tree`]'s
 /// answer and the same list the cursor walks. Nothing here decides which rows
 /// exist or what order they are in; this module turns one row into one line.
 ///
-/// The **shape and the order go on the bottom border**, not into the title. The
-/// title already carries the focus mark and the count, and at 80 columns the
-/// sidebar is twenty-one columns wide — `▸ Files (2) · list · natural` is
-/// twenty-six, so putting the order up there would truncate away exactly the
-/// thing it is there to say. The bottom border is empty and is as much the
-/// pane's title as the top one.
+/// # Nothing here paints a background
+///
+/// The gradient does **not** wash the row. Spec §7 rules that out after two
+/// rounds of looking at the running tool: a full-row wash reads as a selection
+/// and competes with the real one, and even a text-width wash destroys what the
+/// pane exists to show, because in tree mode the structure *is* the indentation
+/// and the fold marks and neither survives being painted over. Thirty files
+/// became thirty slabs of green and the tree stopped looking like a tree.
+///
+/// So the colour lives in the **counts**, as a foreground on the terminal's own
+/// ground, and the proportion survives as [`change_bar`] — a mark on the row
+/// rather than the row itself. The only full-row background in this pane is the
+/// selection, which is therefore unambiguous.
+///
+/// # What goes when the pane is narrow
+///
+/// The bar first, then the counts, then the path is clipped. Each is more the
+/// row's identity than the last.
+///
+/// The bar is decided for the **whole list** rather than per row, from the
+/// longest name in it: a bar that appeared on the short rows and not the long
+/// ones would be a ragged column, and one that appeared by clipping a name
+/// would be buying context with identity. It is drawn only where every name
+/// still fits beside it.
+///
+/// # The shape and the order go on the bottom border
+///
+/// The title already carries the focus mark and the count, and at 80 columns
+/// the sidebar has twenty-one columns inside its borders — `▸ Files (2) · list
+/// · natural` is twenty-eight, so putting the order up there would truncate
+/// away exactly the thing it is there to say, on the terminal a reviewer over
+/// ssh actually has. The bottom border is empty and is as much the pane's title
+/// as the top one.
 fn draw_files(frame: &mut Frame, app: &App, area: Rect, focused: bool) {
     let width = usize::from(area.width.saturating_sub(BORDER_ROWS));
     let nodes = app.sidebar_nodes();
+    let heads: Vec<String> = nodes.iter().map(|node| head(app, node)).collect();
     // One counts column for the whole list, as wide as its widest entry, so the
     // names line up down the pane instead of ending wherever their own row's
     // numbers happened to start. Zero when nothing in the review changed a
     // line, which is when there is no column to reserve.
-    let counted: Vec<String> = nodes.iter().map(|node| counts(node.stat)).collect();
-    let counts_width = counted
+    let counted: Vec<(String, String)> = nodes.iter().map(|node| counts(node.stat)).collect();
+    let counts_width = counted.iter().map(counts_columns).max().unwrap_or(0);
+    let longest = heads
         .iter()
-        .map(|counts| counts.chars().count())
+        .map(|head| head.chars().count())
         .max()
         .unwrap_or(0);
+    let bar =
+        usize::from(counts_width > 0 && width >= longest + 1 + BAR_COLUMNS + 1 + counts_width)
+            * BAR_COLUMNS;
+
     let items: Vec<ListItem> = nodes
         .iter()
+        .zip(&heads)
         .zip(&counted)
-        .map(|(node, counts)| ListItem::new(file_row(app, node, counts, counts_width, width)))
+        .map(|((node, head), counts)| {
+            ListItem::new(file_row(node, head, counts, counts_width, bar, width))
+        })
         .collect();
     let list = List::new(items)
         .block(pane(format!("Files ({})", app.files().len()), focused).title_bottom(shape(app)))
         .highlight_style(selection_style(focused));
 
-    let mut state =
-        ListState::default().with_selected((!nodes.is_empty()).then_some(app.sidebar_row()));
+    let mut state = list_state(app, area, nodes.len(), app.sidebar_row());
     frame.render_stateful_widget(list, area, &mut state);
+}
+
+/// Which slice of a sidebar list is drawn, and whether the selection is in it.
+///
+/// The offset is **handed to the widget** rather than left to it. ratatui scrolls
+/// a `List` far enough to keep its selected item visible, which is exactly right
+/// while the view is following the selection and exactly wrong once the wheel
+/// has parked it somewhere else: the widget would quietly scroll back, and the
+/// row a click resolved to would not be the row that was drawn. So the offset
+/// comes from [`list_offset`] — the same function hit-testing reads — and the
+/// selection is passed only while it is inside that window, which is what stops
+/// ratatui from moving it. A selection off screen is drawn nowhere, which is
+/// what being scrolled away from it means.
+fn list_state(app: &App, area: Rect, rows: usize, selected: usize) -> ListState {
+    let height = usize::from(area.height.saturating_sub(BORDER_ROWS));
+    let offset = list_offset(selected, rows, height, app.sidebar_scroll());
+    let shown = (offset..offset.saturating_add(height)).contains(&selected);
+    ListState::default()
+        .with_offset(offset)
+        .with_selected((rows > 0 && shown).then_some(selected))
 }
 
 /// What the file list says about itself along its bottom border: whether it is
@@ -426,33 +549,101 @@ fn shape(app: &App) -> String {
     )
 }
 
-/// One row of the file list, exactly `width` columns wide.
+/// One row of the file list: its name on the left, and — right-aligned in a
+/// column shared by the whole list — its change bar and its counts.
 ///
-/// The counts are right-aligned in a `counts_width` column shared by the whole
-/// list, and are **the first thing to go** when the pane is narrow — see
-/// [`MIN_PATH_COLUMNS`].
+/// `bar` is `0` where the list gave the bar up, and the counts go with it when
+/// even they would leave the name less than [`MIN_PATH_COLUMNS`].
 fn file_row(
-    app: &App,
     node: &Node,
-    counts: &str,
+    head: &str,
+    counts: &(String, String),
     counts_width: usize,
+    bar: usize,
     width: usize,
 ) -> Line<'static> {
-    let head = format!(
+    let tail = if bar > 0 { bar + 1 } else { 0 } + counts_width;
+    // One column of gap at least, always: a name clipped right up against its
+    // own numbers reads as one word, which is how `docs/specs/…+10` happens.
+    let names = width.saturating_sub(tail + 1);
+    if counts_width == 0 || names < MIN_PATH_COLUMNS {
+        return Line::from(clip(head, width));
+    }
+
+    let name = clip(head, names);
+    let mut spans = vec![
+        Span::raw(name.clone()),
+        Span::raw(" ".repeat(names + 1 - name.chars().count())),
+    ];
+
+    let (added, removed) = counts;
+    if added.is_empty() {
+        // Nothing changed here, so the row says nothing rather than `+0 -0` and
+        // draws no bar: zero is not a measurement, and a gradient over zero
+        // lines would be inventing a ratio. It keeps the columns, so the rows
+        // that do have numbers stay lined up.
+        spans.push(Span::raw(" ".repeat(tail)));
+        return Line::from(spans);
+    }
+    if bar > 0 {
+        spans.extend(change_bar(node.stat, bar));
+        spans.push(Span::raw(" "));
+    }
+    spans.push(Span::raw(" ".repeat(counts_width - counts_columns(counts))));
+    spans.push(Span::styled(
+        added.clone(),
+        Style::default().fg(colour(gradient::ADDED)),
+    ));
+    spans.push(Span::raw(" "));
+    spans.push(Span::styled(
+        removed.clone(),
+        Style::default().fg(colour(gradient::REMOVED)),
+    ));
+    Line::from(spans)
+}
+
+/// A row's name, indent and change mark included, before anything is clipped.
+fn head(app: &App, node: &Node) -> String {
+    format!(
         "{}{}{}",
         "  ".repeat(node.depth),
         row_mark(app, node),
         node.label
-    );
-    let room = width.saturating_sub(counts_width + 1);
-    let text = if counts_width == 0 || room < MIN_PATH_COLUMNS {
-        clip(&head, width)
-    } else {
-        let head = clip(&head, room);
-        let pad = width.saturating_sub(counts_width + head.chars().count());
-        format!("{head}{}{counts:>counts_width$}", " ".repeat(pad))
+    )
+}
+
+/// The proportion of a change, as `columns` cells of [`BAR`] running from
+/// [`gradient::ADDED`] through [`gradient::pivot`]'s seam to
+/// [`gradient::REMOVED`].
+///
+/// A **foreground**, not a wash: see [`draw_files`]. Consecutive cells of one
+/// colour are one span, so a bar that is flat green is one span rather than six.
+fn change_bar(stat: Stat, columns: usize) -> Vec<Span<'static>> {
+    let Some(ratio) = stat.added_ratio() else {
+        return vec![Span::raw(" ".repeat(columns))];
     };
-    tinted(&text, node.stat, width)
+    let width = u16::try_from(columns).unwrap_or(u16::MAX);
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let mut run = String::new();
+    let mut ink: Option<Rgb> = None;
+    for column in 0..columns {
+        let colour_of =
+            gradient::column_colour(ratio, u16::try_from(column).unwrap_or(u16::MAX), width);
+        if ink != Some(colour_of) {
+            if let Some(previous) = ink {
+                spans.push(Span::styled(
+                    std::mem::take(&mut run),
+                    Style::default().fg(colour(previous)),
+                ));
+            }
+            ink = Some(colour_of);
+        }
+        run.push(BAR);
+    }
+    if let Some(previous) = ink {
+        spans.push(Span::styled(run, Style::default().fg(colour(previous))));
+    }
+    spans
 }
 
 /// The three columns a file list row spends on saying what kind of row it is:
@@ -472,78 +663,36 @@ fn row_mark(app: &App, node: &Node) -> String {
     }
 }
 
-/// What a row costs to review, or nothing at all where it cost no lines.
+/// What a row costs to review, as the two numbers the pane prints — added and
+/// removed — or two empty strings where it cost no lines.
+///
+/// Two rather than one string because they are drawn in two colours: the added
+/// count in [`gradient::ADDED`] and the removed one in [`gradient::REMOVED`],
+/// which is where the sidebar's colour lives now that no row is washed.
 ///
 /// Abbreviated by [`tree::abbreviate`], which is never wider than four
 /// characters, so the counts cannot push the path out of a narrow column by
 /// being long.
 ///
 /// A row that changed no lines — a pure rename, a mode change — says nothing
-/// rather than `+0 -0`: zero is not a measurement of anything, and the row is
-/// left untinted for the same reason.
-fn counts(stat: Stat) -> String {
+/// rather than `+0 -0`: zero is not a measurement of anything.
+fn counts(stat: Stat) -> (String, String) {
     if stat.total() == 0 {
-        return String::new();
+        return (String::new(), String::new());
     }
-    format!(
-        "+{} -{}",
-        tree::abbreviate(stat.added),
-        tree::abbreviate(stat.removed)
+    (
+        format!("+{}", tree::abbreviate(stat.added)),
+        format!("-{}", tree::abbreviate(stat.removed)),
     )
 }
 
-/// `text`, padded to `width` and washed across it by
-/// [`gradient::column_colour`] — green for the share of the change that is
-/// additions, red for the rest, meeting at a tight light seam.
-///
-/// The whole row, not a bar in a column of its own: the sidebar is the one
-/// place a reviewer decides what to read next, and a proportion drawn across
-/// the row is legible at a glance in a way a three-column bar is not. The ink
-/// is chosen per cell by [`gradient::readable_on`], because the ground runs
-/// from a dark green through a near-white seam to a dark red and no single
-/// foreground is readable on all three.
-///
-/// A row whose change has no shape — nothing added and nothing removed — is
-/// left on the terminal's own ground. A gradient over zero changed lines would
-/// be inventing a ratio.
-fn tinted(text: &str, stat: Stat, width: usize) -> Line<'static> {
-    let Some(ratio) = stat.added_ratio() else {
-        return Line::from(text.to_owned());
-    };
-    let columns = u16::try_from(width).unwrap_or(u16::MAX);
-    let mut spans: Vec<Span<'static>> = Vec::new();
-    let mut run = String::new();
-    let mut ground: Option<Rgb> = None;
-    // Padded with blanks to the full width, so a tinted row reads as a band
-    // across the column rather than stopping wherever its name does — and run
-    // together into as few spans as the gradient has flat stretches.
-    for (column, character) in text
-        .chars()
-        .chain(std::iter::repeat(' '))
-        .take(width)
-        .enumerate()
-    {
-        let colour =
-            gradient::column_colour(ratio, u16::try_from(column).unwrap_or(u16::MAX), columns);
-        if ground != Some(colour) {
-            if let Some(previous) = ground {
-                spans.push(Span::styled(std::mem::take(&mut run), tint(previous)));
-            }
-            ground = Some(colour);
-        }
-        run.push(character);
+/// How many columns [`counts`]'s answer takes, the space between the two
+/// numbers included.
+fn counts_columns((added, removed): &(String, String)) -> usize {
+    if added.is_empty() {
+        return 0;
     }
-    if let Some(previous) = ground {
-        spans.push(Span::styled(run, tint(previous)));
-    }
-    Line::from(spans)
-}
-
-/// A file list cell: the gradient's colour, with whichever ink reads on it.
-fn tint(ground: Rgb) -> Style {
-    Style::default()
-        .bg(colour(ground))
-        .fg(colour(gradient::readable_on(ground)))
+    added.chars().count() + 1 + removed.chars().count()
 }
 
 /// One of [`crate::gradient`]'s colours, as ratatui sends it.
@@ -580,7 +729,7 @@ fn draw_comment_browser(frame: &mut Frame, app: &App, area: Rect, focused: bool)
         .block(block)
         .highlight_style(selection_style(focused));
 
-    let mut state = ListState::default().with_selected(Some(app.browser_index()));
+    let mut state = list_state(app, area, app.comments().len(), app.browser_index());
     frame.render_stateful_widget(list, area, &mut state);
 }
 
@@ -644,18 +793,128 @@ fn draw_diff(frame: &mut Frame, app: &App, area: Rect) {
 #[must_use]
 pub fn visible(app: &App, pane: Rect) -> (Plan<'_>, Range<usize>) {
     let width = usize::from(pane.width.saturating_sub(BORDER_ROWS));
-    let height = usize::from(pane.height.saturating_sub(BORDER_ROWS));
     app.note_body_width(width.saturating_sub(GUTTER + BOX_PADDING));
 
     let plan = app.plan();
-    // The suppressed note takes a row from the window, and only where there is
-    // one to take — see [`body`].
-    let note = app
-        .selected_diff()
-        .is_some_and(|diff| diff.suppressed && height >= 2);
-    let height = height.saturating_sub(usize::from(note));
-    let rows = window(plan.rows.len(), anchor_row(app, &plan), height);
-    (plan, rows)
+    let height = content_rows(app, pane);
+    let total = plan.rows.len();
+    let rows = window(total, anchor_row(app, &plan), height);
+    (plan, parked(rows, total, app.diff_scroll()))
+}
+
+/// How many rows of the plan a diff pane of this size shows: its own, less its
+/// borders, less the suppressed note where there is one to take — see [`body`].
+fn content_rows(app: &App, pane: Rect) -> usize {
+    let height = usize::from(pane.height.saturating_sub(BORDER_ROWS));
+    height.saturating_sub(usize::from(suppressed_note(app, height)))
+}
+
+/// Whether the pane draws a note above the lines saying the diff is suppressed.
+fn suppressed_note(app: &App, height: usize) -> bool {
+    app.selected_diff()
+        .is_some_and(|diff| diff.suppressed && height >= 2)
+}
+
+/// `natural` moved to wherever the wheel has parked the view, or left alone
+/// when it has not.
+///
+/// The park is the *first row on screen* rather than an offset from the cursor,
+/// so a selection moving under a parked view does not drag the view with it —
+/// which is the whole of "scrolling is looking". Its length is the natural
+/// window's, so a pane showing fewer rows than it has room for still shows
+/// exactly those and never a row past the end of the plan.
+fn parked(natural: Range<usize>, rows: usize, scroll: Option<usize>) -> Range<usize> {
+    let Some(start) = scroll else {
+        return natural;
+    };
+    let height = natural.len();
+    let start = start.min(rows.saturating_sub(height));
+    start..start.saturating_add(height)
+}
+
+/// Which row of the plan is under the `row`-th content row of a diff pane drawn
+/// at `pane`, or `None` where that row holds no plan row at all.
+///
+/// The mouse's half of [`visible`], and the reason it is here rather than in
+/// [`App`]: the note above a suppressed diff takes the pane's first row without
+/// being a row of the plan, and the window's offset is this module's arithmetic.
+/// A hit test with its own copy of either would resolve clicks against a screen
+/// that was never painted.
+#[must_use]
+pub fn diff_row_at(app: &App, pane: Rect, row: usize) -> Option<usize> {
+    let height = usize::from(pane.height.saturating_sub(BORDER_ROWS));
+    let row = row.checked_sub(usize::from(suppressed_note(app, height)))?;
+    let (_, rows) = visible(app, pane);
+    let index = rows.start.checked_add(row)?;
+    (index < rows.end).then_some(index)
+}
+
+/// The first row of the diff pane's plan on screen after `delta` rows of wheel,
+/// clamped to the plan.
+///
+/// Answered here for the reason [`diff_row_at`] is: where the view is now is
+/// this module's arithmetic, and the wheel moves it from there.
+#[must_use]
+pub fn diff_scrolled(app: &App, pane: Rect, delta: isize) -> usize {
+    let (plan, rows) = visible(app, pane);
+    let last = plan.rows.len().saturating_sub(rows.len());
+    rows.start.saturating_add_signed(delta).min(last)
+}
+
+/// Which entry of the sidebar's list is under the `row`-th content row of a
+/// sidebar drawn at `pane`, or `None` where the list has no such entry.
+#[must_use]
+pub fn sidebar_index_at(app: &App, pane: Rect, row: usize) -> Option<usize> {
+    let (count, _, offset) = list_view(app, pane);
+    let index = offset.checked_add(row)?;
+    (index < count).then_some(index)
+}
+
+/// The same for the wheel: the first entry on screen after `delta` rows of it.
+#[must_use]
+pub fn sidebar_scrolled(app: &App, pane: Rect, delta: isize) -> usize {
+    let (count, height, offset) = list_view(app, pane);
+    let last = count.saturating_sub(height);
+    offset.saturating_add_signed(delta).min(last)
+}
+
+/// What the sidebar is showing: how many rows its list has, how many of them
+/// fit, and which one is on top.
+///
+/// One function for both tabs, because both are a `List` of one-row items with
+/// one selection, and the mouse's question is the same for either.
+fn list_view(app: &App, pane: Rect) -> (usize, usize, usize) {
+    let height = usize::from(pane.height.saturating_sub(BORDER_ROWS));
+    let (count, selected) = match app.sidebar_tab() {
+        SidebarTab::Files => (app.sidebar_nodes().len(), app.sidebar_row()),
+        SidebarTab::Comments => (app.comments().len(), app.browser_index()),
+    };
+    (
+        count,
+        height,
+        list_offset(selected, count, height, app.sidebar_scroll()),
+    )
+}
+
+/// Which entry a list `height` rows tall starts at.
+///
+/// Two rules, and the second is why this exists at all:
+///
+/// * with no parked view, the list scrolls as little as it can to keep the
+///   selection on screen — which is what ratatui's own `ListState` does from an
+///   offset of zero, spelled out here so that the offset the renderer *hands*
+///   the widget is the one hit-testing reads;
+/// * with one, the reviewer's own position wins, and the selection is simply
+///   off screen while it does. A list that snapped back to its selection on
+///   every wheel notch could not be scrolled past it at all, and rv would be
+///   telling a reviewer with two hundred files that they may only look at the
+///   twenty around their cursor.
+fn list_offset(selected: usize, rows: usize, height: usize, scroll: Option<usize>) -> usize {
+    let last = rows.saturating_sub(height);
+    match scroll {
+        Some(offset) => offset.min(last),
+        None => selected.saturating_sub(height.saturating_sub(1)).min(last),
+    }
 }
 
 /// The two blobs' highlight spans for the file being drawn, one per side,
@@ -810,7 +1069,7 @@ fn body<'a>(
 
     let width = usize::from(pane.width.saturating_sub(BORDER_ROWS));
     let height = usize::from(pane.height.saturating_sub(BORDER_ROWS));
-    let note = diff.suppressed && height >= 2;
+    let note = suppressed_note(app, height);
     let (plan, rows) = visible(app, pane);
 
     // Asked once and handed down the row loop rather than per row: it is
@@ -868,16 +1127,8 @@ fn anchor_row(app: &App, plan: &Plan) -> usize {
 /// a box rather than narrow it.
 #[must_use]
 pub fn default_body_width() -> usize {
-    let rects = layout(
-        Rect::new(0, 0, 80, 24),
-        Split::default(),
-        Chrome {
-            bar_rows: 1,
-            help_open: false,
-            toast: false,
-        },
-    );
-    usize::from(rects.diff.width.saturating_sub(BORDER_ROWS)).saturating_sub(GUTTER + BOX_PADDING)
+    usize::from(default_layout().diff.width.saturating_sub(BORDER_ROWS))
+        .saturating_sub(GUTTER + BOX_PADDING)
 }
 
 /// One row of the plan, as one styled line of the pane.
@@ -1303,6 +1554,72 @@ fn line_number(line: &DiffLine) -> Option<u32> {
 }
 
 // ---------------------------------------------------------------------------
+// Alerts
+// ---------------------------------------------------------------------------
+
+/// The mark an alert leads with, so the panel says what it is before it is
+/// read: a warning, not a status.
+const ALERT_MARK: char = '⚠';
+
+/// What sits between two alerts sharing the panel.
+const ALERT_SEPARATOR: &str = " · ";
+
+/// The floating panel: what has gone wrong, in orange, over the panes.
+///
+/// **One panel, however many alerts.** [`crate::layout::layout`] gives the toast
+/// three rows — two borders and a message — and no rectangle in this reviewer is
+/// computed anywhere but there, so several alerts share the row rather than
+/// stacking down the screen. What matters is that none of them is lost, and the
+/// row is clipped like every other row here rather than truncated silently.
+///
+/// It is drawn over the panes and is **not** a click target: [`crate::layout`]
+/// has no `Target` for it on purpose, because a toast that could be clicked
+/// would be a dialog, and a dialog is something a reviewer has to answer.
+///
+/// The fade is an Oklab ramp in `Rgb`, like the rest of the chrome this
+/// interface owns and unlike the *code*, which is painted in indexed colours so
+/// that it comes from the reviewer's own theme. Spec §9 asks for the toast to
+/// disappear without fading at sixteen colours; nothing in this codebase detects
+/// the terminal's colour depth — [`gradient::column_colour`] and
+/// [`line_background`] emit `Rgb` unconditionally — so a probe written for the
+/// toast alone would be the only one there is, and a second opinion about the
+/// terminal is worse than a fade that degrades the way every other colour here
+/// already does.
+fn draw_toast(frame: &mut Frame, alerts: &[&Alert], area: Rect, now: Instant) {
+    if alerts.is_empty() {
+        return;
+    }
+    // The freshest alert decides the fade: they share one border, and dimming
+    // it because an older message is nearly done would fade out a warning that
+    // has just arrived.
+    let fade = alerts
+        .iter()
+        .map(|alert| alert.fade(now))
+        .fold(1.0_f32, f32::min);
+    let style = Style::default().fg(colour(gradient::oklab_mix(
+        gradient::ALERT,
+        gradient::INK_DARK,
+        fade,
+    )));
+
+    let width = usize::from(area.width.saturating_sub(BORDER_ROWS));
+    let messages: Vec<&str> = alerts.iter().map(|alert| alert.message.as_str()).collect();
+    let text = format!("{ALERT_MARK} {}", messages.join(ALERT_SEPARATOR));
+
+    // Over whatever the panes drew there, rather than blended with it: a
+    // warning read through a diff is a warning read twice.
+    frame.render_widget(Clear, area);
+    frame.render_widget(
+        Paragraph::new(Line::styled(clip(&text, width), style)).block(
+            Block::bordered()
+                .border_type(BorderType::Rounded)
+                .border_style(style),
+        ),
+        area,
+    );
+}
+
+// ---------------------------------------------------------------------------
 // The `?` keymap
 // ---------------------------------------------------------------------------
 
@@ -1328,7 +1645,11 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
     // read through a diff is a keymap read twice.
     frame.render_widget(Clear, area);
     frame.render_widget(
-        Paragraph::new(text).block(Block::bordered().title("▸ Keys — ? or Esc to close")),
+        Paragraph::new(text).block(
+            Block::bordered()
+                .border_type(BorderType::Rounded)
+                .title("▸ Keys — ? or Esc to close"),
+        ),
         area,
     );
 }

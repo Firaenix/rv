@@ -107,6 +107,47 @@ pub struct Split { ratio: u16 }   // percent of the width given to the sidebar
   an even split when the terminal is too small to honour them. A pane that can be
   dragged to zero width is a pane a user can lose.
 
+### Collapsing, and small screens
+
+A reviewer on a phone over ssh has forty columns, and two panes do not fit in
+forty columns no matter how the ratio is set. rv has to work there, because
+"read this diff on my phone" is exactly when a reviewer reaches for a terminal
+rather than a browser.
+
+**The sidebar collapses.** `z` toggles it — zoom, as in tmux and zellij — and a
+chevron in its top border does the same thing with a click:
+
+```
+╭▾ Files (57)──────────╮   expanded, chevron points down
+╭▸────────────────────╮    collapsed to a single column, chevron points right
+```
+
+**Ruling — the chevron is a `Target`, not a special case.** `hit()` already
+answers what is at a cell; the toggle becomes `Target::SidebarToggle` and a click
+on it is routed like every other click. A second mechanism for "what did they
+click" is how the pane and the pointer start disagreeing.
+
+**Ruling — collapsing is reachable by key as well as by click.** A control that
+exists only for the mouse is a control an ssh user without mouse reporting does
+not have, and that user is precisely the one this feature is for.
+
+**Below 80 columns rv shows one pane at a time.** The sidebar collapses itself,
+the diff takes the full width, and `z` swaps which one you are looking at rather
+than trying to show both. This is a breakpoint, not a preference: at forty columns
+a 30% sidebar is twelve columns of truncated path beside twenty-six of truncated
+code, which is two unreadable panes instead of one readable one.
+
+**Ruling — the breakpoint overrides the split but does not overwrite it.** The
+reviewer's ratio is remembered; widening the terminal past the breakpoint restores
+exactly the layout they had. A responsive layout that silently discards a
+preference makes the reviewer set it twice.
+
+Everything else that has to give at forty columns already does: status segments
+drop by priority with the `?` hint last, the keymap popup scrolls when even one
+column will not fit, diff lines clip with a marker rather than silently, and
+comment bodies wrap. What this section adds is the pane that has to disappear
+entirely, and the control to bring it back.
+
 ## 5. The `?` popup
 
 ### The problem it solves
@@ -329,9 +370,21 @@ not need to be. A theme system is a config file, and v1 has no config file.
   are most reviews.
 - Tree state is session-only, like every other view preference here.
 
-This interacts with the Comments tab from the inline-comments work: `Tab` still
-switches Files ⇄ Comments, and `t` applies to the Files tab. In the Comments tab
-`t` does nothing and says so.
+This interacts with the tabs from the inline-comments work: **`Tab` cycles
+Files → Commits → Comments**, and `t` applies wherever files are listed — the
+Files tab, and the files beneath each commit. In the Comments tab `t` does nothing
+and says so.
+
+**Ruling — the commits view is a sidebar tab, not a separate view mode.** An
+earlier draft gave it `1` and `2` while `Tab` cycled the tabs, which is two
+mechanisms answering one question: what is the left column showing. A reviewer
+reaches for Tab, and having reached for it should arrive. `1` and `2` survive as
+direct shortcuts for jumping to a tab without cycling.
+
+That also removes a piece of state. **Scope follows the selection, not a mode:**
+selecting a commit in that tab is what narrows the diff to that change against its
+parent and narrows the symbol index with it. There is no separate view enum to
+keep in step with the tab, and therefore no way for the two to disagree.
 
 ### A commit is a directory
 
@@ -360,7 +413,18 @@ drifted.
 
 `s` collapses a commit for exactly the reason it collapses a directory or a
 comment box: it is the project's one verb for *collapse the thing under the
-cursor*, now in four places with one meaning. `t` still chooses whether the files
+cursor*, now in four places with one meaning.
+
+**`Enter` and `Space` also fold a directory or a commit row.** Every file tree a
+reviewer has used — an editor's explorer, a file manager, a forge's tree — opens
+and closes a folder with Enter or Space, and `s` alone makes rv the odd one out.
+On a *file* row both keys keep their existing meaning and move focus to the diff,
+because a file is a thing to look at while a directory is a thing to open.
+
+**Ruling — this replaces `Enter`-on-a-directory rather than adding to it.** Today
+`Enter` on a directory row focuses the diff, which is close to meaningless: a
+directory is not a file, so there is nothing to focus on. Nothing is lost by
+giving the key the behaviour every other tree already has. `t` still chooses whether the files
 *inside* a commit are a directory tree or a flat list, so the commits view has both
 shapes too.
 
@@ -469,6 +533,30 @@ in both.
 **The pivot band is tight** — a couple of columns, not a wash. The bar exists to
 show a proportion, and a wide blend destroys the very thing it is drawing: you can
 no longer see where two thirds ends and one third begins.
+
+**Ruling — there is no background wash on a sidebar row at all.** The colour
+lives in the counts: `+204` in the added green, `-12` in the removed red, as
+foreground on the terminal's own background. Two rounds of looking at the running
+tool settled this. A full-row wash reads as a selection and competes with the real
+one; even a text-width wash destroys the thing the sidebar exists to show, because
+in tree mode the structure *is* the indentation and the fold markers, and neither
+survives being painted over. Thirty files became thirty slabs of green and the
+tree stopped looking like a tree.
+
+**The proportional gradient survives as a compact bar**, a few cells wide, drawn
+beside the counts only when the row has the width to spare — dropped before the
+counts, which are dropped before the path. So the shape of a change is still
+visible at a glance, but it is a mark on the row rather than the row itself.
+
+**The only full-row background in the sidebar is the selection.** One background,
+one meaning.
+
+**Ruling — one green and one red for the whole interface.** The gradient's
+endpoints are the same dim washes the diff pane puts behind an added and a removed
+line. Shipping a saturated sidebar green beside a near-black diff green meant the
+same concept rendered at two wildly different intensities in two panes a reviewer
+looks at together — the sidebar shouted while the diff whispered, and neither
+looked deliberate. The palette declares them once and both panes import them.
 
 **Ruling — a directory row in the tree aggregates its subtree.** A collapsed
 directory whose children are mostly deletions should say so; otherwise collapsing

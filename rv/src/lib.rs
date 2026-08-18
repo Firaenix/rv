@@ -9,6 +9,7 @@
 
 pub mod app;
 pub mod gradient;
+pub mod index;
 pub mod layout;
 pub mod rows;
 pub mod session;

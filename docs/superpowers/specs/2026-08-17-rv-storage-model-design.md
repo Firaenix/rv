@@ -52,8 +52,8 @@ change_id = "ytskpxpwyunutroxvszuoklmnnrrxlkq"
 commit_id = "62ba3a58bd68745b6d72d48d17e660037371097d"
 body = "4-hex ids collide at review scale."
 reply = "Widened to 8 hex."
-state = "open"                      # open | dismissed | (outdated is derived)
-dismissed_by = ""                   # "user" | "agent", when state = "dismissed"
+state = "open"                      # open | resolved | abandoned  (outdated is derived)
+settled_by = ""                     # "user" | "agent", when resolved or abandoned
 
 [comments.anchor]
 file = "rv-core/src/store.rs"
@@ -87,23 +87,42 @@ the multi-line-literal traps entirely.
 
 ## 3. The lifecycle
 
-Three states, and only one of them is stored.
+Four states, and only two of them are stored.
 
 | State | Where it comes from | How it renders |
 |---|---|---|
 | `open` | the default | expanded, blue box |
-| `dismissed` | someone decided it is done — stored, with **who** | collapsed, dim |
+| `resolved` | the comment was **addressed** — stored, with **who** | collapsed, dim, with a tick |
+| `abandoned` | the comment was **dropped without being addressed** — stored, with **who** | collapsed, dim, struck through |
 | `outdated` | **derived**: the anchor no longer resolves in the current code | collapsed, grey, expandable to a before/after |
+
+**Ruling — `resolved` and `abandoned` are separate states, not one "dismissed".**
+An earlier draft had a single dismissed state, which conflates two different facts
+about a review: *this was fixed* and *this is being dropped without being fixed*.
+A reviewer returning to a stack needs to tell those apart — the first is work that
+happened, the second is work that was decided against, and a summary that counts
+them together is lying about what the review concluded.
+
+**Ruling — deleting, resolving and abandoning are three different acts.**
+Deleting says the comment should never have existed and removes the record;
+resolving and abandoning say it existed and reached an end. That is why deletion
+is the only one that asks first: **confirm what cannot be undone, and do not
+interrupt what can.** Resolving and abandoning are ordinary state changes and
+reversible — setting one back to `open` is just another state change — so they
+take a single key and no prompt.
+
+`r` resolves, `a` abandons, and either applied to a comment already in that state
+returns it to `open`.
 
 **Ruling — `outdated` is derived on every load, never stored.** If the code moves
 back, or a rebase restores it, the comment un-outdates itself. A stored flag would
 have to be invalidated by something, and nothing is watching.
 
-**Ruling — dismissal records who did it: `user` or `agent`.** The original design
+**Ruling — settling a comment records who did it: `user` or `agent`.** The original design
 forbade an agent from resolving anything, on the grounds that an agent grading its
 own homework is how bad fixes land. This relaxes that into something more useful:
-an agent may dismiss, but the file and the UI always say it was the agent, and
-agent-dismissed comments render distinctly from user-dismissed ones. Hiding the
+an agent may resolve or abandon, but the file and the UI always say it was the
+agent, and agent-settled comments render distinctly from user-settled ones. Hiding the
 distinction would be the actual danger; forbidding the action just pushes it into
 prose nobody reads.
 
@@ -152,7 +171,12 @@ dismissing, and deleting a comment no longer touch it.
 
 Replies come back through an explicit ingest: `rv render` ingests before
 re-exporting, and the TUI ingests on launch, so a reviewer returning after a model
-has replied sees the replies. The export can therefore be stale, which is stated
+has replied sees the replies.
+
+**`e` exports from inside the TUI**, through the same ingest-then-write path
+`rv render` uses, and the status line names the file it wrote. Making a reviewer
+quit to produce the file the whole LLM loop depends on would be a strange place
+to put a door. The export can therefore be stale, which is stated
 rather than hoped away: `rv status` reports it, `rv status --json` carries it as a
 field, the TUI status line reads `export stale — rv render to refresh`, and the
 exported document names the commit and time it was written.

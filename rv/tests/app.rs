@@ -17,11 +17,17 @@ use std::fs;
 use std::ops::Range;
 use std::path::Path;
 use std::process::Command;
+use std::sync::OnceLock;
+use std::time::Duration;
+use std::time::Instant;
 use std::time::SystemTime;
 
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
 use crossterm::event::KeyModifiers;
+use crossterm::event::MouseButton;
+use crossterm::event::MouseEvent;
+use crossterm::event::MouseEventKind;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
@@ -373,11 +379,22 @@ fn select_line(app: &mut App, wanted: impl Fn(&DiffLine) -> bool) -> DiffLine {
     app.selected_diff().expect("a diff").lines[index].clone()
 }
 
+/// The instant every frame below is painted at unless the test says otherwise.
+///
+/// Fixed once per process rather than read per frame, because a frame is a
+/// function of the app and the time — the toast fades — and a test that painted
+/// two frames at two instants would be comparing two different questions. Only
+/// the alert tests care what the number is, and they pass their own.
+fn epoch() -> Instant {
+    static EPOCH: OnceLock<Instant> = OnceLock::new();
+    *EPOCH.get_or_init(Instant::now)
+}
+
 /// One frame of the reviewer, as a 100x24 `TestBackend` renders it.
 fn render(app: &App) -> String {
     let mut terminal = Terminal::new(TestBackend::new(100, 24)).expect("build a test terminal");
     terminal
-        .draw(|frame| ui::draw(frame, app))
+        .draw(|frame| ui::draw(frame, app, epoch()))
         .expect("draw a frame");
     terminal.backend().to_string()
 }
@@ -389,10 +406,16 @@ fn render(app: &App) -> String {
 /// A test that only greps the text of a frame passes on an unstyled box, so
 /// everything below asserts against the buffer and reads the colours out of it.
 fn frame_at(app: &App, width: u16, height: u16) -> Buffer {
+    frame_at_time(app, width, height, epoch())
+}
+
+/// The same, painted at an instant the test chooses — which is how a toast's
+/// fade is an assertion rather than a sleep.
+fn frame_at_time(app: &App, width: u16, height: u16, now: Instant) -> Buffer {
     let mut terminal =
         Terminal::new(TestBackend::new(width, height)).expect("build a test terminal");
     terminal
-        .draw(|frame| ui::draw(frame, app))
+        .draw(|frame| ui::draw(frame, app, now))
         .expect("draw a frame");
     terminal.backend().buffer().clone()
 }
@@ -570,20 +593,23 @@ fn sidebar_filled(buffer: &Buffer, width: u16, height: u16, split: Split) -> Vec
         .collect()
 }
 
-/// The frame row the file list draws `needle` on.
+/// The frame row the file list draws `needle` on, at a 100x24 terminal.
 fn sidebar_row_for(buffer: &Buffer, needle: &str) -> u16 {
-    let area = inner(areas(100, 24, Split::default()).sidebar);
+    sidebar_row_for_in(
+        buffer,
+        inner(areas(100, 24, Split::default()).sidebar),
+        needle,
+    )
+}
+
+/// The same, in a file list drawn at some other size.
+fn sidebar_row_for_in(buffer: &Buffer, area: Rect, needle: &str) -> u16 {
     (area.y..area.bottom())
-        .find(|y| {
-            (area.x..area.right())
-                .map(|x| buffer[(x, *y)].symbol())
-                .collect::<String>()
-                .contains(needle)
-        })
+        .find(|y| row_in(buffer, area, *y).contains(needle))
         .unwrap_or_else(|| {
             panic!(
                 "{needle:?} is not in the file list:\n{}",
-                sidebar_text(buffer, 100, 24, Split::default())
+                text_in(buffer, area)
             )
         })
 }
@@ -605,12 +631,18 @@ fn bg_of(buffer: &Buffer, x: u16, y: u16) -> Option<Color> {
     }
 }
 
-/// Every background the file list painted, row by row and cell by cell.
-fn sidebar_backgrounds(buffer: &Buffer) -> Vec<Option<Color>> {
+/// Every foreground the file list drew, row by row and cell by cell.
+///
+/// Foregrounds rather than backgrounds because no row of this pane carries a
+/// background at all — see `no_row_of_the_file_list_is_painted_over`.
+fn sidebar_inks(buffer: &Buffer) -> Vec<Option<Color>> {
     let area = inner(areas(100, 24, Split::default()).sidebar);
     (area.y..area.bottom())
         .flat_map(|y| (area.x..area.right()).map(move |x| (x, y)))
-        .map(|(x, y)| bg_of(buffer, x, y))
+        .map(|(x, y)| match buffer[(x, y)].style().fg {
+            None | Some(Color::Reset) => None,
+            colour => colour,
+        })
         .collect()
 }
 
@@ -4225,7 +4257,7 @@ fn folding_a_box_the_cursor_is_inside_keeps_the_cursor_on_its_line() {
 }
 
 // ---------------------------------------------------------------------------
-// The file list as a tinted, counted tree
+// The file list as a counted tree
 // ---------------------------------------------------------------------------
 
 /// `t` flips the file list between whole paths and a directory tree, and the
@@ -4346,9 +4378,11 @@ fn every_row_shows_what_it_costs_to_review() {
 
 /// A row too narrow for both gives up its counts and keeps its path.
 ///
-/// The path is the row's identity and the counts are context — and the gradient
-/// behind the row still carries the ratio the counts would have spelled, so
-/// nothing is truly lost.
+/// The path is the row's identity and the counts are context. The change bar
+/// has already gone by this point — see
+/// `the_bar_is_dropped_before_the_counts_are` — so the order in which the pane
+/// gives things up is bar, counts, path, each more the row's identity than the
+/// last.
 #[test]
 fn a_narrow_sidebar_drops_the_counts_before_the_path() {
     let workspace = Fixture::mixed();
@@ -4415,103 +4449,160 @@ fn sorting_by_additions_puts_the_biggest_file_first() {
     assert_eq!(sorted, was, "an order that loses a file is worse than none");
 }
 
-/// Every row is tinted across its width by the shape of its change: green where
-/// additions dominate, red where removals do.
+/// The counts carry the colour: the additions in the palette's green, the
+/// removals in its red, as a foreground on the terminal's own ground.
 #[test]
-fn the_sidebar_tints_a_row_by_the_shape_of_its_change() {
+fn the_sidebar_colours_the_counts_by_the_shape_of_the_change() {
     let workspace = Fixture::mixed();
     let app = workspace.app_from("@--");
     let frame = frame_at(&app, 100, 24);
-    let column = areas(100, 24, Split::default()).sidebar.x + 2;
 
     let added = sidebar_row_for(&frame, "added.rs");
     let removed = sidebar_row_for(&frame, "removed.rs");
-    assert_ne!(
-        bg_of(&frame, column, added),
-        bg_of(&frame, column, removed),
-        "the two files are tinted the same:\n{}",
+    assert_eq!(
+        style_of_text(&frame, added, "+40").fg,
+        Some(colour(gradient::ADDED)),
+        "the additions are not the palette's green:\n{}",
         sidebar_text(&frame, 100, 24, Split::default())
     );
     assert_eq!(
-        bg_of(&frame, column, added),
-        Some(colour(gradient::ADDED)),
-        "a file that is nothing but additions is not green all the way across"
+        style_of_text(&frame, added, "-0").fg,
+        Some(colour(gradient::REMOVED)),
+        "the removals are not the palette's red"
     );
     assert_eq!(
-        bg_of(&frame, column, removed),
+        style_of_text(&frame, removed, "-25").fg,
         Some(colour(gradient::REMOVED)),
-        "a file that is nothing but removals is not red all the way across"
+        "and the other row disagrees with the first"
     );
 }
 
-/// ...and the tint reaches the right-hand edge of the column, so a row reads as
-/// a band rather than as a stripe behind its name.
+/// **No row is washed.** Spec §7 rules it out after two rounds of looking at
+/// the running tool: a full-row wash reads as a selection and competes with the
+/// real one, and even a text-width wash paints over the indentation and the
+/// fold marks, which in tree mode *are* the structure. The only full-row
+/// background in this pane is the selection.
 #[test]
-fn the_tint_covers_the_whole_row() {
+fn no_row_of_the_file_list_is_painted_over() {
     let workspace = Fixture::mixed();
-    let app = workspace.app_from("@--");
-    let frame = frame_at(&app, 100, 24);
-    let area = inner(areas(100, 24, Split::default()).sidebar);
-    let row = sidebar_row_for(&frame, "added.rs");
+    let mut app = workspace.app_from("@--");
 
-    for x in area.x..area.right() {
-        assert_eq!(
-            bg_of(&frame, x, row),
-            Some(colour(gradient::ADDED)),
-            "column {x} of a pure addition is not tinted"
-        );
+    for focused in [false, true] {
+        if focused {
+            app.on_key(KeyCode::Left).expect("focus the file list");
+        }
+        let frame = frame_at(&app, 100, 24);
+        let area = inner(areas(100, 24, Split::default()).sidebar);
+        for y in area.y..area.bottom() {
+            for x in area.x..area.right() {
+                assert_eq!(
+                    bg_of(&frame, x, y),
+                    None,
+                    "({x},{y}) is painted over with the file list {}:\n{}",
+                    if focused { "focused" } else { "unfocused" },
+                    sidebar_text(&frame, 100, 24, Split::default())
+                );
+            }
+        }
     }
 }
 
-/// ...including the columns past the end of a row's own text.
-///
-/// A wide row already fills its column — the counts are right-aligned against
-/// the edge — so the row above cannot tell "the tint is padded out" from "the
-/// text happened to reach the edge". This one squeezes the pane until the
-/// counts are dropped and the name is shorter than the column, which is the
-/// only shape where the two answers differ.
+/// The proportion survives as a small bar beside the counts, on a row with the
+/// columns to spare — a mark on the row rather than the row itself.
 #[test]
-fn the_tint_reaches_past_the_end_of_the_text() {
-    let workspace = Fixture::new();
-    let mut app = workspace.app();
-    for _ in 0..30 {
-        app.on_key(KeyCode::Char('<')).expect("squeeze the sidebar");
+fn a_row_with_room_to_spare_draws_its_proportion_as_a_bar() {
+    let workspace = Fixture::mixed();
+    let mut app = workspace.app_from("@--");
+    for _ in 0..12 {
+        app.on_key(KeyCode::Char('>')).expect("widen the sidebar");
     }
 
     let split = app.split();
-    let frame = frame_at(&app, 60, 24);
-    let area = inner(areas(60, 24, split).sidebar);
-    let row = area.y;
-    let text = row_in(&frame, area, row);
-    assert!(
-        text.trim_end().chars().count() < usize::from(area.width),
-        "the row already fills the column, so this proves nothing: {text:?}"
-    );
+    let frame = frame_at(&app, 120, 24);
+    let area = inner(areas(120, 24, split).sidebar);
+    let added = sidebar_row_for_in(&frame, area, "added.rs");
+    let removed = sidebar_row_for_in(&frame, area, "removed.rs");
 
-    for x in area.x..area.right() {
-        assert!(
-            bg_of(&frame, x, row).is_some(),
-            "column {x} is past the name and was left bare: {text:?}"
-        );
-    }
+    let bar_of = |row: u16| -> Vec<Option<Color>> {
+        (area.x..area.right())
+            .filter(|x| frame[(*x, row)].symbol() == "\u{2588}")
+            .map(|x| frame[(x, row)].style().fg)
+            .collect()
+    };
+    let green = bar_of(added);
+    let red = bar_of(removed);
+    assert!(
+        !green.is_empty(),
+        "no bar on a row with room for one:\n{}",
+        text_in(&frame, area)
+    );
+    assert!(
+        green
+            .iter()
+            .all(|ink| *ink == Some(colour(gradient::ADDED))),
+        "a file that is nothing but additions has a bar that is not all green: {green:?}"
+    );
+    assert!(
+        red.iter()
+            .all(|ink| *ink == Some(colour(gradient::REMOVED))),
+        "a file that is nothing but removals has a bar that is not all red: {red:?}"
+    );
 }
 
-/// A change with no shape is left alone: a gradient over zero changed lines
-/// would be inventing a ratio.
+/// ...and it is the first thing given up, ahead of the counts, which are given
+/// up ahead of the path. Each is more the row's identity than the last.
+#[test]
+fn the_bar_is_dropped_before_the_counts_are() {
+    let workspace = Fixture::nested();
+    let mut app = workspace.app();
+
+    // At the default split these paths leave no room for a bar beside them.
+    let text = sidebar_text(&frame_at(&app, 100, 24), 100, 24, Split::default());
+    assert!(
+        !text.contains('\u{2588}'),
+        "the bar was drawn by clipping the names:\n{text}"
+    );
+    assert!(
+        text.contains("+10"),
+        "and it took the counts with it:\n{text}"
+    );
+
+    // Squeezed further, the counts go too and the names stay.
+    for _ in 0..30 {
+        app.on_key(KeyCode::Char('<')).expect("squeeze the sidebar");
+    }
+    let split = app.split();
+    let text = sidebar_text(&frame_at(&app, 60, 24), 60, 24, split);
+    assert!(
+        !text.contains("+10") && !text.contains('\u{2588}'),
+        "the counts outlived the path:\n{text}"
+    );
+    assert!(text.contains("top.rs"), "the path went first:\n{text}");
+}
+
+/// A change with no shape says nothing: no counts, no bar, and none of the
+/// palette's colours. A gradient over zero changed lines would be inventing a
+/// ratio.
 #[test]
 fn a_pure_rename_is_left_neutral() {
     let workspace = Fixture::pure_rename();
     let app = workspace.app_from("@--");
     let frame = frame_at(&app, 100, 24);
-    let column = areas(100, 24, Split::default()).sidebar.x + 2;
+    let area = inner(areas(100, 24, Split::default()).sidebar);
 
     let row = sidebar_row_for(&frame, "b.rs");
-    assert_eq!(
-        bg_of(&frame, column, row),
-        None,
-        "a rename that changed no line was tinted anyway:\n{}",
-        sidebar_text(&frame, 100, 24, Split::default())
+    let text = row_in(&frame, area, row);
+    assert!(
+        !text.contains('+') && !text.contains('\u{2588}'),
+        "a rename that changed no line was counted anyway: {text:?}"
     );
+    for x in area.x..area.right() {
+        let ink = frame[(x, row)].style().fg;
+        assert!(
+            ink != Some(colour(gradient::ADDED)) && ink != Some(colour(gradient::REMOVED)),
+            "column {x} of a rename that changed no line carries a change colour"
+        );
+    }
 }
 
 /// The colours are computed once, when the review is opened, and never move.
@@ -4519,15 +4610,19 @@ fn a_pure_rename_is_left_neutral() {
 fn the_colours_do_not_move_as_you_browse() {
     let workspace = Fixture::nested();
     let mut app = workspace.app();
-    let before = sidebar_backgrounds(&frame_at(&app, 100, 24));
+    let before = sidebar_inks(&frame_at(&app, 100, 24));
+    assert!(
+        before.iter().any(Option::is_some),
+        "the file list drew no colour at all, so this proves nothing"
+    );
 
     for _ in 0..3 {
         app.on_key(KeyCode::Char(']')).expect("next file");
     }
     assert_eq!(
-        sidebar_backgrounds(&frame_at(&app, 100, 24)),
+        sidebar_inks(&frame_at(&app, 100, 24)),
         before,
-        "the tints were recomputed as files were opened"
+        "the colours were recomputed as files were opened"
     );
 }
 
@@ -4825,4 +4920,738 @@ fn the_panes_borders_are_rounded() {
             "a pane's bottom-left corner is square"
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// The mouse
+// ---------------------------------------------------------------------------
+
+/// A left-button press at `(column, row)`, which is what a click sends first
+/// and the only half of one `rv` acts on: a click is a *choice*, and the choice
+/// is made where the button went down.
+fn click(column: u16, row: u16) -> MouseEvent {
+    mouse(MouseEventKind::Down(MouseButton::Left), column, row)
+}
+
+/// The same event, under the name a drag starts with. Spelled twice on purpose:
+/// a press on the divider begins a resize and a press anywhere else is a click,
+/// and reading `press(divider, 6)` beside `click(60, 6)` is what says so.
+fn press(column: u16, row: u16) -> MouseEvent {
+    click(column, row)
+}
+
+fn drag(column: u16, row: u16) -> MouseEvent {
+    mouse(MouseEventKind::Drag(MouseButton::Left), column, row)
+}
+
+fn release(column: u16, row: u16) -> MouseEvent {
+    mouse(MouseEventKind::Up(MouseButton::Left), column, row)
+}
+
+fn scroll_down(column: u16, row: u16) -> MouseEvent {
+    mouse(MouseEventKind::ScrollDown, column, row)
+}
+
+fn scroll_up(column: u16, row: u16) -> MouseEvent {
+    mouse(MouseEventKind::ScrollUp, column, row)
+}
+
+fn mouse(kind: MouseEventKind, column: u16, row: u16) -> MouseEvent {
+    MouseEvent {
+        kind,
+        column,
+        row,
+        modifiers: KeyModifiers::NONE,
+    }
+}
+
+/// Paints a frame at `width` x `height` — which is how the app comes to know
+/// the geometry the pointer is about to be over — and answers the frame row of
+/// the diff pane's `row`-th content row.
+///
+/// The frame is not incidental. A click resolves against the layout that was
+/// *painted*, so a test that clicked without drawing would be asking about a
+/// screen the reviewer never saw. Assumes [`Mode::Browse`], which is the only
+/// mode with a one-row bar.
+fn diff_pane_row(app: &App, width: u16, height: u16, row: u16) -> u16 {
+    let _ = frame_at(app, width, height);
+    inner(areas(width, height, app.split()).diff).y + row
+}
+
+/// The same for the sidebar.
+fn sidebar_pane_row(app: &App, width: u16, height: u16, row: u16) -> u16 {
+    let _ = frame_at(app, width, height);
+    inner(areas(width, height, app.split()).sidebar).y + row
+}
+
+/// The same for the one column between the panes, which is the resize handle.
+fn divider_column(app: &App, width: u16, height: u16) -> u16 {
+    let _ = frame_at(app, width, height);
+    areas(width, height, app.split()).divider.x
+}
+
+/// Clicking a diff line selects it and hands the keys to the diff.
+#[test]
+fn clicking_a_diff_line_selects_it_and_focuses_the_diff() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    app.on_key(KeyCode::Left).expect("focus the sidebar");
+    assert_eq!(app.focus(), Focus::Sidebar);
+
+    let row = diff_pane_row(&app, 100, 24, 2);
+    app.on_mouse(click(60, row)).expect("click in the diff");
+
+    assert_eq!(app.focus(), Focus::Diff, "the click moved the focus");
+    assert_eq!(
+        app.line_index(),
+        2,
+        "and selected the line under the pointer"
+    );
+}
+
+/// A click below the last row of the plan selects nothing at all.
+///
+/// Slop that points at a row nothing was drawn on is not slop: the reviewer
+/// clicked empty space, and a clamp onto the last line would be the tool
+/// choosing a line they did not.
+#[test]
+fn clicking_below_the_last_row_of_the_diff_selects_nothing() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    app.on_key(KeyCode::Left).expect("focus the sidebar");
+    let before = (app.focus(), app.line_index());
+
+    let row = diff_pane_row(&app, 100, 24, 12);
+    app.on_mouse(click(60, row)).expect("click on empty space");
+
+    assert_eq!(
+        (app.focus(), app.line_index()),
+        before,
+        "a click on a row nothing was painted on moved something"
+    );
+}
+
+/// Clicking a comment box steps into that line's stack, on that comment.
+#[test]
+fn clicking_a_comment_box_focuses_the_stack_and_selects_that_comment() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    write_comment(&mut app, "a finding");
+
+    let frame = frame_at(&app, 100, 24);
+    let (_, row) = find_char_in(&frame, box_area(), '╭').expect("a comment box is drawn");
+    app.on_mouse(click(60, row)).expect("click the box");
+
+    assert_eq!(app.focus(), Focus::Stack);
+    assert_eq!(
+        app.selected_comment().expect("a selected comment").body,
+        "a finding"
+    );
+}
+
+/// Clicking a file row selects that file and hands the keys to the file list.
+#[test]
+fn clicking_a_file_row_selects_that_file_and_focuses_the_sidebar() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    assert_eq!(app.focus(), Focus::Diff);
+
+    let row = sidebar_pane_row(&app, 100, 24, 1);
+    app.on_mouse(click(3, row)).expect("click the second file");
+
+    assert_eq!(app.focus(), Focus::Sidebar);
+    assert_eq!(app.selected_file().expect("a file").path, "b.rs");
+    assert_eq!(app.sidebar_row(), 1);
+}
+
+/// Clicking a directory row folds it, which is what `s` does to the row under
+/// the cursor — one verb, reached two ways.
+#[test]
+fn clicking_a_directory_row_folds_it() {
+    let workspace = Fixture::nested();
+    let mut app = workspace.app();
+    app.on_key(KeyCode::Char('t')).expect("the tree");
+    let folded = app
+        .sidebar_nodes()
+        .iter()
+        .position(|node| node.label == "docs/specs")
+        .expect("a directory row");
+
+    let row = sidebar_pane_row(&app, 100, 24, u16::try_from(folded).expect("a small row"));
+    app.on_mouse(click(3, row)).expect("click the directory");
+
+    let labels: Vec<String> = app
+        .sidebar_nodes()
+        .iter()
+        .map(|node| node.label.clone())
+        .collect();
+    assert!(
+        labels.iter().any(|label| label == "docs/specs"),
+        "the directory row itself is gone: {labels:?}"
+    );
+    assert!(
+        !labels.iter().any(|label| label.ends_with("a.md")),
+        "its children are still listed: {labels:?}"
+    );
+}
+
+/// Dragging the divider resizes the panes and moves nothing else.
+#[test]
+fn dragging_the_divider_resizes_and_changes_nothing_else() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    let before = (app.file_index(), app.line_index(), app.focus());
+
+    let divider = divider_column(&app, 100, 24);
+    app.on_mouse(press(divider, 6)).expect("press the divider");
+    app.on_mouse(drag(divider + 10, 6)).expect("drag");
+    app.on_mouse(release(divider + 10, 6)).expect("release");
+
+    assert!(
+        app.split().ratio() > Split::DEFAULT,
+        "the split did not follow the pointer: {}",
+        app.split().ratio()
+    );
+    assert_eq!(
+        (app.file_index(), app.line_index(), app.focus()),
+        before,
+        "the resize moved something other than the divider"
+    );
+}
+
+/// The pointer stops dragging the divider when the button comes up.
+#[test]
+fn the_divider_stops_following_the_pointer_at_the_release() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+
+    let divider = divider_column(&app, 100, 24);
+    app.on_mouse(press(divider, 6)).expect("press");
+    app.on_mouse(drag(divider + 10, 6)).expect("drag");
+    app.on_mouse(release(divider + 10, 6)).expect("release");
+    let settled = app.split().ratio();
+
+    app.on_mouse(drag(divider + 25, 6)).expect("move on");
+    assert_eq!(
+        app.split().ratio(),
+        settled,
+        "the divider kept following a pointer that had let go of it"
+    );
+}
+
+/// The wheel moves the view and leaves the selection where it was.
+///
+/// Scrolling is looking; clicking is choosing. A wheel nudge that moved the
+/// selection would silently re-aim the next `c` or `d` at another line.
+#[test]
+fn scrolling_moves_the_view_without_moving_the_selection() {
+    let workspace = Fixture::mixed();
+    let mut app = workspace.app_from("@--");
+    let selected = app.line_index();
+
+    let row = diff_pane_row(&app, 100, 24, 3);
+    let before = visible_row_indices(&app, 100, 23);
+    app.on_mouse(scroll_down(60, row)).expect("scroll");
+    let after = visible_row_indices(&app, 100, 23);
+
+    assert_eq!(
+        app.line_index(),
+        selected,
+        "scrolling is looking, not choosing — cursor row {}, file {:?}, \
+         plan {} rows, window {before:?} then {after:?}",
+        app.cursor_row(),
+        app.selected_file().map(|file| file.path.clone()),
+        row_count(&app, 100, 23),
+    );
+    assert!(
+        after.start > before.start,
+        "the view did not move: {before:?} then {after:?}"
+    );
+
+    app.on_mouse(scroll_up(60, row)).expect("scroll back");
+    assert_eq!(
+        visible_row_indices(&app, 100, 23),
+        before,
+        "the wheel does not come back"
+    );
+}
+
+/// The same for the file list: the wheel looks ahead down a list too long for
+/// the pane without moving which file is selected.
+#[test]
+fn scrolling_the_sidebar_looks_ahead_without_moving_the_selection() {
+    let workspace = Fixture::nested();
+    let mut app = workspace.app();
+    app.on_key(KeyCode::Char('t'))
+        .expect("the tree, which is taller");
+
+    let before = sidebar_rows(&frame_at(&app, 60, 8), 60, 8, Split::default());
+    let selected = (app.sidebar_row(), app.file_index());
+
+    let row = sidebar_pane_row(&app, 60, 8, 1);
+    app.on_mouse(scroll_down(3, row))
+        .expect("scroll the file list");
+
+    let after = sidebar_rows(&frame_at(&app, 60, 8), 60, 8, Split::default());
+    assert_ne!(before, after, "the file list did not scroll:\n{before:?}");
+    assert_eq!(
+        (app.sidebar_row(), app.file_index()),
+        selected,
+        "scrolling the list moved the selection"
+    );
+}
+
+/// No gesture destroys review state. There is no click target for `d`, and
+/// dragging a comment does nothing: the confirmation exists because deletion is
+/// unrecoverable, and a mis-click is exactly the accident it guards against.
+#[test]
+fn no_gesture_deletes_anything() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    write_comment(&mut app, "a finding");
+    assert_eq!(app.comments().len(), 1);
+
+    let diff = diff_pane_row(&app, 100, 24, 1);
+    let sidebar = sidebar_pane_row(&app, 100, 24, 0);
+    let divider = divider_column(&app, 100, 24);
+    let before = workspace_tree(workspace.root());
+
+    for event in [
+        click(60, diff),
+        click(3, sidebar),
+        scroll_up(60, diff),
+        scroll_down(60, diff),
+        press(divider, 6),
+        drag(divider + 6, 6),
+        release(divider + 6, 6),
+        press(60, diff),
+        drag(60, diff + 2),
+        release(60, diff + 2),
+    ] {
+        app.on_mouse(event).expect("gesture");
+    }
+
+    assert_eq!(app.comments().len(), 1, "a gesture removed a comment");
+    assert_eq!(
+        workspace_tree(workspace.root()),
+        before,
+        "the mouse reached disk"
+    );
+}
+
+/// A click lands on the line the frame actually painted, scrolled or not.
+///
+/// The scroll is the point: with the view moved off the top of the plan, a
+/// hit test that forgot the window's offset still resolves to *a* line, and the
+/// only way to tell is to read what was drawn on the row that was clicked.
+#[test]
+fn a_click_lands_on_the_line_the_frame_actually_painted() {
+    let workspace = Fixture::mixed();
+    let mut app = workspace.app_from("@--");
+
+    let row = diff_pane_row(&app, 100, 24, 4);
+    for _ in 0..3 {
+        app.on_mouse(scroll_down(60, row)).expect("scroll");
+    }
+
+    let frame = frame_at(&app, 100, 24);
+    let painted = row_in(&frame, inner(areas(100, 24, app.split()).diff), row);
+    app.on_mouse(click(60, row)).expect("click");
+
+    let selected = app.selected_diff().expect("a diff").lines[app.line_index()]
+        .text
+        .clone();
+    assert!(
+        painted.trim_end().ends_with(&selected),
+        "clicked a row painted {painted:?} and selected {selected:?}"
+    );
+}
+
+/// The bar is not a click target.
+#[test]
+fn clicking_the_bar_does_nothing() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    let before = (app.focus(), app.line_index(), app.file_index());
+    let _ = frame_at(&app, 100, 24);
+
+    app.on_mouse(click(40, 23)).expect("click the bar");
+
+    assert_eq!(
+        (app.focus(), app.line_index(), app.file_index()),
+        before,
+        "the status bar answered a click"
+    );
+}
+
+/// The mouse is inert while a comment is being typed.
+///
+/// A click that moved the selection under a half-typed comment would save that
+/// comment against a line the reviewer never chose — the same silent re-aiming
+/// the wheel is kept away from, with a body attached.
+#[test]
+fn the_mouse_is_inert_while_a_comment_is_being_typed() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    let row = diff_pane_row(&app, 100, 24, 2);
+    let sidebar = sidebar_pane_row(&app, 100, 24, 1);
+    let divider = divider_column(&app, 100, 24);
+
+    app.on_key(KeyCode::Char('c')).expect("open the box");
+    let before = (
+        app.focus(),
+        app.line_index(),
+        app.file_index(),
+        app.split().ratio(),
+    );
+
+    for event in [
+        click(60, row),
+        click(3, sidebar),
+        scroll_down(60, row),
+        press(divider, 6),
+        drag(divider + 10, 6),
+        release(divider + 10, 6),
+    ] {
+        app.on_mouse(event).expect("gesture");
+    }
+
+    assert_eq!(app.mode(), Mode::Comment, "a gesture left the comment box");
+    assert_eq!(
+        (
+            app.focus(),
+            app.line_index(),
+            app.file_index(),
+            app.split().ratio()
+        ),
+        before,
+        "a gesture moved something under a half-typed comment"
+    );
+}
+
+/// While the `?` popup is up the pointer moves nothing under it, and the wheel
+/// scrolls the keymap exactly as `j` and `k` do.
+#[test]
+fn the_mouse_is_inert_while_the_help_is_open() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    let row = diff_pane_row(&app, 100, 24, 2);
+    let sidebar = sidebar_pane_row(&app, 100, 24, 1);
+
+    app.on_key(KeyCode::Char('?')).expect("?");
+    let before = (app.focus(), app.line_index(), app.file_index());
+
+    app.on_mouse(click(50, 12)).expect("click inside the popup");
+    app.on_mouse(click(60, row)).expect("click behind it");
+    app.on_mouse(click(3, sidebar)).expect("click beside it");
+    assert!(app.help_open(), "a click closed the keymap");
+    assert_eq!(
+        (app.focus(), app.line_index(), app.file_index()),
+        before,
+        "a click reached through the keymap"
+    );
+
+    app.on_mouse(scroll_down(50, 12))
+        .expect("scroll the keymap");
+    assert_eq!(app.help_scroll(), 1, "the wheel scrolls the keymap");
+    app.on_mouse(scroll_up(50, 12)).expect("scroll back");
+    assert_eq!(app.help_scroll(), 0);
+}
+
+// ---------------------------------------------------------------------------
+// Alerts that float and fade
+// ---------------------------------------------------------------------------
+
+/// Where the toast floats at `width` x `height`, asked of the same [`layout`]
+/// that painted it.
+fn toast_area(width: u16, height: u16) -> Rect {
+    layout(
+        Rect::new(0, 0, width, height),
+        Split::default(),
+        Chrome {
+            bar_rows: 1,
+            help_open: false,
+            toast: true,
+        },
+    )
+    .toast
+    .expect("a toast has a rectangle at this size")
+}
+
+/// The colour the toast's border is drawn in.
+fn toast_border_colour(buffer: &Buffer) -> Color {
+    let area = toast_area(buffer.area.width, buffer.area.height);
+    buffer[(area.x, area.y)]
+        .style()
+        .fg
+        .expect("the toast's border carries a colour")
+}
+
+/// How light a colour is, for comparing one step of the fade against the next.
+fn luma(colour: Color) -> f32 {
+    match colour {
+        Color::Rgb(red, green, blue) => {
+            0.2126 * f32::from(red) + 0.7152 * f32::from(green) + 0.0722 * f32::from(blue)
+        }
+        other => panic!("{other:?} is not a colour with a lightness"),
+    }
+}
+
+/// An alert shows up, stays a few seconds, and leaves on its own.
+#[test]
+fn an_alert_appears_then_leaves_on_its_own() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    let t0 = Instant::now();
+
+    app.alert("src/old.rs is no longer in this range", t0);
+    assert_eq!(app.alerts().len(), 1);
+    assert!(
+        buffer_text(&frame_at_time(&app, 100, 24, t0)).contains("no longer in this range"),
+        "the toast is not on screen:\n{}",
+        buffer_text(&frame_at_time(&app, 100, 24, t0))
+    );
+
+    app.expire_alerts(t0 + Duration::from_secs(2));
+    assert_eq!(app.alerts().len(), 1, "still up at two seconds");
+
+    app.expire_alerts(t0 + Duration::from_secs(6));
+    assert!(app.alerts().is_empty(), "gone by six");
+    assert!(
+        !buffer_text(&frame_at_time(&app, 100, 24, t0 + Duration::from_secs(6)))
+            .contains("no longer in this range")
+    );
+}
+
+/// The toast takes no key and steals no focus: it is a notification, not a
+/// dialog.
+#[test]
+fn the_toast_takes_no_key_and_steals_no_focus() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    let focus = app.focus();
+    let line = app.line_index();
+
+    app.alert("something went wrong", Instant::now());
+    app.on_key(KeyCode::Char('j')).expect("j");
+
+    assert_eq!(app.focus(), focus, "the toast took the focus");
+    assert_eq!(app.line_index(), line + 1, "and j still moved the line");
+    assert_eq!(app.alerts().len(), 1, "the key dismissed it");
+}
+
+/// The toast fades down over its last second rather than blinking out.
+#[test]
+fn the_border_dims_as_the_deadline_approaches() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    let t0 = Instant::now();
+    app.alert("careful", t0);
+
+    let bright = toast_border_colour(&frame_at_time(&app, 100, 24, t0));
+    let faded = toast_border_colour(&frame_at_time(
+        &app,
+        100,
+        24,
+        t0 + Duration::from_millis(4600),
+    ));
+
+    assert_ne!(bright, faded, "the toast vanishes rather than fading");
+    assert!(
+        luma(faded) < luma(bright),
+        "it faded up, not down: {bright:?} then {faded:?}"
+    );
+}
+
+/// The event loop is told how long it may block for.
+#[test]
+fn the_event_loop_is_told_when_to_wake_up() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    let t0 = Instant::now();
+
+    assert_eq!(
+        app.next_deadline(t0),
+        None,
+        "an idle rv waits for a key, forever"
+    );
+
+    app.alert("careful", t0);
+    let wait = app
+        .next_deadline(t0)
+        .expect("a live alert gives the loop a timeout");
+    assert!(
+        wait <= Duration::from_secs(5),
+        "the timeout outlives the alert: {wait:?}"
+    );
+
+    app.expire_alerts(t0 + Duration::from_secs(6));
+    assert_eq!(
+        app.next_deadline(t0 + Duration::from_secs(6)),
+        None,
+        "an expired alert still asks the loop to wake up"
+    );
+}
+
+/// Two alerts at once are both readable.
+///
+/// **Not one panel each.** `rv::layout::layout` gives the toast three rows —
+/// two borders and one message — and no rectangle in this reviewer is computed
+/// anywhere but there, so several alerts share the panel rather than stacking
+/// down the screen. The claim the plan's version of this test makes is that
+/// none of them is lost, and that is what is asserted.
+#[test]
+fn several_alerts_share_the_panel_and_none_is_lost() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    let t0 = Instant::now();
+
+    app.alert("first", t0);
+    app.alert("second", t0);
+
+    let text = buffer_text(&frame_at_time(&app, 100, 24, t0));
+    assert!(
+        text.contains("first"),
+        "the first alert is not on screen:\n{text}"
+    );
+    assert!(
+        text.contains("second"),
+        "the second alert is not on screen:\n{text}"
+    );
+}
+
+/// A jump to a comment whose file has left the range is an alert, not only a
+/// status: nothing moved, and a line in the bar is the easiest thing on screen
+/// to miss.
+#[test]
+fn a_jump_to_a_file_that_left_the_range_raises_an_alert() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    write_comment(&mut app, "a finding");
+
+    // A range whose only change touches no file at all, so the comment above is
+    // anchored outside it.
+    let mut later = workspace.app_from("@-");
+    assert!(
+        later.files().is_empty(),
+        "the later range still holds the commented file: {:?}",
+        later.files()
+    );
+    assert_eq!(later.comments().len(), 1);
+    assert!(later.alerts().is_empty(), "{:?}", later.alerts().len());
+
+    later.on_key(KeyCode::Left).expect("the sidebar");
+    later.on_key(KeyCode::Tab).expect("the comment browser");
+    later.on_key(KeyCode::Enter).expect("jump");
+
+    assert!(
+        later.status().contains("not in this review's range"),
+        "the bar says nothing about it: {:?}",
+        later.status()
+    );
+    assert_eq!(
+        later.alerts().len(),
+        1,
+        "a stale anchor is a status and nothing else"
+    );
+    assert!(
+        later.alerts()[0].message.contains("a.rs"),
+        "the alert does not name the file: {:?}",
+        later.alerts()[0].message
+    );
+}
+
+/// The same failure twice is one toast.
+///
+/// A panel reading `x · x` says nothing the first `x` did not, and a reviewer
+/// who pressed `Enter` twice on a comment that cannot be jumped to has been told
+/// once already.
+#[test]
+fn the_same_failure_twice_is_one_toast() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    write_comment(&mut app, "a finding");
+    let mut later = workspace.app_from("@-");
+
+    later.on_key(KeyCode::Left).expect("the sidebar");
+    later.on_key(KeyCode::Tab).expect("the comment browser");
+    for _ in 0..3 {
+        later.on_key(KeyCode::Enter).expect("jump");
+    }
+
+    assert_eq!(
+        later.alerts().len(),
+        1,
+        "one failure, three tellings: {:?}",
+        later.alerts()
+    );
+    let t0 = Instant::now();
+    later.alert("a stale finding", t0);
+    later.alert("a stale finding", t0);
+    assert_eq!(
+        later.alerts().len(),
+        2,
+        "a second, different alert is its own"
+    );
+}
+
+/// An alert raised where no clock is in reach is stamped by the first pass of
+/// the event loop, and ages from there.
+///
+/// This is what keeps `App` clock-free without leaving an alert immortal: a key
+/// press knows what went wrong and nothing about the time, so the time is
+/// applied by whoever has it.
+#[test]
+fn an_alert_raised_before_the_clock_is_known_is_stamped_by_the_first_pass() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    write_comment(&mut app, "a finding");
+    let mut later = workspace.app_from("@-");
+
+    later.on_key(KeyCode::Left).expect("the sidebar");
+    later.on_key(KeyCode::Tab).expect("the comment browser");
+    later.on_key(KeyCode::Enter).expect("jump");
+    assert_eq!(later.alerts().len(), 1);
+    assert_eq!(
+        later.alerts()[0].raised,
+        None,
+        "a key press stamped an alert with a time it could not have"
+    );
+    assert_eq!(
+        later.next_deadline(Instant::now()),
+        Some(Duration::ZERO),
+        "an unstamped alert does not ask the loop to come straight back"
+    );
+
+    let t0 = Instant::now();
+    later.expire_alerts(t0);
+    assert_eq!(later.alerts()[0].raised, Some(t0), "the pass stamped it");
+
+    later.expire_alerts(t0 + Duration::from_secs(2));
+    assert_eq!(
+        later.alerts().len(),
+        1,
+        "it aged from the stamp, not before"
+    );
+    later.expire_alerts(t0 + Duration::from_secs(6));
+    assert!(later.alerts().is_empty());
+}
+
+/// Alerts are session-only, like every other preference in this reviewer.
+#[test]
+fn alerts_are_never_written_anywhere() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    let before = workspace_tree(workspace.root());
+
+    let t0 = Instant::now();
+    app.alert("something went wrong", t0);
+    let _ = frame_at_time(&app, 100, 24, t0);
+    app.expire_alerts(t0 + Duration::from_secs(6));
+
+    assert_eq!(
+        workspace_tree(workspace.root()),
+        before,
+        "an alert reached disk"
+    );
 }

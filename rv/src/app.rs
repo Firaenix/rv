@@ -1,15 +1,32 @@
 //! The reviewer's state machine and its event loop.
 //!
-//! The split in this module is the point of it: [`App::on_key`] and everything
-//! it calls are **terminal-free**. They take a [`KeyCode`], change state, read
-//! and write `.review/`, and return — no `Terminal`, no raw mode, no PTY. That
-//! is what lets `rv/tests/app.rs` drive a whole review, comment and all, as an
-//! ordinary unit test. Only [`App::run`] touches the terminal, and it does
-//! nothing else: set up, loop, tear down.
+//! The split in this module is the point of it: [`App::on_key`],
+//! [`App::on_mouse`] and everything they call are **terminal-free**. They take
+//! a [`KeyCode`] or a [`MouseEvent`], change state, read and write `.review/`,
+//! and return — no `Terminal`, no raw mode, no PTY. That is what lets
+//! `rv/tests/app.rs` drive a whole review, comment and all, as an ordinary unit
+//! test. Only [`App::run`] touches the terminal, and it does nothing else: set
+//! up, loop, tear down.
 //!
 //! [`App::on_key_event`] sits in front of [`App::on_key`] for the one decision
 //! that cannot be made from a [`KeyCode`] alone — Ctrl+C, which raw mode leaves
 //! to the program — and is terminal-free in exactly the same way.
+//!
+//! [`App::on_mouse`] resolves a gesture against the [`crate::layout::Layout`]
+//! the last frame was painted with, which [`crate::ui::draw`] hands over as it
+//! paints. One layout, two consumers: a click cannot land somewhere other than
+//! what the reviewer can see, because there is no second copy of the geometry
+//! for it to disagree with.
+//!
+//! # Time is a parameter
+//!
+//! **Nothing in this module calls [`Instant::now`] except [`App::event_loop`].**
+//! Alerts age, and everything that has to know how old one is —
+//! [`App::expire_alerts`], [`App::next_deadline`], [`crate::ui::draw`] — takes
+//! the time as an argument. The loop supplies the real clock and a test supplies
+//! whatever it likes, so "the toast is gone after five seconds" is an assertion
+//! rather than a sleep. Every state machine here has stayed testable by refusing
+//! ambient input, and a clock is ambient input.
 //!
 //! # Restoring the terminal
 //!
@@ -19,6 +36,13 @@
 //! prints its message, so the backtrace lands on a working terminal, and calls
 //! [`ratatui::restore`] on every ordinary exit path too, including the error
 //! one.
+//!
+//! **Mouse reporting is part of that.** It is on for the whole run — no toggle,
+//! no flag, because every current terminal keeps Shift-drag as a bypass for its
+//! own text selection, so `rv` needs neither a selection nor a clipboard of its
+//! own — and it is turned off again on every exit path, the panic hook included.
+//! A terminal left reporting prints escape noise at every click for the rest of
+//! the session, which is the same class of damage as one left in raw mode.
 //!
 //! # What a comment costs
 //!
@@ -50,15 +74,23 @@
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::time::Duration;
+use std::time::Instant;
 
 use anyhow::Context as _;
 use anyhow::Result;
 use crossterm::event;
+use crossterm::event::DisableMouseCapture;
+use crossterm::event::EnableMouseCapture;
 use crossterm::event::Event;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
 use crossterm::event::KeyEventKind;
 use crossterm::event::KeyModifiers;
+use crossterm::event::MouseButton;
+use crossterm::event::MouseEvent;
+use crossterm::event::MouseEventKind;
+use crossterm::execute;
 use ratatui::DefaultTerminal;
 use rv_core::anchor;
 use rv_core::diff;
@@ -74,9 +106,13 @@ use rv_core::store::CommentState;
 use rv_core::store::Session;
 
 use crate::gradient::Stat;
+use crate::layout::Layout;
 use crate::layout::Split;
+use crate::layout::Target;
+use crate::layout::hit;
 use crate::rows;
 use crate::rows::Plan;
+use crate::rows::Row;
 use crate::session;
 use crate::session::Review;
 use crate::statusbar;
@@ -220,6 +256,97 @@ pub enum Focus {
 pub enum Action {
     Continue,
     Quit,
+}
+
+/// How long an alert stays on screen. About five seconds, from spec §9: long
+/// enough to be read by someone looking elsewhere when it appeared, short
+/// enough that it is gone before it becomes furniture.
+const ALERT_LIFETIME: Duration = Duration::from_secs(5);
+
+/// How much of that life is spent fading out.
+const ALERT_FADE: Duration = Duration::from_secs(1);
+
+/// How many steps the fade takes. Four, because a terminal cannot alpha-blend:
+/// what "fading" means here is stepping the border down in Oklab lightness, and
+/// a ramp with fewer steps than this reads as a flicker rather than a fade.
+const ALERT_FADE_STEPS: u32 = 4;
+
+/// Something that went wrong, floating over the panes until it ages out.
+///
+/// A **status** describes state and lives in the bar (`comment saved at
+/// app.rs:42`); an **alert** is something that went wrong and needs noticing —
+/// a blob that could not be read, an anchored file that has left the range. The
+/// two differ in what they are for rather than in how they age.
+///
+/// # Why `raised` is an [`Option`]
+///
+/// Nothing inside [`App`] calls [`Instant::now`]: the event loop supplies the
+/// time and a test supplies whatever it likes, which is what makes "the toast
+/// is gone after five seconds" an assertion rather than a sleep. But the places
+/// that *know* something went wrong — a key press, opening the review — have no
+/// clock in reach, so they raise an alert unstamped and
+/// [`App::expire_alerts`] stamps it on the first pass of the loop, which is the
+/// same pass that draws it. An unstamped alert is live, is drawn at full
+/// strength, and asks the loop to come straight back for its stamp.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Alert {
+    /// What went wrong, as one sentence.
+    pub message: String,
+    /// When the loop first saw it, or [`None`] until it has.
+    pub raised: Option<Instant>,
+}
+
+impl Alert {
+    /// Whether this alert is still worth drawing at `now`.
+    #[must_use]
+    pub fn live(&self, now: Instant) -> bool {
+        self.age(now) < ALERT_LIFETIME
+    }
+
+    /// How far through its fade this alert is at `now`, from `0.0` at full
+    /// strength to `1.0` at its deadline, in [`ALERT_FADE_STEPS`] steps.
+    ///
+    /// Stepped rather than continuous because the deadlines
+    /// [`App::next_deadline`] hands the event loop are the steps: a continuous
+    /// ramp would mean either a wake-up per frame or a fade that only advances
+    /// when something else happens to redraw.
+    #[must_use]
+    pub fn fade(&self, now: Instant) -> f32 {
+        let age = self.age(now);
+        let Some(into) = age.checked_sub(ALERT_LIFETIME - ALERT_FADE) else {
+            return 0.0;
+        };
+        let steps = f64::from(ALERT_FADE_STEPS);
+        let step = (into.as_secs_f64() / ALERT_FADE.as_secs_f64() * steps).floor();
+        (step.clamp(0.0, steps) / steps) as f32
+    }
+
+    /// How long this alert has been up at `now`, or nothing at all while it is
+    /// unstamped.
+    ///
+    /// Saturating: `now` is whatever the caller passed, and a time before the
+    /// stamp means "no time has passed" rather than a panic.
+    fn age(&self, now: Instant) -> Duration {
+        self.raised
+            .map(|raised| now.saturating_duration_since(raised))
+            .unwrap_or_default()
+    }
+
+    /// How long until this alert next changes what is on screen: the next step
+    /// of its fade, or its deadline.
+    ///
+    /// [`Duration::ZERO`] while it is unstamped, so the loop comes back at once
+    /// to stamp it rather than blocking on a key with an unaged toast up.
+    fn next_change(&self, now: Instant) -> Duration {
+        if self.raised.is_none() {
+            return Duration::ZERO;
+        }
+        let age = self.age(now);
+        (0..=ALERT_FADE_STEPS)
+            .map(|step| ALERT_LIFETIME - ALERT_FADE + ALERT_FADE * step / ALERT_FADE_STEPS)
+            .find(|deadline| *deadline > age)
+            .map_or(Duration::ZERO, |deadline| deadline - age)
+    }
 }
 
 /// What a binding acts on, and therefore which heading the `?` popup lists it
@@ -473,6 +600,14 @@ enum Command {
 /// terminal is below the noise of the pane's own borders.
 const NUDGE: i16 = 2;
 
+/// How many rows one notch of the wheel moves a pane's view.
+///
+/// Three, which is what every terminal application scrolls by and what the
+/// terminals themselves send for a trackpad's flick: one row a notch makes a
+/// long file unreachable by wheel, and a whole page makes it impossible to read
+/// past the jump.
+const WHEEL: isize = 3;
+
 /// One interactive review.
 ///
 /// `diffs` is parallel to `review.files`: `None` means "not computed yet",
@@ -625,6 +760,48 @@ pub struct App {
     /// from, so opening a file costs one parse per side and revisiting it costs
     /// none.
     highlights: HashMap<(String, String), Highlights>,
+    /// The rectangles the last frame was painted with, reported by
+    /// [`crate::ui::draw`] and read by [`App::on_mouse`].
+    ///
+    /// This is the whole of "one layout, two consumers": painting and
+    /// hit-testing read the *same* `Layout`, so a click cannot land somewhere
+    /// other than what the reviewer can see. A second copy of the arithmetic
+    /// here would drift, and a click that resolves to the wrong row looks
+    /// exactly like one that resolved to the right row — there is no red test,
+    /// just a comment on the wrong line.
+    ///
+    /// A [`Cell`] for the reason `body_width` beside it is one: the renderer
+    /// takes `&App` so that it cannot *decide* anything, and reporting the
+    /// rectangles it painted is a measurement rather than a decision. It starts
+    /// at [`crate::ui::default_layout`] — the geometry of the narrowest terminal
+    /// anyone reviews in — so that a gesture arriving before the first frame
+    /// resolves against something plausible rather than against nothing.
+    painted: Cell<Layout>,
+    /// Whether the pointer is holding the divider, so that a drag resizes only
+    /// when it began on the handle.
+    ///
+    /// A press *anywhere else* clears it, which is what keeps a drag that
+    /// started in a pane from resizing when it crosses the divider.
+    dragging: bool,
+    /// Where the wheel has parked the diff pane's window, as the first row on
+    /// screen — or [`None`] when the view is following the cursor, which is
+    /// where it starts and where any keyboard move puts it back.
+    ///
+    /// **Scrolling is looking; clicking is choosing.** The wheel moves this and
+    /// never the cursor, because a stray nudge that moved the selection would
+    /// silently re-aim the next `c` or `d` at a different line. An absolute row
+    /// rather than a delta from the cursor: a delta would move the view every
+    /// time the selection moved under it, which is the opposite of parking.
+    diff_scroll: Option<usize>,
+    /// The same for the sidebar's list — see [`App::diff_scroll`].
+    sidebar_scroll: Option<usize>,
+    /// What has gone wrong lately, newest last, and none of it on disk.
+    ///
+    /// Session-only like every other preference here, and for a stronger
+    /// reason: an alert is a fact about *this* run of the reviewer, and a
+    /// failure another reviewer inherited from someone else's terminal would be
+    /// a claim about the present that was never true for them.
+    alerts: Vec<Alert>,
     mode: Mode,
     buffer: String,
     status: String,
@@ -687,7 +864,12 @@ impl App {
         // sidebar's tint and counts are facts about the whole review, and a
         // colour that filled in as the reviewer walked would be a change bar
         // that means something different every frame.
-        let stats = Self::measure(&review);
+        //
+        // A file whose blobs could not be read is measured as zero *and said out
+        // loud* — see [`App::measure`]. Unstamped, because opening a review has
+        // no more clock in reach than a key press does; the first pass of the
+        // event loop stamps it.
+        let (stats, unreadable) = Self::measure(&review);
         let mut app = Self {
             review,
             diffs,
@@ -710,11 +892,19 @@ impl App {
             help_scroll: 0,
             body_width: Cell::new(ui::default_body_width()),
             highlights: HashMap::new(),
+            painted: Cell::new(ui::default_layout()),
+            dragging: false,
+            diff_scroll: None,
+            sidebar_scroll: None,
+            alerts: Vec::new(),
             mode: Mode::Browse,
             buffer: String::new(),
             status: HELP.to_owned(),
             force_fallback,
         };
+        for message in unreadable {
+            app.raise(message);
+        }
         app.load_selected()?;
         Ok(app)
     }
@@ -731,26 +921,35 @@ impl App {
     /// two blobs.
     ///
     /// A file whose blobs cannot be read measures zero rather than failing the
-    /// whole review. The alternative is a review of five hundred files refusing
-    /// to open because one of them is unreadable — and it is not silence:
-    /// [`App::load_selected`] reads the same blobs and reports the failure with
-    /// its path the moment the reviewer opens that file.
-    fn measure(review: &Review) -> Vec<Stat> {
-        review
+    /// whole review, and **says so**: the second half of the answer is one
+    /// message per unreadable side, which [`App::open`] raises as an alert.
+    ///
+    /// Refusing to open a review of five hundred files because one of them is
+    /// unreadable would be worse than measuring it as zero. Measuring it as zero
+    /// *in silence* was worse than either: the row then reads `+0 -0` over an
+    /// untinted band, which is exactly how this reviewer draws a file nobody
+    /// touched.
+    fn measure(review: &Review) -> (Vec<Stat>, Vec<String>) {
+        let mut unreadable = Vec::new();
+        let stats = review
             .files
             .iter()
             .map(|file| {
                 let base = file.source_path.as_deref().unwrap_or(&file.path);
-                let old = review
-                    .repo
-                    .read_blob(&review.session.base_commit, base)
-                    .ok()
-                    .flatten();
-                let new = review
-                    .repo
-                    .read_blob(&review.session.head_commit, &file.path)
-                    .ok()
-                    .flatten();
+                let old = Self::measured_blob(
+                    review,
+                    &review.session.base_commit,
+                    base,
+                    "the base",
+                    &mut unreadable,
+                );
+                let new = Self::measured_blob(
+                    review,
+                    &review.session.head_commit,
+                    &file.path,
+                    "the head",
+                    &mut unreadable,
+                );
                 let diff = diff::compute_with(old.as_deref(), new.as_deref(), &file.path, false);
                 diff.lines
                     .iter()
@@ -766,7 +965,29 @@ impl App {
                         LineKind::Context => stat,
                     })
             })
-            .collect()
+            .collect();
+        (stats, unreadable)
+    }
+
+    /// One side's blob for [`App::measure`], with a failure recorded rather than
+    /// swallowed.
+    ///
+    /// A side the commit has no plain file at reads as `Ok(None)` — an add has
+    /// no base, a delete has no head — and is not a failure; only an `Err` is.
+    fn measured_blob(
+        review: &Review,
+        commit: &str,
+        path: &str,
+        end: &str,
+        unreadable: &mut Vec<String>,
+    ) -> Option<Vec<u8>> {
+        match review.repo.read_blob(commit, path) {
+            Ok(blob) => blob,
+            Err(_) => {
+                unreadable.push(format!("could not read {path} at {end} of the review"));
+                None
+            }
+        }
     }
 
     /// Runs the reviewer on the terminal until the user quits.
@@ -777,6 +998,10 @@ impl App {
     /// half-initialized screen. `try_init` rather than `init` for the same
     /// reason: a `rv` that was piped somewhere has no terminal to take over,
     /// and that is a sentence too, not a panic.
+    /// Mouse reporting is on for the whole run and is turned off again on every
+    /// exit path, including the panic hook: a terminal left in reporting mode
+    /// prints escape noise on every click after `rv` has gone, which is the
+    /// class of damage that hook exists to prevent.
     pub fn run(review: Review) -> Result<()> {
         let mut app = Self::new(review)?;
 
@@ -785,9 +1010,13 @@ impl App {
         // (harmless) rather than depending on ratatui to keep doing it.
         install_panic_hook();
         let mut terminal = ratatui::try_init().context("could not start the terminal")?;
-        let result = app.event_loop(&mut terminal);
+        // Inside the guard below, not before it: a failure here must still go
+        // through the release and the restore.
+        let result = capture_mouse().and_then(|()| app.event_loop(&mut terminal));
         // Unconditional, and before the error is returned: a failed loop must
-        // still hand the shell back in a usable state.
+        // still hand the shell back in a usable state — one that is out of raw
+        // mode *and* no longer reporting where the pointer is.
+        release_mouse();
         ratatui::restore();
         result
     }
@@ -1228,30 +1457,307 @@ impl App {
     fn on_key_help(&mut self, key: KeyCode) -> Action {
         match key {
             KeyCode::Char('?') | KeyCode::Char('q') | KeyCode::Esc => self.help_open = false,
-            KeyCode::Char('j') | KeyCode::Down => {
-                self.help_scroll = self.help_scroll.saturating_add(1);
-            }
-            KeyCode::Char('k') | KeyCode::Up => {
-                self.help_scroll = self.help_scroll.saturating_sub(1);
-            }
+            KeyCode::Char('j') | KeyCode::Down => self.scroll_help(1),
+            KeyCode::Char('k') | KeyCode::Up => self.scroll_help(-1),
             _ => {}
         }
         Action::Continue
     }
 
+    /// Moves the keymap by `delta` rows, which only ever moves anything on a
+    /// terminal too small to show the whole table — see [`App::help_scroll`].
+    fn scroll_help(&mut self, delta: isize) {
+        self.help_scroll = self.help_scroll.saturating_add_signed(delta);
+    }
+
+    // -----------------------------------------------------------------------
+    // Alerts
+    // -----------------------------------------------------------------------
+
+    /// Raises an alert, stamped with the time the caller has.
+    ///
+    /// For callers that know what time it is — the event loop, and every test.
+    /// Everything inside this module raises through [`App::raise`] instead,
+    /// because a key press has no clock in reach and must not grow one.
+    pub fn alert(&mut self, message: impl Into<String>, now: Instant) {
+        self.push_alert(message.into(), Some(now));
+    }
+
+    /// The same, from a place with no clock: the alert goes up unstamped and
+    /// [`App::expire_alerts`] stamps it on the loop's next pass.
+    fn raise(&mut self, message: impl Into<String>) {
+        self.push_alert(message.into(), None);
+    }
+
+    /// Puts `message` up, unless it is already up.
+    ///
+    /// The same failure raised twice — two `Enter`s on the same stale comment —
+    /// is one thing that went wrong, and a panel reading `x · x` says nothing
+    /// the first `x` did not.
+    fn push_alert(&mut self, message: String, raised: Option<Instant>) {
+        if self.alerts.iter().any(|alert| alert.message == message) {
+            return;
+        }
+        self.alerts.push(Alert { message, raised });
+    }
+
+    /// Stamps whatever is unstamped and drops whatever has aged out.
+    ///
+    /// Called once per pass of the event loop, before the frame, so that a
+    /// toast raised by the previous keystroke is stamped by the time it is
+    /// drawn. Stamping *before* the sweep is what keeps an alert raised this
+    /// pass from being expired in the same breath.
+    pub fn expire_alerts(&mut self, now: Instant) {
+        for alert in &mut self.alerts {
+            alert.raised.get_or_insert(now);
+        }
+        self.alerts.retain(|alert| alert.live(now));
+    }
+
+    /// What has gone wrong lately, oldest first.
+    pub fn alerts(&self) -> &[Alert] {
+        &self.alerts
+    }
+
+    /// How long the event loop may block for, or [`None`] when nothing on
+    /// screen ages and it may wait for a key forever.
+    ///
+    /// The soonest of every live alert's next change: a step of its fade, or its
+    /// deadline. This is the whole of what makes "it leaves on its own" true —
+    /// without it, a toast in front of a reviewer who walked away is on screen
+    /// until they come back and press something.
+    pub fn next_deadline(&self, now: Instant) -> Option<Duration> {
+        self.alerts.iter().map(|alert| alert.next_change(now)).min()
+    }
+
+    // -----------------------------------------------------------------------
+    // The mouse
+    // -----------------------------------------------------------------------
+
+    /// Handles one gesture. Terminal-free by construction, exactly like
+    /// [`App::on_key`]: it takes a crossterm event *value* and consults
+    /// [`hit`] on the [`Layout`] the last frame was painted with, both of which
+    /// are plain data.
+    ///
+    /// # What the mouse does, and what it deliberately does not
+    ///
+    /// A click in the sidebar focuses it and selects that row (a directory row
+    /// folds); a click on a diff line focuses the diff and selects that row; a
+    /// click on a comment box focuses the stack and selects that comment; a drag
+    /// on the divider resizes until the button comes up; and the wheel scrolls
+    /// the pane under the pointer **without moving the selection**.
+    ///
+    /// **Scrolling is looking; clicking is choosing.** Conflating them means a
+    /// stray wheel nudge silently re-aims the next `c` or `d` at another line.
+    ///
+    /// **No gesture deletes anything.** There is no click target for `d`, and
+    /// dragging a comment does nothing: the confirmation exists because deletion
+    /// is unrecoverable, and a mis-click is exactly the accident it guards
+    /// against.
+    ///
+    /// Anything modal answers no gesture at all. The `?` popup takes only the
+    /// wheel, which scrolls it as `j` and `k` do — a reviewer reading about `d`
+    /// must not discover what it does by clicking behind the manual — and a
+    /// half-typed comment takes nothing, because a click that moved the
+    /// selection under it would save that comment against a line nobody chose.
+    ///
+    /// It returns an [`Action`] for symmetry with [`App::on_key`] and always
+    /// returns [`Action::Continue`]: there is no gesture that ends a review.
+    pub fn on_mouse(&mut self, event: MouseEvent) -> Result<Action> {
+        if self.help_open {
+            match event.kind {
+                MouseEventKind::ScrollDown => self.scroll_help(1),
+                MouseEventKind::ScrollUp => self.scroll_help(-1),
+                _ => {}
+            }
+            return Ok(Action::Continue);
+        }
+        if self.mode != Mode::Browse {
+            return Ok(Action::Continue);
+        }
+
+        let painted = self.painted.get();
+        match event.kind {
+            MouseEventKind::Down(MouseButton::Left) => {
+                self.on_press(&painted, event.column, event.row)?;
+            }
+            MouseEventKind::Drag(MouseButton::Left) => self.drag_divider(&painted, event.column),
+            MouseEventKind::Up(MouseButton::Left) => self.dragging = false,
+            MouseEventKind::ScrollDown => self.wheel(&painted, event.column, event.row, WHEEL),
+            MouseEventKind::ScrollUp => self.wheel(&painted, event.column, event.row, -WHEEL),
+            // Every other button, and the pointer merely moving: `rv` binds
+            // nothing to them, and a right-click menu is a second keymap.
+            _ => {}
+        }
+        Ok(Action::Continue)
+    }
+
+    /// Records the rectangles the last frame was painted with.
+    ///
+    /// Called by [`crate::ui::draw`] and nowhere else; see the `painted` field
+    /// for why the renderer is the one that says.
+    pub fn note_layout(&self, painted: Layout) {
+        self.painted.set(painted);
+    }
+
+    /// Where the wheel has parked the diff pane's window, as the first row on
+    /// screen — [`None`] while the view is following the cursor.
+    pub fn diff_scroll(&self) -> Option<usize> {
+        self.diff_scroll
+    }
+
+    /// The same for the sidebar's list.
+    pub fn sidebar_scroll(&self) -> Option<usize> {
+        self.sidebar_scroll
+    }
+
+    /// The button going down: on the divider it takes hold of it, and anywhere
+    /// else it is a choice.
+    fn on_press(&mut self, painted: &Layout, column: u16, row: u16) -> Result<()> {
+        // Cleared first, so that a press in a pane ends whatever the last one
+        // began: a drag only ever resizes when it *started* on the handle.
+        self.dragging = false;
+        match hit(painted, column, row) {
+            Some(Target::Divider) => self.dragging = true,
+            Some(Target::SidebarRow(row)) => self.click_sidebar(painted, row)?,
+            Some(Target::DiffRow(row)) => self.click_diff(painted, row),
+            // The bar reports state and the popup is dismissed by key; neither
+            // answers a click. `None` is the pointer outside everything drawn.
+            Some(Target::Bar | Target::Popup) | None => {}
+        }
+        Ok(())
+    }
+
+    /// A click in the left column: it takes the focus, and the row under the
+    /// pointer becomes the selection — or folds, where it is a row that holds
+    /// others.
+    fn click_sidebar(&mut self, painted: &Layout, row: usize) -> Result<()> {
+        let Some(index) = ui::sidebar_index_at(self, painted.sidebar, row) else {
+            return Ok(());
+        };
+        self.focus = Focus::Sidebar;
+        match self.sidebar_tab {
+            SidebarTab::Comments => self.browser_index = index,
+            SidebarTab::Files => {
+                self.sidebar_row = index;
+                // `get` rather than `[index]`: the index came from the list this
+                // rebuilds, so it is in range — and a panic in a mouse handler
+                // is a review lost to a mis-click, which is a bad trade for an
+                // assertion nobody reads.
+                let file = match self.sidebar_nodes().get(index).map(|node| &node.kind) {
+                    Some(NodeKind::File { index }) => Some(*index),
+                    // The same verb `s` has on the same row: fold the thing
+                    // under the cursor.
+                    Some(NodeKind::Dir { .. } | NodeKind::Commit { .. }) => None,
+                    None => return Ok(()),
+                };
+                match file {
+                    Some(index) => self.select_file(index)?,
+                    None => self.toggle_collapse(),
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// A click in the diff pane: the row under the pointer becomes the cursor,
+    /// and a box row takes the focus into that comment's stack.
+    ///
+    /// Which comment is read off the plan *before* the cursor moves, because
+    /// moving it rebuilds nothing but reads through a plan the click was
+    /// resolved against.
+    fn click_diff(&mut self, painted: &Layout, row: usize) {
+        let Some(index) = ui::diff_row_at(self, painted.diff, row) else {
+            return;
+        };
+        let clicked = self.plan().rows.get(index).and_then(comment_of_row);
+        self.set_cursor_row(index);
+        self.focus = Focus::Diff;
+        // `set_cursor_row` has just put the stack cursor back at the top, so
+        // this is the whole of the stack's state and cannot be stale.
+        if let Some(id) = clicked
+            && let Some(position) = self
+                .comments_for_line(self.line_index())
+                .iter()
+                .position(|comment| comment.id == id)
+        {
+            self.focus = Focus::Stack;
+            self.comment_index = position;
+        }
+    }
+
+    /// The pointer moving with the button down: resize, if it took hold of the
+    /// divider.
+    ///
+    /// The ratio comes from where the pointer is over the columns the two panes
+    /// share, which does not change as the split moves — so a drag follows the
+    /// pointer instead of accelerating away from it.
+    fn drag_divider(&mut self, painted: &Layout, column: u16) {
+        if !self.dragging {
+            return;
+        }
+        let shared = u32::from(painted.sidebar.width) + u32::from(painted.diff.width);
+        if shared == 0 {
+            return;
+        }
+        let asked = u32::from(column.saturating_sub(painted.sidebar.x)) * 100 / shared;
+        self.split = Split::new(u16::try_from(asked).unwrap_or(Split::MAX_RATIO));
+    }
+
+    /// The wheel: park the view of whichever pane the pointer is over, `delta`
+    /// rows from where it is now, and leave every selection alone.
+    fn wheel(&mut self, painted: &Layout, column: u16, row: u16, delta: isize) {
+        match hit(painted, column, row) {
+            Some(Target::SidebarRow(_)) => {
+                self.sidebar_scroll = Some(ui::sidebar_scrolled(self, painted.sidebar, delta));
+            }
+            Some(Target::DiffRow(_)) => {
+                self.diff_scroll = Some(ui::diff_scrolled(self, painted.diff, delta));
+            }
+            _ => {}
+        }
+    }
+
+    /// Draw, wait, handle one event, repeat.
+    ///
+    /// **The wait is bounded whenever anything on screen ages.** It used to sit
+    /// in `event::read` until a key arrived, which is right for a reviewer with
+    /// nothing to be told and wrong the moment a toast is up: an alert raised at
+    /// t=0 in front of someone who then walks away would still be there at t=∞.
+    /// [`App::next_deadline`] says how long the loop may block for — the next
+    /// step of a fade, or an expiry — and `None` means block as before, so an
+    /// idle `rv` with nothing to show still costs nothing.
+    ///
+    /// This is also the one place the clock is read. Everything below it takes
+    /// the time as a parameter, which is what makes "the toast is gone after
+    /// five seconds" an ordinary assertion rather than a sleep.
     fn event_loop(&mut self, terminal: &mut DefaultTerminal) -> Result<()> {
         loop {
+            let now = Instant::now();
+            self.expire_alerts(now);
             terminal
-                .draw(|frame| ui::draw(frame, self))
+                .draw(|frame| ui::draw(frame, self, now))
                 .context("could not draw the review")?;
 
-            // Key *releases* and repeats are reported by terminals that speak
-            // the kitty protocol; acting on presses only keeps one keystroke
-            // from typing two characters there.
-            if let Event::Key(key) = event::read().context("could not read a key")?
-                && key.kind == KeyEventKind::Press
-                && self.on_key_event(key)? == Action::Quit
+            // Nothing arrived before the deadline: go round and paint the next
+            // step of the fade.
+            if let Some(timeout) = self.next_deadline(Instant::now())
+                && !event::poll(timeout).context("could not wait for an event")?
             {
+                continue;
+            }
+
+            let action = match event::read().context("could not read an event")? {
+                // Key *releases* and repeats are reported by terminals that
+                // speak the kitty protocol; acting on presses only keeps one
+                // keystroke from typing two characters there.
+                Event::Key(key) if key.kind == KeyEventKind::Press => self.on_key_event(key)?,
+                Event::Mouse(mouse) => self.on_mouse(mouse)?,
+                // A resize repaints on the next pass, and everything else — a
+                // focus change, a paste — is not something this reviewer binds.
+                _ => Action::Continue,
+            };
+            if action == Action::Quit {
                 return Ok(());
             }
         }
@@ -1348,6 +1854,9 @@ impl App {
     /// own — it is inside a folded directory — leaves the cursor where it was,
     /// clamped onto the list.
     fn resettle_sidebar(&mut self) {
+        // The rows the view was parked against have just been rebuilt — see
+        // [`App::resettle_cursor`], which does the same for the diff.
+        self.sidebar_scroll = None;
         let nodes = self.sidebar_nodes();
         let selected = self.file_index;
         self.sidebar_row = nodes
@@ -1386,6 +1895,9 @@ impl App {
             SidebarTab::Files => SidebarTab::Comments,
             SidebarTab::Comments => SidebarTab::Files,
         };
+        // A parked view is a row of *the list that was showing*; the other tab
+        // is a different list of a different length.
+        self.sidebar_scroll = None;
         self.clamp_browser();
     }
 
@@ -1429,7 +1941,13 @@ impl App {
             file.path == anchor.file || file.source_path.as_deref() == Some(anchor.file.as_str())
         });
         let Some(file_index) = found else {
-            self.status = format!("{} is not in this review's range any more", anchor.file);
+            // A status *and* an alert. The status says where the reviewer is,
+            // which is exactly where they were; the alert says that the thing
+            // they asked for could not be done, which is what a line in the bar
+            // is the easiest thing on screen to miss.
+            let message = format!("{} is not in this review's range any more", anchor.file);
+            self.status = message.clone();
+            self.raise(message);
             return Ok(());
         };
 
@@ -1446,10 +1964,17 @@ impl App {
             }
             None => {
                 self.set_cursor_row(0);
-                self.status = format!(
+                // The other half of the same failure: the file is open, and the
+                // line the comment is about is not in it. The cursor is at the
+                // top of a file the reviewer did not ask to be at the top of, so
+                // this is a thing to notice rather than a note about where they
+                // are.
+                let message = format!(
                     "{}: line {} is not in this diff any more",
                     anchor.file, anchor.line
                 );
+                self.status = message.clone();
+                self.raise(message);
             }
         }
         self.focus = Focus::Diff;
@@ -1610,6 +2135,10 @@ impl App {
     /// file they are reading; a directory row is a thing to fold, not a file to
     /// open.
     fn move_sidebar(&mut self, forward: bool) -> Result<()> {
+        // The keyboard takes the view back from the wheel, for the reason
+        // [`App::set_cursor_row`] gives: a selection the reviewer is moving has
+        // to be a selection they can see.
+        self.sidebar_scroll = None;
         let nodes = self.sidebar_nodes();
         let Some(last) = nodes.len().checked_sub(1) else {
             return Ok(());
@@ -1638,6 +2167,12 @@ impl App {
         }
         // The stack belongs to the line, so it goes back to the top with it.
         self.reset_stack();
+        // And the view goes back to following the cursor. The wheel parks it
+        // away from the cursor deliberately — scrolling is looking — but the
+        // moment the selection moves, the pane the reviewer is steering has to
+        // be the pane they can see. Here rather than in each caller because
+        // this is the one place the cursor is written.
+        self.diff_scroll = None;
     }
 
     /// Puts the cursor back on the row that owns `line`, after something
@@ -1661,6 +2196,9 @@ impl App {
         if let Some(position) = self.cursor_rows.get_mut(self.file_index) {
             *position = row;
         }
+        // The plan the view was parked against has just changed length, so the
+        // row it was parked at is an address in a list that no longer exists.
+        self.diff_scroll = None;
     }
 
     fn on_key_comment(&mut self, key: KeyCode) -> Result<Action> {
@@ -1694,9 +2232,13 @@ impl App {
     /// * **in the sidebar's Comments tab**, the comment the browser is on —
     ///   which is the comment on screen there, and need not be on the selected
     ///   diff line or even in the selected file;
-    /// * **anywhere else** — the diff, and the sidebar's Files tab — the whole
-    ///   of the selected line's stack, because a file row selects no comment
-    ///   and the line the diff is on is the only comment the screen is showing.
+    /// * **on a directory row of the file list**, that directory — the one case
+    ///   where the thing under the cursor is not a comment at all, answered
+    ///   first below;
+    /// * **anywhere else** — the diff, and a *file* row of the sidebar's Files
+    ///   tab — the whole of the selected line's stack, because a file row
+    ///   selects no comment and the line the diff is on is the only comment the
+    ///   screen is showing.
     ///
     /// A line whose boxes are in *mixed* states collapses rather than expands.
     /// The reason to press `s` on a line is to get it out of the way, and a
@@ -1704,13 +2246,8 @@ impl App {
     /// folded and need a second press to finish a job the reviewer asked for
     /// once. Expanding is then the answer to "they are all folded already".
     ///
-    /// Nothing here writes: see [`App::collapsed`].
-    ///
-    /// The **file list** is the fourth case and is answered first, because it
-    /// is the one where the thing under the cursor is not a comment at all: on
-    /// a directory row `s` folds that directory. One verb for *fold the thing
-    /// under the cursor* rather than a second key for the tree, which is the
-    /// whole reason the tree reuses this handler.
+    /// Nothing here writes, whichever of the two fold sets it touches: see
+    /// [`App::collapsed`], and the `collapsed_dirs` field beside it.
     fn toggle_collapse(&mut self) {
         if let Some(key) = self.sidebar_fold_key() {
             if !self.collapsed_dirs.remove(&key) {
@@ -1722,6 +2259,9 @@ impl App {
             // inside what was just folded away.
             let rows = self.sidebar_nodes().len();
             self.sidebar_row = self.sidebar_row.min(rows.saturating_sub(1));
+            // The list is a different length, so a parked view is an address in
+            // it that no longer means what it did.
+            self.sidebar_scroll = None;
             return;
         }
 
@@ -2303,14 +2843,57 @@ fn comment_id(change_id: &str, path: &str, side: Side, line: u32, body: &str) ->
     digest[..ID_CHARS].to_owned()
 }
 
+/// Which comment a row of the plan belongs to, or `None` for a row of the diff
+/// itself.
+///
+/// Here rather than on [`Row`] because it is the mouse's question and nobody
+/// else's: the keyboard reaches a box by walking into it, so the only caller
+/// that has to turn a row *back* into a comment is the one that was handed a
+/// row by a pointer.
+fn comment_of_row(row: &Row<'_>) -> Option<String> {
+    match row {
+        Row::Diff { .. } => None,
+        Row::BoxTop { comment, .. }
+        | Row::BoxBody { comment, .. }
+        | Row::BoxBottom { comment, .. }
+        | Row::BoxCollapsed { comment, .. } => Some(comment.id.clone()),
+    }
+}
+
+/// Turns mouse reporting on for the run.
+///
+/// Unconditionally, with no toggle and no flag. The concern that would motivate
+/// one — that capturing the pointer takes away the terminal's own
+/// drag-to-select — does not survive contact with how terminals behave: every
+/// current emulator keeps **Shift-drag** as a bypass that selects text whatever
+/// the application asked for. `rv` therefore implements no selection and no
+/// clipboard of its own.
+fn capture_mouse() -> Result<()> {
+    execute!(std::io::stdout(), EnableMouseCapture).context("could not enable mouse reporting")
+}
+
+/// Turns it off again, on the way out of any exit path.
+///
+/// Errors are dropped on purpose: this runs while the terminal is being handed
+/// back, including from the panic hook, and there is nowhere left to report to.
+/// A terminal that cannot be told to stop reporting is already lost; one that
+/// was never told is a shell printing `[<35;61;9M` at every click for the rest
+/// of the day.
+fn release_mouse() {
+    let _ = execute!(std::io::stdout(), DisableMouseCapture);
+}
+
 /// Makes a panic restore the terminal before it prints.
 ///
 /// The previous hook runs afterwards, so the message and backtrace land on a
 /// terminal that has left raw mode and the alternate screen — visible, and on
-/// a shell the user can keep using.
+/// a shell the user can keep using. Mouse reporting goes first, while `rv`
+/// still owns the terminal: it is a mode the panic would otherwise leave behind
+/// exactly like raw mode, and it is the same class of damage.
 fn install_panic_hook() {
     let previous = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
+        release_mouse();
         ratatui::restore();
         previous(info);
     }));
