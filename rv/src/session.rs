@@ -22,8 +22,11 @@ use std::time::UNIX_EPOCH;
 use anyhow::Context as _;
 use anyhow::Result;
 use rv_core::markdown;
+use rv_core::anchor;
 use rv_core::model::FileChange;
+use rv_core::model::Side;
 use rv_core::store::Comment;
+use rv_core::store::CommentState;
 use rv_core::store::Session;
 use rv_core::store::Store;
 use rv_core::vcs::Repository;
@@ -170,6 +173,91 @@ fn resolve(repo_root: &Path, base: Option<&str>, head: Option<&str>) -> Result<R
         session,
         files,
     })
+}
+
+/// Saves a comment against `line` of `path`, exactly as the TUI would.
+///
+/// This is `rv comment`, the entry point an agent uses: the TUI's rules for the
+/// id seed and the anchor are called rather than restated, because the project
+/// has already shipped one bug from two places deciding the same fact.
+///
+/// `path` is the file as the review lists it — its head-side name. For a comment
+/// on the base side of a rename, the anchor is filed under the base-side name,
+/// which is the same mapping the diff pane applies.
+///
+/// The refusals are errors rather than silent skips because the caller is a
+/// program: a reviewer agent that mistypes a path must hear so, not discover a
+/// missing comment three rounds later.
+pub fn add_comment(
+    review: &Review,
+    path: &str,
+    side: Side,
+    line: u32,
+    body: &str,
+) -> Result<Comment> {
+    let file = review
+        .files
+        .iter()
+        .find(|file| file.path == path || file.source_path.as_deref() == Some(path))
+        .with_context(|| {
+            format!(
+                "{path} is not in this review's range ({})",
+                review.session.revset
+            )
+        })?;
+    let (anchored_path, commit) = match side {
+        Side::Left => (
+            file.source_path.as_deref().unwrap_or(&file.path),
+            review.session.base_commit.as_str(),
+        ),
+        Side::Right => (file.path.as_str(), review.session.head_commit.as_str()),
+    };
+    let blob = review
+        .repo
+        .read_blob(commit, anchored_path)?
+        .with_context(|| {
+            let where_ = match side {
+                Side::Left => "the base",
+                Side::Right => "the head",
+            };
+            format!("{anchored_path} does not exist at {where_} of this review")
+        })?;
+    let text = String::from_utf8(blob)
+        .with_context(|| format!("{anchored_path} is not text on that side"))?;
+    let lines = u32::try_from(text.lines().count()).unwrap_or(u32::MAX);
+    if line == 0 || line > lines {
+        anyhow::bail!("{anchored_path} has lines 1..={lines}, not {line}");
+    }
+
+    let body = body.trim();
+    if body.is_empty() {
+        anyhow::bail!("an empty comment says nothing — pass a body with -m");
+    }
+    let change = review
+        .session
+        .changes
+        .first()
+        .context("the review covers no change to comment on")?;
+
+    let comment = Comment {
+        id: crate::app::comment_id(&change.change_id, anchored_path, side, line, body),
+        change_id: change.change_id.clone(),
+        commit_id: commit.to_owned(),
+        anchor: anchor::create(anchored_path, side, line, &text),
+        body: body.to_owned(),
+        state: CommentState::Open,
+        reply: None,
+        settled_by: None,
+    };
+    review
+        .store
+        .append_comment(&comment)
+        .context("could not save the comment")?;
+    // The export stays in step with a save, exactly as it does in the TUI —
+    // ingesting any replies already in the document first, so saving cannot
+    // erase an answer.
+    write_markdown(review)?;
+    Ok(comment)
 }
 
 /// Rewrites `.review/REVIEW-FEEDBACK.md` from the store's comments.

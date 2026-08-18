@@ -57,6 +57,8 @@ Run `rv` from the **workspace root** — the directory holding `.jj/`. See
 | `rv` | `trunk()..@` — everything on your stack that trunk does not have |
 | `rv <bookmark>` | `trunk()..<bookmark>`. The target may be a bookmark, a change id or a commit id |
 | `rv --from <rev> --to <rev>` | An explicit range, e.g. `rv --from main --to my-feature` |
+| `rv comment <file> --line <n> [--side left] -m <text>` | Adds a comment exactly as the TUI would — anchor, id and export all handled. The agent's way in |
+| `rv resolve <id>` / `rv abandon <id>` | Settles a comment, recording who (`--by agent` is the default; the TUI's `r`/`a` record `user`). Re-applying reopens it |
 | `rv render` | Writes `.review/REVIEW-FEEDBACK.md` for that range and exits — no terminal needed |
 | `rv status` | Prints the range, its changes, its changed files and its comment counts |
 | `rv status --json` | The same report as JSON, for scripting |

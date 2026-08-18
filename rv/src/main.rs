@@ -33,17 +33,12 @@ use clap::Subcommand;
 use rv::app::App;
 use rv::app::DiffEngine;
 use rv::session;
-use rv_core::markdown;
-use rv::stale;
-use rv::session::Review;
-use rv_core::model::ChangeKind;
-use rv_core::store::Comment;
+use rv_core::model::Side;
 use rv_core::store::CommentState;
-use serde_json::json;
 
 /// What `jj` shows for a change nobody has described yet; reused here so the
 /// text output of `status` does not print a blank column instead.
-const NO_DESCRIPTION: &str = "(no description set)";
+pub(crate) const NO_DESCRIPTION: &str = "(no description set)";
 
 #[derive(Debug, Parser)]
 #[command(name = "rv", version, about = "Review a jj stack in the terminal")]
@@ -79,6 +74,49 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Add a comment to the review, exactly as the TUI would.
+    ///
+    /// For reviewer agents: the anchor, the id and the export are all handled,
+    /// so nothing writes `.review/` files by hand.
+    Comment {
+        /// The file, as `rv status` lists it.
+        file: String,
+        /// The 1-based line the comment is about.
+        #[arg(long)]
+        line: u32,
+        /// Which side of the diff the line is on: `right` is the code as it
+        /// will exist (the default), `left` a removed line's base side.
+        #[arg(long, default_value = "right")]
+        side: SideArg,
+        /// The comment itself.
+        #[arg(short, long)]
+        message: String,
+    },
+    /// Mark a comment resolved: it was addressed.
+    ///
+    /// Records who settled it. The default is `agent`, because this command is
+    /// the agent's path — a human resolves in the TUI with `r`, which records
+    /// `user`. Either state re-applied is the undo: resolving a resolved
+    /// comment reopens it.
+    Resolve {
+        /// The comment's id, from the export's `<!-- rv:anchor id=… -->` marker.
+        id: String,
+        /// Who is settling it.
+        #[arg(long, default_value = "agent")]
+        by: ByArg,
+    },
+    /// Mark a comment abandoned: dropped without being addressed.
+    ///
+    /// A separate state from resolved on purpose — *fixed* and *dropped unfixed*
+    /// are different conclusions, and a count that adds them together misreports
+    /// what the review decided.
+    Abandon {
+        /// The comment's id.
+        id: String,
+        /// Who is settling it.
+        #[arg(long, default_value = "agent")]
+        by: ByArg,
+    },
     /// Write `.review/REVIEW-FEEDBACK.md` for the current review.
     Render,
     /// Report the range, its changes, its files and its comment counts.
@@ -124,6 +162,38 @@ fn run() -> Result<()> {
                 DiffEngine::Auto
             },
         ),
+        Some(Command::Comment {
+            file,
+            line,
+            side,
+            message,
+        }) => {
+            let review = session::read(&repo_root, cli.from.as_deref(), head.as_deref())?;
+            let comment = session::add_comment(&review, &file, side.into(), line, &message)?;
+            println!(
+                "saved {} at {}:{} ({})",
+                comment.id,
+                comment.anchor.file,
+                comment.anchor.line,
+                match comment.anchor.side {
+                    Side::Left => "left",
+                    Side::Right => "right",
+                }
+            );
+            Ok(())
+        }
+        Some(Command::Resolve { id, by }) => settle(
+            &session::read(&repo_root, cli.from.as_deref(), head.as_deref())?,
+            &id,
+            CommentState::Resolved,
+            by.into(),
+        ),
+        Some(Command::Abandon { id, by }) => settle(
+            &session::read(&repo_root, cli.from.as_deref(), head.as_deref())?,
+            &id,
+            CommentState::Abandoned,
+            by.into(),
+        ),
         Some(Command::Render) => render(&session::read(
             &repo_root,
             cli.from.as_deref(),
@@ -136,148 +206,10 @@ fn run() -> Result<()> {
     }
 }
 
-/// Writes `.review/REVIEW-FEEDBACK.md` from the session and its stored
-/// comments, folding any reply already in the document back into the store
-/// first — see [`session::write_markdown`], which the TUI shares.
-fn render(review: &Review) -> Result<()> {
-    session::write_markdown(review)?;
-    println!("wrote {}", review.store.markdown_path().display());
-    Ok(())
-}
 
-/// Reports the review as text, or as the JSON the `--json` flag asks for.
-fn status(review: &Review, json: bool) -> Result<()> {
-    let comments = read_comments(review)?;
-    let counts = Counts::of(&comments);
-    let session = &review.session;
-
-    if json {
-        let report = json!({
-            "revset": session.revset,
-            "base": session.base_commit,
-            "head": session.head_commit,
-            "degraded_base": markdown::degraded_base(session).is_some(),
-            "changes": session
-                .changes
-                .iter()
-                .map(|change| json!({
-                    "change_id": change.change_id,
-                    "commit_id": change.commit_id,
-                    "description": change.description,
-                }))
-                .collect::<Vec<_>>(),
-            "files": review
-                .files
-                .iter()
-                .map(|file| json!({
-                    "path": file.path,
-                    "kind": kind_name(file.kind),
-                    "binary": file.binary,
-                }))
-                .collect::<Vec<_>>(),
-            "comments": {
-                "open": counts.open,
-                "awaiting_verification": counts.awaiting_verification,
-                "resolved": counts.resolved,
-                "abandoned": counts.abandoned,
-                "outdated": counts.outdated,
-            },
-        });
-        let serialized = serde_json::to_string_pretty(&report)
-            .context("could not serialize the status report")?;
-        println!("{serialized}");
-        return Ok(());
-    }
-
-    println!("revset  {}", session.revset);
-    println!("base    {}", session.base_commit);
-    println!("head    {}", session.head_commit);
-    // The revset records what was typed; this says what it resolved to, which is
-    // the difference between a branch review and a whole-history dump.
-    if markdown::degraded_base(session).is_some() {
-        println!("\nnote    {}", markdown::DEGRADED);
-    }
-
-    println!("\nchanges ({})", session.changes.len());
-    for change in &session.changes {
-        let description = match change.description.lines().next() {
-            Some(first) if !first.trim().is_empty() => first,
-            _ => NO_DESCRIPTION,
-        };
-        println!("  {} {} {description}", change.change_id, change.commit_id);
-    }
-
-    println!("\nfiles ({})", review.files.len());
-    for file in &review.files {
-        // The same three fields `--json` reports, so the two forms cannot
-        // disagree about what the review covers.
-        let binary = if file.binary { " (binary)" } else { "" };
-        println!("  {:<8}  {}{binary}", kind_name(file.kind), file.path);
-    }
-
-    // Resolved and abandoned are counted apart, never summed: one is work that
-    // happened and the other is work that was decided against.
-    println!(
-        "\ncomments  {} open, {} awaiting verification, {} resolved, {} abandoned, {} outdated",
-        counts.open,
-        counts.awaiting_verification,
-        counts.resolved,
-        counts.abandoned,
-        counts.outdated
-    );
-    Ok(())
-}
-
-fn read_comments(review: &Review) -> Result<Vec<Comment>> {
-    let mut comments = review
-        .store
-        .comments()
-        .context("could not read the review's comments")?;
-    // `status` is a load, and `outdated` is derived on every load — see
-    // [`stale::mark_outdated`]. Reporting the stored state here would have the
-    // command and the TUI disagree about the same review, and the command is the
-    // half a script reads.
-    stale::mark_outdated(review, &mut comments);
-    Ok(comments)
-}
-
-/// How many comments sit in each state.
-#[derive(Debug, Default)]
-struct Counts {
-    open: usize,
-    awaiting_verification: usize,
-    resolved: usize,
-    abandoned: usize,
-    outdated: usize,
-}
-
-impl Counts {
-    fn of(comments: &[Comment]) -> Self {
-        let mut counts = Self::default();
-        for comment in comments {
-            let bucket = match comment.state {
-                CommentState::Open => &mut counts.open,
-                CommentState::AwaitingVerification => &mut counts.awaiting_verification,
-                CommentState::Resolved => &mut counts.resolved,
-                CommentState::Abandoned => &mut counts.abandoned,
-                CommentState::Outdated => &mut counts.outdated,
-            };
-            *bucket += 1;
-        }
-        counts
-    }
-}
-
-/// A [`ChangeKind`] as it appears in `rv`'s own output.
-///
-/// Lowercase rather than the variant's `Serialize` spelling, matching the rest
-/// of the vocabulary `rv` writes for other programs to read (`Confidence`,
-/// `CommentState`).
-fn kind_name(kind: ChangeKind) -> &'static str {
-    match kind {
-        ChangeKind::Added => "added",
-        ChangeKind::Modified => "modified",
-        ChangeKind::Removed => "removed",
-        ChangeKind::Renamed => "renamed",
-    }
-}
+mod commands;
+use commands::ByArg;
+use commands::SideArg;
+use commands::render;
+use commands::settle;
+use commands::status;

@@ -419,3 +419,176 @@ fn the_fallback_engine_is_a_documented_flag() {
     let output = workspace.rv(&["--no-difft", "status"]);
     assert!(output.status.success(), "{}", streams(&output));
 }
+
+/// `rv comment` is the reviewer agent's entry point: the anchor, the id and the
+/// export are all handled, so nothing writes `.review/` files by hand.
+///
+/// It goes through the same functions the TUI's `c` does — the project has
+/// already shipped one bug from two places deciding which side a thing is on —
+/// so a comment added here is indistinguishable from one typed in the pane.
+#[test]
+fn rv_comment_saves_an_anchored_comment_and_refreshes_the_export() {
+    let workspace = Fixture::new();
+    workspace.write("a.rs", "fn a() {\n    let x = 1;\n}\n");
+    workspace.commit("first change");
+
+    let output = workspace.rv(&[
+        "comment", "a.rs", "--line", "2", "-m", "this line needs a name",
+    ]);
+    assert!(output.status.success(), "{}", streams(&output));
+    let said = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        said.contains("a.rs:2") && said.contains("right"),
+        "the confirmation does not say where the comment landed: {said}"
+    );
+
+    // Anchored like the TUI would anchor it: side, hash and context all present.
+    let stored = std::fs::read_to_string(workspace.root().join(".review/comments.json"))
+        .expect("read comments.json");
+    let comments: serde_json::Value = serde_json::from_str(&stored).expect("valid json");
+    let comment = &comments[0];
+    assert_eq!(comment["anchor"]["file"], "a.rs");
+    assert_eq!(comment["anchor"]["line"], 2);
+    assert_eq!(comment["state"], "open");
+    assert!(
+        comment["anchor"]["context"]
+            .as_array()
+            .is_some_and(|context| !context.is_empty()),
+        "the anchor quotes nothing: {comment}"
+    );
+
+    // And the export already carries it, so a worker agent polling the document
+    // sees it without a separate render step.
+    let document = std::fs::read_to_string(workspace.root().join(".review/REVIEW-FEEDBACK.md"))
+        .expect("read the export");
+    assert!(
+        document.contains("this line needs a name"),
+        "the export was not refreshed:\n{document}"
+    );
+
+    // The round trip: a reply appended to the document reaches the store on the
+    // next render, which is the worker agent's half of the loop.
+    let replied = document.replace(
+        "**Comment:** this line needs a name",
+        "**Comment:** this line needs a name\n**Reply:** renamed it to `total`",
+    );
+    std::fs::write(workspace.root().join(".review/REVIEW-FEEDBACK.md"), replied)
+        .expect("write the reply");
+    workspace.rv(&["render"]);
+    let stored = std::fs::read_to_string(workspace.root().join(".review/comments.json"))
+        .expect("read comments.json");
+    assert!(
+        stored.contains("renamed it to `total`"),
+        "the reply never reached the store:\n{stored}"
+    );
+}
+
+/// The refusals name what went wrong, because the caller is a program: a
+/// reviewer agent that mistypes a path must hear so now, not discover a missing
+/// comment three rounds later.
+#[test]
+fn rv_comment_refuses_with_reasons_a_program_can_act_on() {
+    let workspace = Fixture::new();
+    workspace.write("a.rs", "fn a() {\n    let x = 1;\n}\n");
+    workspace.commit("first change");
+
+    let missing = workspace.rv(&["comment", "nope.rs", "--line", "1", "-m", "x"]);
+    assert!(!missing.status.success());
+    assert!(
+        String::from_utf8_lossy(&missing.stderr).contains("not in this review's range"),
+        "{}",
+        streams(&missing)
+    );
+
+    let past_the_end = workspace.rv(&["comment", "a.rs", "--line", "999", "-m", "x"]);
+    assert!(!past_the_end.status.success());
+    assert!(
+        String::from_utf8_lossy(&past_the_end.stderr).contains("has lines 1..="),
+        "{}",
+        streams(&past_the_end)
+    );
+
+    let empty = workspace.rv(&["comment", "a.rs", "--line", "1", "-m", "   "]);
+    assert!(!empty.status.success());
+    assert!(
+        String::from_utf8_lossy(&empty.stderr).contains("empty comment"),
+        "{}",
+        streams(&empty)
+    );
+}
+
+/// The worker's tick-off: `rv resolve <id>` records that it was addressed and
+/// **who says so**, and the same command re-applied is the undo.
+#[test]
+fn rv_resolve_settles_a_comment_and_records_the_agent() {
+    let workspace = Fixture::new();
+    workspace.write("a.rs", "fn a() {\n    let x = 1;\n}\n");
+    workspace.commit("first change");
+    let saved = workspace.rv(&["comment", "a.rs", "--line", "2", "-m", "needs a name"]);
+    let id = String::from_utf8_lossy(&saved.stdout)
+        .split_whitespace()
+        .nth(1)
+        .expect("the confirmation names the id")
+        .to_owned();
+
+    let output = workspace.rv(&["resolve", &id]);
+    assert!(output.status.success(), "{}", streams(&output));
+
+    let stored = std::fs::read_to_string(workspace.root().join(".review/comments.json"))
+        .expect("read comments.json");
+    let comments: serde_json::Value = serde_json::from_str(&stored).expect("valid json");
+    assert_eq!(comments[0]["state"], "resolved");
+    assert_eq!(
+        comments[0]["settled_by"], "agent",
+        "who settled it went unrecorded — which is the one thing that must not"
+    );
+
+    // The export moved it out of Open, so a polling worker stops seeing it as
+    // work.
+    let document = std::fs::read_to_string(workspace.root().join(".review/REVIEW-FEEDBACK.md"))
+        .expect("read the export");
+    assert!(
+        document.contains("## Open (0)") && document.contains("## Resolved (1)"),
+        "the export still lists it as open:\n{document}"
+    );
+
+    // And re-applying is the undo.
+    let again = workspace.rv(&["resolve", &id]);
+    assert!(
+        String::from_utf8_lossy(&again.stdout).contains("reopened"),
+        "{}",
+        streams(&again)
+    );
+}
+
+/// Abandoned is not resolved: dropped-unfixed and fixed are different
+/// conclusions, and the store keeps them apart.
+#[test]
+fn rv_abandon_is_a_distinct_state() {
+    let workspace = Fixture::new();
+    workspace.write("a.rs", "fn a() {\n    let x = 1;\n}\n");
+    workspace.commit("first change");
+    let saved = workspace.rv(&["comment", "a.rs", "--line", "1", "-m", "out of scope"]);
+    let id = String::from_utf8_lossy(&saved.stdout)
+        .split_whitespace()
+        .nth(1)
+        .expect("an id")
+        .to_owned();
+
+    workspace.rv(&["abandon", &id]);
+
+    let stored = std::fs::read_to_string(workspace.root().join(".review/comments.json"))
+        .expect("read comments.json");
+    assert!(
+        stored.contains("\"abandoned\""),
+        "abandoning stored some other state:\n{stored}"
+    );
+
+    let unknown = workspace.rv(&["resolve", "ffffffff"]);
+    assert!(!unknown.status.success());
+    assert!(
+        String::from_utf8_lossy(&unknown.stderr).contains("no comment ffffffff"),
+        "{}",
+        streams(&unknown)
+    );
+}

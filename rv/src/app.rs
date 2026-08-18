@@ -49,6 +49,7 @@ pub use alerts::Alert;
 pub use changes::ChangeInfo;
 
 pub use anchor::anchored_side;
+pub use anchor::comment_id;
 pub use bindings::BINDINGS;
 pub use bindings::Binding;
 pub use bindings::Group;
