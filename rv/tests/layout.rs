@@ -34,7 +34,7 @@ fn browsing() -> Chrome {
     Chrome {
         bar_rows: 1,
         help_open: false,
-        info_open: false,
+        tooltip: None,
         toast: false,
         sidebar_hidden: false,
     }
@@ -355,7 +355,7 @@ fn the_popup_takes_priority_over_whatever_is_beneath_it() {
         Split::new(30),
         Chrome {
             help_open: true,
-            info_open: false,
+            tooltip: None,
             ..browsing()
         },
     );
@@ -380,7 +380,7 @@ fn the_popup_is_centred_inside_the_area() {
         Split::new(30),
         Chrome {
             help_open: true,
-            info_open: false,
+            tooltip: None,
             ..browsing()
         },
     );

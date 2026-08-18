@@ -139,14 +139,12 @@ pub fn draw(frame: &mut Frame, app: &App, now: Instant) {
     if let Some(area) = rects.toast {
         toast::draw_toast(frame, &alerts, area, now);
     }
+    // Under the keymap: a reviewer who asked for the manual is reading it.
+    if let Some(area) = rects.tooltip {
+        info::draw_info(frame, app, area);
+    }
     if let Some(area) = rects.popup {
-        // One rectangle, and never both at once: `?` is inert while `i` is up and
-        // the other way round, so the two cannot contend for it.
-        if app.change_info().is_some() {
-            info::draw_info(frame, app, area);
-        } else {
-            help::draw_help(frame, app, area);
-        }
+        help::draw_help(frame, app, area);
     }
 }
 
@@ -200,7 +198,7 @@ fn chrome(app: &App, toast: bool) -> Chrome {
             Mode::Comment => COMMENT_ROWS,
         },
         help_open: app.help_open(),
-        info_open: app.change_info().is_some(),
+        tooltip: app.tooltip(),
         toast,
         sidebar_hidden: app.sidebar_hidden(),
     }
@@ -221,7 +219,7 @@ pub fn default_layout() -> Layout {
         Chrome {
             bar_rows: 1,
             help_open: false,
-            info_open: false,
+            tooltip: None,
             toast: false,
             sidebar_hidden: false,
         },

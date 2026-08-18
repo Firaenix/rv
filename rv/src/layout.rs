@@ -185,8 +185,12 @@ pub struct Chrome {
     pub bar_rows: u16,
     /// Whether the `?` popup is up.
     pub help_open: bool,
-    /// Whether the `i` change popup is up.
-    pub info_open: bool,
+    /// Which sidebar row the change tooltip hangs off, and how tall it wants to
+    /// be — `None` when there is no change under the cursor.
+    ///
+    /// A row and a height rather than a rectangle: where a tooltip *goes* is
+    /// geometry, and this module is the only thing that computes that.
+    pub tooltip: Option<(u16, u16)>,
     /// Whether an alert is floating over the panes.
     pub toast: bool,
     /// Whether the reviewer has put the sidebar away with `z`.
@@ -211,6 +215,8 @@ pub struct Layout {
     /// The floating alert, when there is one. Drawn over the panes; never a
     /// click target — see [`Target`].
     pub toast: Option<Rect>,
+    /// The change tooltip, hanging off the highlighted row.
+    pub tooltip: Option<Rect>,
     /// The one cell that opens and closes the sidebar by pointer.
     ///
     /// A key is not enough on a phone over ssh, which is the whole reason the
@@ -289,8 +295,13 @@ pub fn layout(area: Rect, split: Split, chrome: Chrome) -> Layout {
         diff,
         chevron,
         bar,
-        popup: (chrome.help_open || chrome.info_open)
+        popup: chrome
+            .help_open
             .then(|| centered(area, POPUP_TENTHS))
+            .filter(non_empty),
+        tooltip: chrome
+            .tooltip
+            .and_then(|(row, rows)| beside(sidebar, diff, row, rows))
             .filter(non_empty),
         toast: chrome.toast.then(|| floating(area)).filter(non_empty),
     }
@@ -317,6 +328,30 @@ fn centered(area: Rect, tenths: u16) -> Rect {
         width,
         height,
     )
+}
+
+/// Where a tooltip hanging off sidebar `row` goes: in the diff pane, top-aligned
+/// with the row, `rows` tall and as wide as the pane allows.
+///
+/// In the diff pane rather than over the sidebar, because the sidebar is the thing
+/// it describes and covering it would hide the row the reviewer is on. It slides up
+/// where it would run off the bottom, so the whole tooltip is always on screen —
+/// a tooltip clipped by the frame is the problem it was built to fix.
+///
+/// On a narrow terminal it is most of the diff pane, which is the honest answer:
+/// there is nowhere else for it, and the reviewer moved the cursor onto a change
+/// to read about it.
+fn beside(sidebar: Rect, diff: Rect, row: u16, rows: u16) -> Option<Rect> {
+    if diff.width <= TOP_BORDER + BOTTOM_BORDER || diff.height == 0 {
+        return None;
+    }
+    let height = rows.min(diff.height);
+    let top = sidebar
+        .y
+        .saturating_add(TOP_BORDER)
+        .saturating_add(row)
+        .min(diff.bottom().saturating_sub(height));
+    Some(Rect::new(diff.x, top.max(diff.y), diff.width, height))
 }
 
 /// `size`, less one where that is what makes `whole - size` even.

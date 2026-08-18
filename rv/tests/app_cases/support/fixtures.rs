@@ -195,7 +195,7 @@ impl Fixture {
     /// change below the one every fixture above puts its head state in.
     pub fn app(&self) -> App {
         let review = session::build(self.root(), Some("@--"), None).expect("build the review");
-        App::open(review, DiffEngine::Auto).expect("open the reviewer")
+        App::open(review, DiffEngine::Structural).expect("open the reviewer")
     }
 
     /// The reviewer over the same range, with difftastic bypassed: every diff

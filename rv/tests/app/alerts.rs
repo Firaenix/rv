@@ -22,7 +22,7 @@ fn toast_area(width: u16, height: u16) -> Rect {
         Chrome {
             bar_rows: 1,
             help_open: false,
-            info_open: false,
+            tooltip: None,
             toast: true,
             sidebar_hidden: false,
         },

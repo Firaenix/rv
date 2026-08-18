@@ -4,6 +4,7 @@ use crossterm::event::KeyCode;
 use rv::app::Focus;
 use rv::layout::Split;
 use rv::tree::NodeKind;
+use rv_core::diff::DiffSource;
 
 use crate::support::*;
 
@@ -186,5 +187,75 @@ fn the_code_draws_before_it_is_coloured() {
     assert!(
         keyword.fg.is_some(),
         "the keyword is still unpainted after the parse landed: {keyword:?}"
+    );
+}
+
+/// The keystroke does not wait for difftastic: the fast diff is on screen at once
+/// and the structural one replaces it when it lands.
+///
+/// difftastic is a flat ~26 ms per file whatever its size — a process spawn, not
+/// diff work — and loading it on selection charged that to every press of `↓` in a
+/// long change list. The in-process engine answers in 0.2 ms.
+#[test]
+fn a_selection_draws_before_difftastic_has_run() {
+    let workspace = Fixture::new();
+    let review = rv::session::build(workspace.root(), None, None).expect("build the review");
+    let mut app = rv::app::App::open(review, rv::app::DiffEngine::Auto).expect("open");
+
+    // The lines are there immediately, from the in-process engine.
+    assert!(app.refining(), "nothing was asked of difftastic");
+    let early = app.selected_diff().expect("a diff").clone();
+    assert_eq!(early.source, DiffSource::Similar);
+    assert!(
+        buffer_text(&frame_at(&app, 100, 24)).contains("fn a()"),
+        "the pane waited for the structural diff"
+    );
+
+    app.finish_loading();
+    let refined = app.selected_diff().expect("a diff");
+    assert!(
+        matches!(refined.source, DiffSource::Difftastic { .. }),
+        "the structural diff never replaced the fast one: {:?}",
+        refined.source
+    );
+    assert!(!app.refining(), "the file still reads as unrefined");
+}
+
+/// The swap keeps the reviewer's place by *source line*, not by row.
+///
+/// Only the fallback emits context lines, so row 7 is not the same code in both
+/// engines — and the line the cursor was on may not survive at all, since most of
+/// what the fallback shows is context the structural diff omits. So the promise is
+/// the nearest surviving line, which is where they were looking.
+#[test]
+fn the_swap_keeps_the_line_you_were_on() {
+    let workspace = Fixture::renamed();
+    let review =
+        rv::session::build(workspace.root(), Some("@--"), None).expect("build the review");
+    let mut app = rv::app::App::open(review, rv::app::DiffEngine::Auto).expect("open");
+
+    // Onto a line that exists in both engines' output, and remember its number.
+    app.on_key(KeyCode::Down).expect("next row");
+    app.on_key(KeyCode::Down).expect("next row");
+    let before = app
+        .selected_diff()
+        .expect("a diff")
+        .lines
+        .get(app.line_index())
+        .and_then(|line| line.right.or(line.left))
+        .expect("a numbered line");
+
+    app.finish_loading();
+
+    let after = app
+        .selected_diff()
+        .expect("a diff")
+        .lines
+        .get(app.line_index())
+        .and_then(|line| line.right.or(line.left));
+    let landed = after.expect("a numbered line");
+    assert!(
+        landed.abs_diff(before) <= 1,
+        "the swap moved the cursor away from line {before}, to {landed}"
     );
 }

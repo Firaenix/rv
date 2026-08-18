@@ -108,6 +108,10 @@ impl App {
         self.symbol_index.len()
     }
 
+    pub(super) fn engine(&self) -> crate::app::DiffEngine {
+        self.engine
+    }
+
     /// How far down the `i` popup is scrolled.
     #[must_use]
     pub fn info_scroll(&self) -> usize {

@@ -27,6 +27,7 @@ mod bindings;
 mod comment;
 mod commits;
 mod delete;
+mod diffs;
 mod export;
 mod fold;
 mod keys;
@@ -198,9 +199,7 @@ pub struct App {
     mode: Mode,
     buffer: String,
     status: String,
-    /// Set by [`DiffEngine::Fallback`]: skip difftastic for every file in this
-    /// review.
-    force_fallback: bool,
+    engine: DiffEngine,
     /// Blobs whose highlight spans are being parsed on another thread, and the
     /// channel they come back on — see [`paint`].
     parsing: HashSet<(String, String)>,
@@ -219,8 +218,13 @@ pub struct App {
     /// press of `n`.
     symbol_index: crate::index::Index,
     indexed_scope: Option<symbols::Scope>,
-    /// Whether `i` has the change under the cursor open, and how far down it.
-    info_open: bool,
+    /// Files showing the fast diff while difftastic is still being asked — see
+    /// [`diffs`].
+    refining: HashSet<usize>,
+    refiner: diffs::Refiner,
+    /// Whether `i` has put the change tooltip away, and how far down it is
+    /// scrolled.
+    info_dismissed: bool,
     info_scroll: usize,
     /// Whether the reviewer has put the sidebar away with `z`.
     ///
@@ -244,9 +248,18 @@ pub struct App {
 /// later is a setting whatever it is called.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum DiffEngine {
-    /// difftastic where it is on `PATH`, the in-process engine where it is not.
+    /// The in-process diff at once, difftastic's behind it, and a swap when it
+    /// lands — see [`diffs`]. What a reviewer gets, because it is the only one of
+    /// the three where a keystroke never waits for a process to spawn.
     #[default]
     Auto,
+    /// difftastic, computed before the call returns.
+    ///
+    /// No swap, so the lines on screen are the final ones from the first frame.
+    /// This is what a test asserting about difftastic's output wants: the async
+    /// path is worth exercising deliberately, and not worth racing accidentally in
+    /// every other test in the suite.
+    Structural,
     /// The `similar` fallback, always.
     ///
     /// This is the diff a user with no `difft` gets, and it is a distinct set of
@@ -269,10 +282,10 @@ impl App {
     /// inconvenience — which is the argument for the parameter, and a stronger one
     /// than the process-wide-and-impolite reasoning that used to stand here.
     pub fn open(review: Review, engine: DiffEngine) -> Result<Self> {
-        Self::build(review, engine == DiffEngine::Fallback)
+        Self::build(review, engine)
     }
 
-    fn build(review: Review, force_fallback: bool) -> Result<Self> {
+    fn build(review: Review, engine: DiffEngine) -> Result<Self> {
         let diffs = vec![None; review.files.len()];
         // Read before the first diff is computed: a reviewer who quit halfway
         // through yesterday opens on the notes they already made.
@@ -331,14 +344,16 @@ impl App {
             mode: Mode::Browse,
             buffer: String::new(),
             status: HELP.to_owned(),
-            force_fallback,
+            engine,
             parsing: HashSet::new(),
             painter: paint::Painter::default(),
             commit_pair: None,
             commit_diffs: HashMap::new(),
             symbol_index: crate::index::Index::default(),
             indexed_scope: None,
-            info_open: false,
+            refining: HashSet::new(),
+            refiner: diffs::Refiner::default(),
+            info_dismissed: false,
             info_scroll: 0,
             sidebar_hidden: false,
             commits: commits::Commits::default(),

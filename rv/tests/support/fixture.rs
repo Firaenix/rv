@@ -258,13 +258,13 @@ impl Fixture {
     /// The reviewer, opened over `trunk()..@` of this workspace.
     pub fn app(&self) -> App {
         let review = session::build(self.root(), None, None).expect("build the review");
-        App::open(review, DiffEngine::Auto).expect("open the reviewer")
+        App::open(review, DiffEngine::Structural).expect("open the reviewer")
     }
 
     /// The reviewer, opened over `base..@` of this workspace.
     pub fn app_from(&self, base: &str) -> App {
         let review = session::build(self.root(), Some(base), None).expect("build the review");
-        App::open(review, DiffEngine::Auto).expect("open the reviewer")
+        App::open(review, DiffEngine::Structural).expect("open the reviewer")
     }
 
     /// A handle on `.review/` that shares nothing with the app's own.

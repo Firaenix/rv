@@ -85,13 +85,17 @@ impl App {
             // Before the frame, so a parse that landed while the reviewer was
             // reading is painted on this pass rather than the next.
             self.collect_highlights();
+            self.collect_refined();
             terminal
                 .draw(|frame| ui::draw(frame, self, now))
                 .context("could not draw the review")?;
 
             // Nothing arrived before the deadline: go round and paint the next
             // step of the fade — or the colour that has just been parsed.
-            let deadline = match (self.next_deadline(Instant::now()), self.painting()) {
+            let deadline = match (
+                self.next_deadline(Instant::now()),
+                self.painting() || self.refining(),
+            ) {
                 (Some(fade), true) => Some(fade.min(PAINT_POLL)),
                 (Some(fade), false) => Some(fade),
                 (None, true) => Some(PAINT_POLL),

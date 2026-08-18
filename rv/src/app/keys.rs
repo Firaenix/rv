@@ -47,9 +47,7 @@ impl App {
         if self.help_open {
             return Ok(self.on_key_help(key));
         }
-        if self.info_open {
-            return Ok(self.on_key_info(key));
-        }
+
         match self.mode {
             Mode::Browse => self.on_key_browse(key),
             Mode::Comment => self.on_key_comment(key),
@@ -75,27 +73,19 @@ impl App {
         Action::Continue
     }
 
-    /// `i`, `Esc` and `q` close the change popup; `j`/`k` scroll it. Everything
-    /// else is inert while it is up, for the same reason it is inert under the
-    /// keymap: a reviewer reading about a change must not act on one by accident.
-    fn on_key_info(&mut self, key: KeyCode) -> Action {
-        match key {
-            KeyCode::Char('i' | 'q') | KeyCode::Esc => self.info_open = false,
-            KeyCode::Char('j') | KeyCode::Down => self.info_scroll = self.info_scroll.saturating_add(1),
-            KeyCode::Char('k') | KeyCode::Up => self.info_scroll = self.info_scroll.saturating_sub(1),
-            _ => {}
-        }
-        Action::Continue
-    }
-
-    /// Opens the change popup, or puts it away.
+    /// Puts the change tooltip away, or brings it back.
+    ///
+    /// It shows itself on highlight, so this is the way *out* rather than the way
+    /// in: a reviewer who wants the diff pane whole while they walk a stack should
+    /// not have to move the cursor off a change to get it.
     fn toggle_info(&mut self) {
-        if self.change_under_cursor().is_none() {
-            self.status = "no change under the cursor — tab to the commits list".to_owned();
-            return;
-        }
-        self.info_open = !self.info_open;
+        self.info_dismissed = !self.info_dismissed;
         self.info_scroll = 0;
+        self.status = if self.info_dismissed {
+            "change details hidden — i brings them back".to_owned()
+        } else {
+            "change details shown".to_owned()
+        };
     }
 
     /// Moves the keymap by `delta` rows, which only ever moves anything on a

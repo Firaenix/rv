@@ -628,13 +628,13 @@ fn a_directory_row_is_quieter_than_the_files_under_it() {
     );
 }
 
-/// `i` shows the change in full: both whole ids, the description including its
-/// body, and every file it touched.
+/// Highlighting a change shows it in full, with no key at all: both whole ids,
+/// the description including its body, and every file it touched.
 ///
-/// A sidebar row holds two eight-character ids and as much subject as fits. This
-/// is where the rest lives, which is what makes a clipped row acceptable.
+/// Moving the cursor onto a change *is* the act of asking about it. Requiring a
+/// key made the reviewer ask twice, which is what the first version of this did.
 #[test]
-fn i_shows_the_change_in_full() {
+fn highlighting_a_change_shows_it_in_full() {
     let workspace = Fixture::new();
     workspace.write("c.rs", "fn c() {\n    let c = 3;\n}\n");
     workspace.jj(&[
@@ -660,9 +660,7 @@ fn i_shows_the_change_in_full() {
         .expect("the change")
         .clone();
 
-    app.on_key(KeyCode::Char('i')).expect("open the change");
     let text = buffer_text(&frame_at(&app, 100, 30));
-
     assert!(
         text.contains(&change.change_id),
         "the whole change id is not shown:\n{text}"
@@ -679,35 +677,46 @@ fn i_shows_the_change_in_full() {
         text.contains("c.rs"),
         "the files it touched are not shown:\n{text}"
     );
-
-    app.on_key(KeyCode::Char('i')).expect("close it again");
-    let closed = buffer_text(&frame_at(&app, 100, 30));
-    assert!(
-        !closed.contains("with a body that a row could never hold"),
-        "`i` is a one-way door:\n{closed}"
-    );
 }
 
-/// Esc closes it too, and while it is up the keys that would act on a change are
-/// inert — a reviewer reading about a change must not act on one by accident.
+/// `i` is the way *out*: a reviewer who wants the diff pane whole while walking a
+/// stack should not have to move the cursor off a change to get it.
 #[test]
-fn the_change_popup_is_modal() {
+fn i_puts_the_change_details_away_and_brings_them_back() {
     let workspace = two_changes();
     let mut app = workspace.app();
     to_commits(&mut app);
     app.on_key(KeyCode::Left).expect("focus the sidebar");
-    down_to_a_file(&mut app);
-    let before = app.sidebar_row();
+    assert!(app.change_info().is_some(), "nothing was shown to begin with");
 
-    app.on_key(KeyCode::Char('i')).expect("open");
-    app.on_key(KeyCode::Char('d')).expect("a key that would act");
-    assert_eq!(app.sidebar_row(), before, "a key reached past the popup");
+    app.on_key(KeyCode::Char('i')).expect("put it away");
+    assert!(app.change_info().is_none(), "`i` hid nothing");
 
-    app.on_key(KeyCode::Esc).expect("close");
-    assert!(
-        app.change_info().is_none(),
-        "Esc did not close the change popup"
-    );
+    app.on_key(KeyCode::Char('i')).expect("bring it back");
+    assert!(app.change_info().is_some(), "`i` is a one-way door");
+}
+
+/// It describes the sidebar, so it does not cover it — and it never runs off the
+/// bottom of the frame, which is the problem it was built to fix.
+#[test]
+fn the_tooltip_stays_on_screen_and_off_the_sidebar() {
+    let workspace = two_changes();
+    let mut app = workspace.app();
+    to_commits(&mut app);
+    app.on_key(KeyCode::Left).expect("focus the sidebar");
+
+    for (width, height) in [(100u16, 30u16), (80, 24), (60, 12), (40, 10)] {
+        let frame = frame_at(&app, width, height);
+        // Drawn at all, or deliberately not at a size with no room — never
+        // half-drawn past an edge.
+        let sidebar = areas(width, height, Split::default()).sidebar;
+        let rows = sidebar_rows(&frame, width, height, Split::default());
+        assert!(
+            rows.iter().any(|row| row.contains('.') || row.trim().is_empty()),
+            "the tooltip covered the list it describes at {width}x{height}"
+        );
+        assert!(sidebar.width <= width, "the sidebar left the frame");
+    }
 }
 
 /// The two ids are picked out in two colours, because they are two different

@@ -19,6 +19,7 @@ use anyhow::Context as _;
 use anyhow::Result;
 
 use super::App;
+use super::Focus;
 use super::SidebarTab;
 use crate::gradient::Stat;
 use crate::tree;
@@ -43,6 +44,17 @@ pub struct ChangeInfo {
     pub description: String,
     pub files: Vec<(String, Stat)>,
     pub stat: Stat,
+}
+
+impl ChangeInfo {
+    /// How tall the tooltip wants to be: its two id rows, its description, a
+    /// blank, the totals line, one row per file, and two borders.
+    #[must_use]
+    pub fn rows(&self) -> u16 {
+        let described = self.description.lines().count().max(1);
+        let content = 2 + 1 + described + 1 + 1 + self.files.len();
+        u16::try_from(content.saturating_add(2)).unwrap_or(u16::MAX)
+    }
 }
 
 impl CommitIndex {
@@ -241,10 +253,13 @@ impl App {
             .read_blob(&to, &head_path)
             .with_context(|| format!("could not read {head_path} at {to}"))?;
 
-        let diff = if self.force_fallback {
-            rv_core::diff::compute_with(old.as_deref(), new.as_deref(), &head_path, false)
-        } else {
-            rv_core::diff::compute(old.as_deref(), new.as_deref(), &head_path)
+        // The commits view's diffs are loaded on selection like the bookmark's, and
+        // the same engine decides how.
+        let diff = match self.engine() {
+            super::DiffEngine::Fallback => {
+                rv_core::diff::compute_with(old.as_deref(), new.as_deref(), &head_path, false)
+            }
+            _ => rv_core::diff::compute(old.as_deref(), new.as_deref(), &head_path),
         };
         self.commit_diffs.insert(pair, diff);
         self.parse_highlights(from, base_path, old.as_deref());
@@ -304,10 +319,28 @@ impl App {
             .collect()
     }
 
-    /// Everything `i` shows about the change the cursor is in.
+    /// Which row the change tooltip hangs off, and how tall it wants to be.
+    ///
+    /// Shown on **highlight**, with no key: moving the cursor onto a change is the
+    /// act of asking about it, and a reviewer who has to press something to see
+    /// what they have selected is being made to ask twice. `i` puts it away for as
+    /// long as it is unwanted.
+    ///
+    /// `None` off the Commits tab, off the sidebar, and while it is dismissed.
+    #[must_use]
+    pub fn tooltip(&self) -> Option<(u16, u16)> {
+        let info = self.change_info()?;
+        let row = u16::try_from(self.sidebar_row()).ok()?;
+        Some((row, info.rows()))
+    }
+
+    /// Everything the tooltip shows about the change the cursor is in.
     #[must_use]
     pub fn change_info(&self) -> Option<ChangeInfo> {
-        if !self.info_open {
+        if self.info_dismissed
+            || self.focus() != Focus::Sidebar
+            || self.sidebar_tab() != SidebarTab::Commits
+        {
             return None;
         }
         let index = self.commit_index();
@@ -338,7 +371,7 @@ impl App {
     fn change_under_cursor_index(&self) -> Option<usize> {
         let nodes = self.nodes();
         let row = self.sidebar_row().min(nodes.len().saturating_sub(1));
-        nodes[..=row].iter().rev().find_map(|node| match &node.kind {
+        nodes.get(..=row)?.iter().rev().find_map(|node| match &node.kind {
             tree::NodeKind::Commit { change_id, .. } => self
                 .review
                 .session
@@ -363,7 +396,7 @@ impl App {
         }
         let nodes = self.nodes();
         let row = self.sidebar_row().min(nodes.len().saturating_sub(1));
-        nodes[..=row].iter().rev().find_map(|node| match &node.kind {
+        nodes.get(..=row)?.iter().rev().find_map(|node| match &node.kind {
             tree::NodeKind::Commit {
                 short_change,
                 short_commit,

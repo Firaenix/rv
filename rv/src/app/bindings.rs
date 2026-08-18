@@ -247,7 +247,7 @@ pub const BINDINGS: &[Binding] = &[
     Binding {
         keys: "i",
         group: Group::View,
-        what: "change in full",
+        what: "change details",
         codes: &[KeyCode::Char('i')],
         command: Command::Info,
     },
@@ -346,7 +346,7 @@ impl App {
             Command::ToggleTree | Command::CycleSort => {
                 self.sidebar_tab != SidebarTab::Comments
             }
-            Command::Info => self.change_under_cursor().is_some(),
+            Command::Info => self.sidebar_tab == SidebarTab::Commits,
         }
     }
 

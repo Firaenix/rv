@@ -5,6 +5,7 @@ use anyhow::Result;
 use rv_core::diff;
 
 use super::App;
+use super::DiffEngine;
 use super::Focus;
 use super::SidebarTab;
 use crate::tree::NodeKind;
@@ -177,12 +178,21 @@ impl App {
             .read_blob(&head_commit, &head_path)
             .with_context(|| format!("could not read {head_path} at the head of the review"))?;
 
-        let diff = if self.force_fallback {
-            diff::compute_with(old.as_deref(), new.as_deref(), &head_path, false)
-        } else {
-            diff::compute(old.as_deref(), new.as_deref(), &head_path)
-        };
-        self.diffs[self.file_index] = Some(diff);
+        self.diffs[self.file_index] = Some(match self.engine {
+            // The in-process engine first: 0.2 ms against difftastic's flat 26 ms
+            // spawn, so the keystroke never waits. difftastic is asked for in the
+            // background and the pane swaps when it lands — see
+            // [`crate::app::diffs`].
+            DiffEngine::Auto | DiffEngine::Fallback => {
+                diff::compute_with(old.as_deref(), new.as_deref(), &head_path, false)
+            }
+            DiffEngine::Structural => diff::compute(old.as_deref(), new.as_deref(), &head_path),
+        });
+        if self.engine == DiffEngine::Auto {
+            let file = self.file_index;
+            self.refining.insert(file);
+            self.refine(file, old.clone(), new.clone());
+        }
         // Parsed from the very blobs the diff was computed from, so the spans a
         // line is painted with describe the text that line came from — and parsed
         // *off* this thread, so a large file draws now and colours in a moment.
