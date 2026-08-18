@@ -35,6 +35,10 @@
 //! is the only thing the mode decides, and passing the number of rows keeps
 //! this module from having to know what a mode means.
 
+mod hit;
+
+pub use hit::hit;
+
 use ratatui::layout::Rect;
 
 /// Columns between the two panes, which are also the column the pointer grabs
@@ -44,14 +48,14 @@ const DIVIDER: u16 = 1;
 
 /// Rows a pane spends on its top border, which is the row a click on it must
 /// *not* be counted as content.
-const TOP_BORDER: u16 = 1;
+pub(super) const TOP_BORDER: u16 = 1;
 
 /// The same for the bottom border. Kept separate from [`TOP_BORDER`] rather
 /// than folded into one "borders: 2", because the two are subtracted at
 /// different ends of the pane and a single constant used twice is how an
 /// off-by-one hides: this module shipped with the bottom border reporting a
 /// content row one past the last row [`crate::ui`] paints.
-const BOTTOM_BORDER: u16 = 1;
+pub(super) const BOTTOM_BORDER: u16 = 1;
 
 /// How much of the area the help popup covers, in tenths. Large enough to hold
 /// the keymap, small enough that the panes stay visible around it — a reviewer
@@ -288,71 +292,11 @@ pub fn layout(area: Rect, split: Split, chrome: Chrome) -> Layout {
     }
 }
 
-/// What is at `column`, `row` — or [`None`] where the pointer is outside
-/// everything the layout drew.
-///
-/// Tested in painting order, top-most first: the popup covers whatever is
-/// beneath it, then the divider, then the panes, then the bar. The toast is
-/// deliberately absent — it is painted over the panes but is not a target, so
-/// a click passes straight through it.
-///
-/// A click on either of a pane's horizontal borders is *nothing* rather than a
-/// row: the top row carries the title, the bottom row carries nothing at all,
-/// and a pane of `height` rows paints only the `height - 2` between them. See
-/// [`pane_row`].
-#[must_use]
-pub fn hit(layout: &Layout, column: u16, row: u16) -> Option<Target> {
-    if let Some(popup) = layout.popup
-        && within(popup, column, row)
-    {
-        return Some(Target::Popup);
-    }
-    // Before the bar, which it is one cell of. Everything else is tested in
-    // painting order; this is the one target that sits inside another.
-    if within(layout.chevron, column, row) {
-        return Some(Target::Chevron);
-    }
-    if within(layout.divider, column, row) {
-        return Some(Target::Divider);
-    }
-    if let Some(index) = pane_row(layout.sidebar, column, row) {
-        return Some(Target::SidebarRow(index));
-    }
-    if let Some(index) = pane_row(layout.diff, column, row) {
-        return Some(Target::DiffRow(index));
-    }
-    if within(layout.bar, column, row) {
-        return Some(Target::Bar);
-    }
-    None
-}
-
-/// Whether a point is inside a rectangle. An empty rectangle contains nothing,
-/// which is what makes the degenerate terminals fall out for free.
-fn within(rect: Rect, column: u16, row: u16) -> bool {
-    column >= rect.x && column < rect.right() && row >= rect.y && row < rect.bottom()
-}
-
-/// Which row of a pane's content a point is on, counting from zero under the
-/// top border.
-///
-/// Both borders are excluded, so the rows this answers for are exactly the
-/// `height - 2` rows a bordered pane paints into and nothing else. It used to
-/// count the bottom border as one more row — sold as a cell of slop for a
-/// reviewer aiming at the edge — but a pane of `h` rows draws its last one at
-/// `bottom() - 2`, so that row was an index past the end of every list on
-/// screen: a click there selects nothing, or whatever the caller's clamp
-/// happens to land on. Slop that points at a row that was never drawn is not
-/// slop.
-///
-/// The columns are the pane's full width, borders included: which pane a click
-/// is in is the only thing they decide, and a vertical border does not make the
-/// row under the pointer any less clear.
-fn pane_row(rect: Rect, column: u16, row: u16) -> Option<usize> {
-    let first = rect.y.saturating_add(TOP_BORDER);
-    let past_last = rect.bottom().saturating_sub(BOTTOM_BORDER);
-    (column >= rect.x && column < rect.right() && row >= first && row < past_last)
-        .then(|| usize::from(row - first))
+/// Whether a floating rectangle has room to be drawn at all. A terminal too
+/// small for a popup gets no popup rather than a zero-sized one that
+/// hit-testing would have to special-case.
+fn non_empty(rect: &Rect) -> bool {
+    rect.width > 0 && rect.height > 0
 }
 
 /// A rectangle `tenths` of the area's size, centred in it.
@@ -399,9 +343,3 @@ fn floating(area: Rect) -> Rect {
     )
 }
 
-/// Whether a floating rectangle has room to be drawn at all. A terminal too
-/// small for a popup gets no popup rather than a zero-sized one that
-/// hit-testing would have to special-case.
-fn non_empty(rect: &Rect) -> bool {
-    rect.width > 0 && rect.height > 0
-}

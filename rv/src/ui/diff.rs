@@ -22,7 +22,7 @@ use ratatui::text::Text;
 use ratatui::widgets::Paragraph;
 use rv_core::diff::DiffSource;
 use rv_core::diff::FileDiff;
-use rv_core::highlight::Highlights;
+use rv_core::highlight;
 
 use super::BORDER_ROWS;
 use super::BOX_PADDING;
@@ -86,7 +86,7 @@ pub(super) fn draw_diff(frame: &mut Frame, app: &App, area: Rect) {
     let highlighting = Highlighting::of(app);
     // The path's own answer, not the cache's: see `NO_GRAMMAR`.
     let block = pane(
-        title(diff, Highlights::language_of(&diff.path)),
+        title(diff, highlight::language_of(&diff.path)),
         focused,
     );
     let text = body(app, highlighting, diff, area);

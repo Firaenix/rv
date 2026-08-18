@@ -322,10 +322,17 @@ outright now, before the random ones, and the receipt is a receipt.
 
 ## In progress
 
-**Six source files remain over the 400-line rule** — `rv-core`'s highlight,
-markdown, diff, store and vcs modules, and `rv/src/tree.rs`. They are split as
-they are touched rather than in one sweep, which is the ruling this session was
-given; the four largest files in the project have been.
+**Three source files remain over the 400-line rule**: `rv-core`'s markdown, diff
+and vcs modules, none of them touched since the rule was written. Everything else
+is under it — every file in the `rv` crate, and `rv-core`'s highlight and store —
+split as it was touched, which is the ruling this session was given.
+
+One thing that split found rather than fixed: a `language_of` had been written
+twice, once as a free function for the symbol index and once as a method for the
+pane title, over one grammar table. The second was mine, added an hour earlier
+without looking for the first. The module's own doc comment warns that a second
+detection table would drift; a second *function* over one table is the same
+mistake wearing a smaller hat.
 
 **Property-based test suites.** `rstest` and `proptest` across five modules, with
 each property required to demonstrate that it can fail: the markdown round-trip
