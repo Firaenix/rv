@@ -320,6 +320,56 @@ outright now, before the random ones, and the receipt is a receipt.
 
 ---
 
+## The tool closes its own loop
+
+The stretch that turned rv from a reviewer into a review *system*, and ended
+with rv working through its own 31-comment review.
+
+**States became real.** `outdated` had been specified since milestone 1 and
+derived by nothing — `anchor::resolve` was written, tested, and called by
+no one, so `rv status` claimed twenty-two open comments where fourteen were
+stale. It is now derived on every load, in the TUI, `status` and `render`
+alike, because two commands reporting different states for one review is worse
+than either being wrong. `resolve` and `abandon` record who settled a comment;
+the export's protocol block stopped forbidding what the tool now attributes.
+
+**Queries stopped writing.** Every invocation used to pass through
+`session::build`, so `rv status --json` rewrote `session.toml` and its
+`started_at` on each run. `session::read` resolves the same range and writes
+nothing; only opening the TUI records a session. The refusal-to-re-point remedy
+was implemented and withdrawn — three tests that legitimately narrow a
+commented range failed, and they were right to.
+
+**The keystroke stopped waiting.** Measured: difftastic is a flat ~26 ms
+process spawn per file regardless of size; tree-sitter is the part that scales
+(165 ms at 128k lines); the in-process engine answers in 0.2 ms. Both moved off
+the paint path — highlights parse per blob on worker threads, and the
+structural diff refines a fast diff through a single-slot worker where a
+request arriving replaces the one waiting, so scrolling ten files costs one
+spawn. The swap keeps the reviewer's place by nearest surviving source line,
+because most of what the fast diff shows is context the structural one omits.
+
+**The agent loop.** `rv comment`, `rv resolve`, `rv abandon` — the CLI half the
+TUI already had, built on the same functions (`session::save_comment` is the
+one construction path, `session::owning_change` the one attribution rule) so
+the two cannot drift. Two skills teach the roles: `rv-reviewer` writes anchored
+comments; `rv-worker` polls, fixes, replies through the export at column 0, and
+ticks off with attribution. `R` refreshes the TUI against the repository as it
+now stands — re-asking the original `--from`/`--to`, so `@` means now — which
+is how a human sees what the agents did. A nix flake ships the binary with
+difftastic wrapped onto its PATH.
+
+**Running the loop on rv's own review found four bugs in the loop's tooling**:
+comments attributed to the empty working-copy change, a second
+comment-construction path already diverging, `rv status` counting comments the
+range cannot show, and `rv resolve` unable to tick off a comment whose file had
+left the range. One reviewer finding was *refuted* by building the accused
+commit in a detached worktree — the claimed compile failure was a mid-edit
+shared working copy, the same trap this document already records. Final state:
+28 resolved, 3 abandoned, 0 open, every settlement labelled with who made it.
+
+---
+
 ## In progress
 
 **Three source files remain over the 400-line rule**: `rv-core`'s markdown, diff
