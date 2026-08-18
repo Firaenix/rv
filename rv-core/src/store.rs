@@ -181,6 +181,12 @@ impl Store {
         Ok(store)
     }
 
+    /// The repo root this store was opened at.
+    #[must_use]
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
     /// Appends [`EXCLUDE_LINE`] to `.git/info/exclude` unless it is already
     /// there, creating `.git/info/` and the `exclude` file itself if either
     /// is missing. Returns `true` if it added the line, `false` if the line

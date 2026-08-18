@@ -245,6 +245,13 @@ pub const BINDINGS: &[Binding] = &[
         command: Command::CycleSort,
     },
     Binding {
+        keys: "R",
+        group: Group::View,
+        what: "refresh the review",
+        codes: &[KeyCode::Char('R')],
+        command: Command::Refresh,
+    },
+    Binding {
         keys: "i",
         group: Group::View,
         what: "change details",
@@ -297,6 +304,7 @@ pub(super) enum Command {
     ToggleTree,
     CycleSort,
     Info,
+    Refresh,
     Help,
     Quit,
 }
@@ -317,6 +325,7 @@ impl App {
             | Command::Wider
             | Command::Help
             | Command::ToggleSidebar
+            | Command::Refresh
             // A review with no comments still has a session to export.
             | Command::Export
             | Command::Quit => true,

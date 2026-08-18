@@ -130,5 +130,8 @@ outdated.
   with the working copy, so usually they just re-poll).
 - If `rv status --json` reports `degraded_base: true`, the range is the whole
   history, not a branch — flag it rather than "fixing" 200 files.
+- A human with the TUI open does not see your comments or resolutions until
+  they press `R` (refresh) — tell them to, or just keep working; the export and
+  the store are already correct.
 - Your resolutions render distinctly (`resolved by agent`) in the TUI. That is
   by design; the human's verification pass depends on it.

@@ -50,6 +50,11 @@ pub struct Review {
     pub store: Store,
     pub session: Session,
     pub files: Vec<FileChange>,
+    /// The range as it was asked for — `--from` and `--to`, unresolved — so a
+    /// refresh re-asks the same question. `@` must resolve to where `@` is *now*,
+    /// which is the whole point of refreshing; re-using the resolved commits
+    /// would pin the review to the moment it was opened.
+    pub asked: (Option<String>, Option<String>),
 }
 
 /// Resolves `base..head` in the workspace at `repo_root` into a [`Review`].
@@ -172,6 +177,7 @@ fn resolve(repo_root: &Path, base: Option<&str>, head: Option<&str>) -> Result<R
         store,
         session,
         files,
+        asked: (base.map(str::to_owned), head.map(str::to_owned)),
     })
 }
 

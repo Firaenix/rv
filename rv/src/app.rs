@@ -38,6 +38,7 @@ mod mouse;
 mod navigate;
 mod paint;
 mod query;
+mod refresh;
 mod run;
 mod settle;
 mod sidebar;

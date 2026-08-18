@@ -259,3 +259,85 @@ fn the_swap_keeps_the_line_you_were_on() {
         "the swap moved the cursor away from line {before}, to {landed}"
     );
 }
+
+/// `R` re-resolves the range against the repository as it now stands.
+///
+/// jj-lib loads a repo at an operation, so the review opened at launch is a
+/// snapshot: an agent pushing while the reviewer is open leaves the pane showing
+/// the world as it was. The refresh re-asks the *original question* — `@`
+/// resolves to wherever `@` is now — and keeps the reviewer's preferences and,
+/// where it survives, their file.
+#[test]
+fn r_picks_up_changes_made_since_the_review_was_opened() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    let before = app.files().len();
+    app.on_key(KeyCode::Char('t')).expect("a preference to keep");
+
+    // The world moves underneath the open reviewer.
+    workspace.write("late.rs", "fn late() {}\n");
+    workspace.jj(&["describe", "-m", "landed while reviewing"]);
+    workspace.jj(&["new"]);
+
+    assert_eq!(app.files().len(), before, "the snapshot moved by itself");
+    app.on_key(KeyCode::Char('R')).expect("refresh");
+
+    assert_eq!(
+        app.files().len(),
+        before + 1,
+        "the refresh did not pick up the new file"
+    );
+    assert!(
+        app.files().iter().any(|file| file.path == "late.rs"),
+        "the new file is not in the refreshed list"
+    );
+    assert!(app.tree_view(), "the refresh dropped a view preference");
+    assert!(
+        app.status().contains("refreshed"),
+        "the refresh does not say it happened: {:?}",
+        app.status()
+    );
+}
+
+/// The reviewer's file survives the refresh where it still exists — by path,
+/// because a rebased stack lists files in a new order.
+#[test]
+fn a_refresh_keeps_the_file_you_were_reading() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    app.on_key(KeyCode::Char(']')).expect("onto b.rs");
+    assert_eq!(app.files()[app.file_index()].path, "b.rs");
+
+    // A new file that sorts first, so keeping the *index* would land on it.
+    workspace.write("a0.rs", "fn a0() {}\n");
+    workspace.jj(&["describe", "-m", "landed while reviewing"]);
+    workspace.jj(&["new"]);
+
+    app.on_key(KeyCode::Char('R')).expect("refresh");
+    assert_eq!(
+        app.files()[app.file_index()].path,
+        "b.rs",
+        "the refresh moved the reviewer off the file they were reading"
+    );
+}
+
+/// Comments written by another process — a reviewer agent, via `rv comment` —
+/// arrive with the refresh, which is the worker half of the agent loop.
+#[test]
+fn a_refresh_picks_up_comments_another_process_wrote() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    assert_eq!(app.comments().len(), 0);
+
+    // As `rv comment` writes it, through the same store.
+    let review = rv::session::read(workspace.root(), None, None).expect("read the range");
+    rv::session::add_comment(&review, "a.rs", rv_core::model::Side::Right, 2, "from outside")
+        .expect("save a comment");
+
+    app.on_key(KeyCode::Char('R')).expect("refresh");
+    assert_eq!(
+        app.comments().len(),
+        1,
+        "the comment another process wrote is not visible after a refresh"
+    );
+}

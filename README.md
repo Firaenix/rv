@@ -65,6 +65,17 @@ Run `rv` from the **workspace root** — the directory holding `.jj/`. See
 | `rv --repo <path> …` | Reviews the workspace at `<path>` instead of the current directory |
 | `rv --no-difft …` | Diffs with the in-process engine instead of difftastic: line-based rather than structural, with context lines. What a reviewer with no `difft` on `PATH` sees |
 
+### Nix
+
+```sh
+nix run .            # run rv without installing anything
+nix build            # ./result/bin/rv, with difftastic wrapped onto its PATH
+nix develop          # a shell with cargo, jj, difftastic and the rust toolchain
+```
+
+The packaged binary carries its own difftastic, so structural diffs work even
+where `difft` is not installed.
+
 `--to` overrides the positional target when both are given. That is also the
 escape hatch for the one name collision: a bookmark literally called `render` or
 `status` has to be passed as `rv --to status`, since subcommands share the first
@@ -185,6 +196,7 @@ everywhere.
 | `r` | Resolve a comment — press it again to reopen |
 | `a` | Abandon a comment, dropping it without fixing it — again to reopen |
 | `s` | Fold a comment box away, or a directory in the file list — again to unfold |
+| `R` | Refresh: re-resolve the range against the repository as it now stands — after a push, a rebase, or a bookmark move |
 | `i` | Put the change details away, or bring them back. They show themselves whenever a change is highlighted in the **Commits** tab: both ids, the whole description, and every file it touched |
 | `z` | Hide the sidebar, or bring it back — the `‹` in the bottom-left corner does the same by pointer |
 | `e` | Export the review to `.review/REVIEW-FEEDBACK.md`, same as `rv render` |

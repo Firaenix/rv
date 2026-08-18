@@ -138,6 +138,7 @@ impl App {
             Command::ToggleTree => self.toggle_tree(),
             Command::CycleSort => self.cycle_sort(),
             Command::Info => self.toggle_info(),
+            Command::Refresh => self.refresh()?,
             Command::Help => {
                 self.help_open = true;
                 // Opened at the top, always: the geometry it was last scrolled
