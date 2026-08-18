@@ -83,24 +83,63 @@ inside a string literal blanked the rest of that physical line, hiding any
 violation after it — which a re-reviewer caught by reading the stripper's state
 machine.
 
-### What the reviews got wrong
+### A bug that never existed, and how it got into this document
 
-Worth recording, because it is the argument for the layer that caught it.
+The most instructive thing that happened all evening is a mistake, and it is
+recorded here in full because the failure mode is more valuable than the fix.
 
-Two independent reviewers read `Store::append_comment` and stated it upserts by
-`id`. It did not: it matched on `change_id`. Every comment in a session inherits one
-`change_id`, so **each comment silently overwrote the previous one and the store
-held exactly one comment.** The covering test used a comment with the same `id`
-*and* the same `change_id`, so it passed under either behaviour — a test that could
-not distinguish the two things it existed to pin. `fold_replies` was a second
-victim: folding an LLM's reply would have collapsed the file to a single entry.
+For several hours this document, the session ledger, and a report to the project's
+owner all stated that `Store::append_comment` upserted on `change_id` rather than
+`id` — that every comment in a session shared one `change_id`, so each new comment
+silently overwrote the last and the store held exactly one. It was described as a
+severe shipped defect that three review passes had read past.
 
-It was found twice on the same evening, independently: by reading the file while
-planning a later feature, and by rv itself during the dogfood session, where nine
-saves each reported success and one survived on disk. The property test written
-shortly afterwards — *`comments()` equals the upsert-by-id reduction of the append
-sequence* — catches it directly, which is the case for property-based testing in
-one sentence.
+**None of it was true.** Two commands settle it: the commit that supposedly fixed
+the bug adds six lines to `store.rs`, all of them doc comment, and
+`git log -S 'existing.change_id == comment.change_id'` over the file's whole
+history returns nothing. That predicate was never committed. The `id` key has been
+correct since the store was written.
+
+The mechanism is worth understanding, because nobody involved was careless in an
+obvious way. Five property-test suites were being written in parallel, and every
+author had been told — correctly — to prove each property could fail by
+temporarily breaking the source, then reverting. The natural mutation for a
+property asserting *"`comments()` equals the upsert-by-id reduction of the append
+sequence"* is to change the key from `id` to `change_id`. While that experiment was
+live in the working copy, the coordinator opened `store.rs` to plan an unrelated
+feature, saw the mutated line, and read a deliberate experiment as a shipped
+defect.
+
+From there it propagated the way a wrong premise does when everyone downstream is
+competent. A fix agent was dispatched with the finding already framed as fact; it
+found the store suite genuinely red (the mutation was still live), "fixed" it, and
+reported a real failing-test transcript that meant nothing. A dogfood session
+running against a binary built hours earlier appeared to corroborate it, which was
+taken as decisive proof — the reasoning being that an old binary cannot contain a
+new mutation. That reasoning was sound; the observation it rested on was not, and
+it went unchecked because it agreed with what everyone already believed.
+
+It was caught by rv, reviewing its own history document, by an agent that checked
+the claim against `git log` instead of against the surrounding prose.
+
+Three things generalize:
+
+- **A working copy shared with agents licensed to break the source is not a
+  readable source of truth.** Anything read from it during that window needs to be
+  confirmed against committed history before it becomes a finding.
+- **Corroboration between agents is not independent when they share a premise.**
+  Three separate confirmations of this bug all traced to the same mutated file.
+- **The instruction "do not fabricate findings — check the claim against the code"
+  was issued to every agent in this project, repeatedly, and the coordinator was
+  the one who broke it.** Process discipline applies hardest to whoever is writing
+  the summary, because their errors inherit everyone else's credibility.
+
+What survives from the episode is genuinely useful: the invariant is now pinned by
+a test that distinguishes the two behaviours (the old covering test used the same
+`id` *and* the same `change_id`, so it could not), and the store property suite was
+later measured to kill that exact mutation in five of five runs. The bug was
+imaginary. The test that would have caught it is real, and so is the reason it did
+not exist before.
 
 ---
 
