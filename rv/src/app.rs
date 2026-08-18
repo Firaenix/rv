@@ -24,6 +24,7 @@
 mod alerts;
 mod anchor;
 mod bindings;
+mod changes;
 mod comment;
 mod commits;
 mod delete;
@@ -45,7 +46,7 @@ mod status;
 mod symbols;
 
 pub use alerts::Alert;
-pub use commits::ChangeInfo;
+pub use changes::ChangeInfo;
 
 pub use anchor::anchored_side;
 pub use bindings::BINDINGS;
