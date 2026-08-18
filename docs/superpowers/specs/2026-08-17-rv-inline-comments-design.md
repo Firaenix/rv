@@ -13,8 +13,15 @@ and no way to remove a comment you regret. This design closes that: comments
 render inline in the diff, the two panes are navigable with the arrow keys, and
 a comment can be deleted.
 
-Everything here is TUI and store surface. No change to the markdown format, the
-anchor model, or the `.review/` on-disk layout.
+Everything here is TUI and store surface. No change to the markdown format.
+
+**Storage:** this document was written before
+`2026-08-17-rv-storage-model-design.md`, which supersedes it on every storage
+question. That spec is the authority: `.review/session.toml` becomes the one file
+rv maintains, holding the comments alongside the session scope; `comments.json`
+and `snapshots/` retire; `REVIEW-FEEDBACK.md` becomes an export written only by
+`rv render`; and `Anchor` gains `context_start`. Where this document and that one
+disagree, that one wins. The sections below have been reconciled with it.
 
 ## 2. Requirements
 
@@ -229,15 +236,21 @@ One new method:
 pub fn remove_comment(&self, id: &str) -> Result<bool, Error>
 ```
 
-Returns whether a comment was removed. It rewrites `comments.json` through the
-existing `write_atomic` helper and removes `snapshots/<id>`. Ordering matters and
-mirrors `append_comment`'s reasoning: **`comments.json` is written first, then
-the snapshot file is removed.** A crash between the two leaves an orphaned
-snapshot — inert, and already the documented failure mode — rather than a comment
-whose snapshot is missing.
+Returns whether a comment was removed, and rewrites the review file through the
+existing `write_atomic` helper.
 
-After a delete, the markdown is rewritten through `session::write_markdown`, so
-replies are folded first and a deleted comment's reply is dropped with it.
+Under the storage spec that file is `.review/session.toml`, which holds the
+comments, so removal is a single atomic rewrite of one file — there is no
+snapshot to delete and no cross-file ordering rule to honour. (Until that
+migration lands, the same method rewrites `comments.json` and removes
+`snapshots/<id>`, writing the comment list first so a crash leaves an inert
+orphaned snapshot rather than a comment whose snapshot is missing. That ordering
+rule disappears with the migration, which is one of the reasons for it.)
+
+**A delete does not rewrite `REVIEW-FEEDBACK.md`.** The markdown is an export
+produced by `rv render`, which ingests replies before re-exporting. A delete
+therefore leaves the export stale until the next render, and staleness is
+reported rather than hidden — see the storage spec's §5.
 
 ## 7. Testing
 
