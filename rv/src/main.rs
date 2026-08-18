@@ -31,6 +31,7 @@ use anyhow::Result;
 use clap::Parser;
 use clap::Subcommand;
 use rv::app::App;
+use rv::app::DiffEngine;
 use rv::session;
 use rv_core::markdown;
 use rv::stale;
@@ -63,6 +64,14 @@ struct Cli {
     /// Workspace root to review [default: the current directory].
     #[arg(long, value_name = "PATH")]
     repo: Option<PathBuf>,
+
+    /// Diff with the in-process engine instead of difftastic.
+    ///
+    /// What a reviewer with no `difft` on `PATH` sees: line-based rather than
+    /// structural, with context lines around each change. Useful when difftastic
+    /// is slow on a large file, or to check what the fallback looks like.
+    #[arg(long)]
+    no_difft: bool,
 
     #[command(subcommand)]
     command: Option<Command>,
@@ -107,11 +116,14 @@ fn run() -> Result<()> {
     // over the same range: `status` reports it and `render` writes only the
     // export, and neither re-points `session.toml`.
     match cli.command {
-        None => App::run(session::build(
-            &repo_root,
-            cli.from.as_deref(),
-            head.as_deref(),
-        )?),
+        None => App::run(
+            session::build(&repo_root, cli.from.as_deref(), head.as_deref())?,
+            if cli.no_difft {
+                DiffEngine::Fallback
+            } else {
+                DiffEngine::Auto
+            },
+        ),
         Some(Command::Render) => render(&session::read(
             &repo_root,
             cli.from.as_deref(),

@@ -61,6 +61,7 @@ Run `rv` from the **workspace root** — the directory holding `.jj/`. See
 | `rv status` | Prints the range, its changes, its changed files and its comment counts |
 | `rv status --json` | The same report as JSON, for scripting |
 | `rv --repo <path> …` | Reviews the workspace at `<path>` instead of the current directory |
+| `rv --no-difft …` | Diffs with the in-process engine instead of difftastic: line-based rather than structural, with context lines. What a reviewer with no `difft` on `PATH` sees |
 
 `--to` overrides the positional target when both are given. That is also the
 escape hatch for the one name collision: a bookmark literally called `render` or

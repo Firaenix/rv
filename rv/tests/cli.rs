@@ -395,3 +395,27 @@ fn a_degraded_trunk_is_named_rather_than_implied() {
         "the export does not name the degradation:\n{document}"
     );
 }
+
+/// `--no-difft` is a capability a reviewer has, not a hook the tests reach
+/// through.
+///
+/// The engine used to be selectable only by a constructor named after a fallback,
+/// whose one caller was a test file — so the thing a user with no `difft` sees was
+/// unreachable from the command line. The flag is now in `--help`, which is where
+/// a documented capability lives.
+#[test]
+fn the_fallback_engine_is_a_documented_flag() {
+    let workspace = Fixture::new();
+
+    let help = workspace.rv(&["--help"]);
+    let text = String::from_utf8_lossy(&help.stdout);
+    assert!(
+        text.contains("--no-difft"),
+        "the flag is not documented: {}",
+        streams(&help)
+    );
+
+    // And it is accepted rather than merely listed.
+    let output = workspace.rv(&["--no-difft", "status"]);
+    assert!(output.status.success(), "{}", streams(&output));
+}

@@ -2,6 +2,7 @@
 
 use proptest::prelude::*;
 use rv::app::App;
+use rv::app::DiffEngine;
 use rv::session;
 use rv_core::model::ChangeKind;
 use rv_core::model::FileChange;
@@ -90,7 +91,7 @@ fn a_blob_that_cannot_be_read_is_an_alert_rather_than_a_silent_zero() {
         binary: false,
     });
 
-    let app = App::new(review).expect("open the reviewer");
+    let app = App::open(review, DiffEngine::Auto).expect("open the reviewer");
     let messages: Vec<&str> = app
         .alerts()
         .iter()

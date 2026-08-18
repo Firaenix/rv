@@ -29,6 +29,7 @@ use std::time::Instant;
 
 use super::Action;
 use super::App;
+use super::DiffEngine;
 use crate::session::Review;
 use crate::ui;
 
@@ -48,8 +49,8 @@ impl App {
     /// than into a half-initialized screen. `try_init` rather than `init` for
     /// the same reason: an `rv` that was piped somewhere has no terminal to
     /// take over, and that is a sentence too, not a panic.
-    pub fn run(review: Review) -> Result<()> {
-        let mut app = Self::new(review)?;
+    pub fn run(review: Review, engine: DiffEngine) -> Result<()> {
+        let mut app = Self::open(review, engine)?;
 
         // Before `try_init`, which chains its own restoring hook in front of
         // whatever it finds.

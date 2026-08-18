@@ -44,6 +44,7 @@ mod status;
 mod symbols;
 
 pub use alerts::Alert;
+
 pub use anchor::anchored_side;
 pub use bindings::BINDINGS;
 pub use bindings::Binding;
@@ -196,8 +197,8 @@ pub struct App {
     mode: Mode,
     buffer: String,
     status: String,
-    /// Set to skip difftastic for every file in this review — see
-    /// [`App::with_fallback_diffs`].
+    /// Set by [`DiffEngine::Fallback`]: skip difftastic for every file in this
+    /// review.
     force_fallback: bool,
     /// Blobs whose highlight spans are being parsed on another thread, and the
     /// channel they come back on — see [`paint`].
@@ -231,29 +232,43 @@ pub struct App {
     commits: commits::Commits,
 }
 
+/// Which engine a review's diffs come from.
+///
+/// A parameter rather than two constructors, one of them named after a fallback.
+/// It is *configuration*: it is consulted on every `load_selected`, not per call
+/// the way `diff::compute_with`'s flag is, and a value stored on the app and read
+/// later is a setting whatever it is called.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum DiffEngine {
+    /// difftastic where it is on `PATH`, the in-process engine where it is not.
+    #[default]
+    Auto,
+    /// The `similar` fallback, always.
+    ///
+    /// This is the diff a user with no `difft` gets, and it is a distinct set of
+    /// branches rather than a degraded copy: only it carries
+    /// [`LineKind::Context`] lines and a [`rv_core::diff::DiffSource::Similar`]
+    /// label. `rv --no-difft` selects it, so it is a capability a reviewer has
+    /// rather than a hook the tests reach through.
+    Fallback,
+}
+
 impl App {
     /// Opens `review` in the reviewer, loading the first file's diff.
     ///
-    /// Which diff engine each file goes through is left to [`diff::compute`],
-    /// which honours `RV_NO_DIFFT`.
-    pub fn new(review: Review) -> Result<Self> {
-        Self::open(review, false)
-    }
-
-    /// Opens `review` with difftastic bypassed: every file's diff comes from
-    /// the `similar` fallback.
+    /// # Why the engine is a parameter and not an environment variable
     ///
-    /// That is the diff a user with no `difft` on `PATH` gets, and the only one
-    /// carrying [`LineKind::Context`] lines and a
-    /// [`rv_core::diff::DiffSource::Similar`] label — a distinct set of
-    /// branches rather than a degraded copy. Per-`App` rather than through
-    /// `RV_NO_DIFFT`, which is process-wide and would swap the engine under
-    /// every other review in the process.
-    pub fn with_fallback_diffs(review: Review) -> Result<Self> {
-        Self::open(review, true)
+    /// `RV_NO_DIFFT` exists and `diff::compute` honours it, but a *test* cannot
+    /// use it: `std::env::set_var` is unsafe in edition 2024 precisely because it
+    /// races any concurrent `getenv`, and cargo runs integration tests on many
+    /// threads. The alternative this replaces is therefore a data race, not an
+    /// inconvenience — which is the argument for the parameter, and a stronger one
+    /// than the process-wide-and-impolite reasoning that used to stand here.
+    pub fn open(review: Review, engine: DiffEngine) -> Result<Self> {
+        Self::build(review, engine == DiffEngine::Fallback)
     }
 
-    fn open(review: Review, force_fallback: bool) -> Result<Self> {
+    fn build(review: Review, force_fallback: bool) -> Result<Self> {
         let diffs = vec![None; review.files.len()];
         // Read before the first diff is computed: a reviewer who quit halfway
         // through yesterday opens on the notes they already made.

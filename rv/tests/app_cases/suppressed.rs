@@ -2,6 +2,7 @@
 
 use crossterm::event::KeyCode;
 use rv::app::App;
+use rv::app::DiffEngine;
 use rv::app::Mode;
 use rv::session;
 use rv_core::anchor;
@@ -193,7 +194,7 @@ fn a_review_with_no_changes_refuses_to_attribute_a_comment() {
     );
     review.session.changes.clear();
 
-    let mut app = App::new(review).expect("open the reviewer");
+    let mut app = App::open(review, DiffEngine::Auto).expect("open the reviewer");
     assert!(!lines(&app).is_empty(), "the fixture has nothing to select");
 
     // The refusal is at Enter, not at `c`: there *is* a line to anchor to, and

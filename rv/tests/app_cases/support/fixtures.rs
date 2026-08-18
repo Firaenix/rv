@@ -3,6 +3,7 @@
 use crossterm::event::KeyCode;
 use rstest::fixture;
 use rv::app::App;
+use rv::app::DiffEngine;
 use rv::app::Focus;
 use rv::app::SidebarTab;
 use rv::session;
@@ -194,7 +195,7 @@ impl Fixture {
     /// change below the one every fixture above puts its head state in.
     pub fn app(&self) -> App {
         let review = session::build(self.root(), Some("@--"), None).expect("build the review");
-        App::new(review).expect("open the reviewer")
+        App::open(review, DiffEngine::Auto).expect("open the reviewer")
     }
 
     /// The reviewer over the same range, with difftastic bypassed: every diff
@@ -205,7 +206,7 @@ impl Fixture {
     /// silently swap the diff engine under every other property in this binary.
     pub fn fallback_app(&self) -> App {
         let review = session::build(self.root(), Some("@--"), None).expect("build the review");
-        App::with_fallback_diffs(review).expect("open the reviewer")
+        App::open(review, DiffEngine::Fallback).expect("open the reviewer")
     }
 
     /// A store handle that shares nothing with the app's own, so an assertion
