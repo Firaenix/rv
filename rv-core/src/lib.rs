@@ -4,6 +4,7 @@
 
 pub mod anchor;
 pub mod diff;
+pub mod highlight;
 pub mod markdown;
 pub mod model;
 pub mod store;

@@ -18,6 +18,13 @@ similar.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
 toml.workspace = true
+# Syntax highlighting is produced here, as plain data. The grammars and the
+# highlighter live in this crate; the mapping from a capture class to a
+# terminal colour lives in `rv`, so this crate stays terminal-free.
+# `tree-sitter` itself is not a direct dependency: nothing here names a
+# `tree_sitter` type, so it arrives once, transitively, under the highlighter.
+tree-sitter-highlight.workspace = true
+tree-sitter-rust.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true

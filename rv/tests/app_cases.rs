@@ -57,8 +57,6 @@ use proptest::test_runner::TestCaseResult;
 use proptest::test_runner::TestRunner;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
-use ratatui::layout::Constraint;
-use ratatui::layout::Layout;
 use ratatui::layout::Rect;
 use ratatui::style::Modifier;
 use rstest::fixture;
@@ -69,6 +67,9 @@ use rv::app::Focus;
 use rv::app::Mode;
 use rv::app::SidebarTab;
 use rv::app::anchored_side;
+use rv::layout::Chrome;
+use rv::layout::Split;
+use rv::layout::layout;
 use rv::session;
 use rv::ui;
 use rv_core::anchor;
@@ -3133,15 +3134,21 @@ fn a_review_with_no_changes_refuses_to_attribute_a_comment() {
 // Rendering
 // ---------------------------------------------------------------------------
 
-/// The geometry `ui::draw` lays out, recomputed here only to know *where* to
-/// look in the buffer. Nothing about the layout is under test.
+/// The geometry `ui::draw` lays out, asked of the same function it paints
+/// from, only to know *where* to look in the buffer. Nothing about the layout
+/// is under test here — `rv/tests/layout.rs` owns that.
 fn diff_area(width: u16, height: u16, mode: Mode) -> Rect {
-    let bar = if mode == Mode::Browse { 1 } else { 3 };
-    let [_, panes] = Layout::vertical([Constraint::Length(bar), Constraint::Min(0)])
-        .areas(Rect::new(0, 0, width, height));
-    let [_, diff] =
-        Layout::horizontal([Constraint::Percentage(30), Constraint::Percentage(70)]).areas(panes);
-    diff
+    let bar_rows = if mode == Mode::Browse { 1 } else { 3 };
+    layout(
+        Rect::new(0, 0, width, height),
+        Split::default(),
+        Chrome {
+            bar_rows,
+            help_open: false,
+            toast: false,
+        },
+    )
+    .diff
 }
 
 fn render(app: &App, width: u16, height: u16) -> Terminal<TestBackend> {

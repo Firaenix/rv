@@ -236,6 +236,12 @@ fn buffer_text(buffer: &Buffer) -> String {
     rows_of(buffer).join("\n")
 }
 
+/// The last row of the frame, which is where the bar is drawn — see
+/// [`rv::layout`], which puts it under both panes rather than over them.
+fn last_row(buffer: &Buffer) -> String {
+    rows_of(buffer).pop().expect("a frame has rows")
+}
+
 /// Where `needle` first appears in the frame, scanning rows top to bottom.
 fn find_char(buffer: &Buffer, needle: char) -> Option<(u16, u16)> {
     let wanted = needle.to_string();
@@ -1942,8 +1948,9 @@ fn only_the_focused_panes_border_is_bold() {
     let workspace = Fixture::new();
     let mut app = workspace.app();
 
-    // The bar takes row 0, so both panes' top-left corners sit on row 1: the
-    // sidebar's at column 0 and the diff's at 30% of 100.
+    // The bar is along the bottom, so both panes start at row 0 and row 1 is a
+    // border cell of each: the sidebar's left edge at column 0, and the diff's
+    // at column 30 — 30% of 100, less the divider column the sidebar gives up.
     let bold = |app: &App| {
         let buffer = frame_at(app, 100, 24);
         (
@@ -2656,13 +2663,14 @@ fn a_status_line_too_long_for_the_terminal_is_marked() {
     let app = workspace.app();
 
     // The help text is 68 columns, which a 40-column terminal cannot show.
-    let narrow = rows_of(&frame_at(&app, 40, 24))[0].clone();
+    // The bar is the *last* row of the frame — see `rv::layout`.
+    let narrow = last_row(&frame_at(&app, 40, 24));
     assert!(
         narrow.ends_with('…'),
         "the status line was cut silently: {narrow:?}"
     );
 
-    let wide = rows_of(&frame_at(&app, 100, 24))[0].clone();
+    let wide = last_row(&frame_at(&app, 100, 24));
     assert!(
         !wide.contains('…') && wide.contains("q quit"),
         "a status line with room to spare was marked anyway: {wide:?}"

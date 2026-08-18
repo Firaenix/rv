@@ -6,19 +6,26 @@
 //! why `rv/tests/app.rs` can assert on a rendered frame with a `TestBackend`
 //! and no terminal at all.
 //!
-//! The layout is a bar over two panes:
+//! The layout is two panes over a bar:
 //!
 //! ```text
-//! ┌────────────────────────────────────────────────┐
+//! ┌──────────────┬┬────────────────────────────────┐
+//! │ sidebar (30%)││ diff (70%)                     │
+//! ├──────────────┴┴────────────────────────────────┤
 //! │ status (1 row) — or the comment box (3 rows)   │
-//! ├──────────────┬─────────────────────────────────┤
-//! │ sidebar (30%)│ diff (70%)                      │
-//! └──────────────┴─────────────────────────────────┘
+//! └────────────────────────────────────────────────┘
 //! ```
 //!
 //! The bar carries the status line while browsing and becomes the comment box
 //! while typing, rather than adding a fourth region: the two are never needed
 //! at once, and a review is worth every row the diff can have.
+//!
+//! **This module computes no rectangle of its own.** Every `Rect` comes from
+//! [`crate::layout`], which hit-testing reads from too, so a click cannot land
+//! somewhere other than what was drawn. The one thing this module decides about
+//! the geometry is how many rows the bar wants, which it hands over as a
+//! [`Chrome`] — see [`crate::layout::layout`] for why that is a number rather
+//! than a [`Mode`].
 //!
 //! # Comment boxes
 //!
@@ -50,8 +57,6 @@
 //! are still waiting on somebody.
 
 use ratatui::Frame;
-use ratatui::layout::Constraint;
-use ratatui::layout::Layout;
 use ratatui::layout::Rect;
 use ratatui::style::Color;
 use ratatui::style::Modifier;
@@ -77,6 +82,9 @@ use crate::app::App;
 use crate::app::Focus;
 use crate::app::Mode;
 use crate::app::SidebarTab;
+use crate::layout::Chrome;
+use crate::layout::Split;
+use crate::layout::layout;
 use crate::rows::BodyKind;
 use crate::rows::Plan;
 use crate::rows::Row;
@@ -131,21 +139,33 @@ const SUPPRESSED_NOTE: &str = "no semantic change — the difference is not visi
 const NO_COMMENTS_YET: &str = "no comments yet";
 
 /// Paints the whole reviewer.
+///
+/// Every rectangle comes from [`layout`]; nothing is computed here. That is
+/// what makes a click land on what the reviewer can see — [`crate::layout::hit`]
+/// reads the same `Layout` this paints from.
 pub fn draw(frame: &mut Frame, app: &App) {
-    let bar_rows = match app.mode() {
-        // A confirmation is a question in the status line, not a box to type
-        // in, so it takes the same single row browsing does.
-        Mode::Browse | Mode::ConfirmDelete { .. } => 1,
-        Mode::Comment => COMMENT_ROWS,
-    };
-    let [bar, panes] =
-        Layout::vertical([Constraint::Length(bar_rows), Constraint::Min(0)]).areas(frame.area());
-    let [sidebar, diff] =
-        Layout::horizontal([Constraint::Percentage(30), Constraint::Percentage(70)]).areas(panes);
+    let rects = layout(frame.area(), Split::default(), chrome(app));
 
-    draw_bar(frame, app, bar);
-    draw_sidebar(frame, app, sidebar);
-    draw_diff(frame, app, diff);
+    draw_bar(frame, app, rects.bar);
+    draw_sidebar(frame, app, rects.sidebar);
+    draw_diff(frame, app, rects.diff);
+}
+
+/// What the layout needs to know about the frame being painted.
+///
+/// The bar's height is the only thing a [`Mode`] decides about the geometry, so
+/// it is the only thing that crosses over.
+fn chrome(app: &App) -> Chrome {
+    Chrome {
+        bar_rows: match app.mode() {
+            // A confirmation is a question in the status line, not a box to
+            // type in, so it takes the same single row browsing does.
+            Mode::Browse | Mode::ConfirmDelete { .. } => 1,
+            Mode::Comment => COMMENT_ROWS,
+        },
+        help_open: false,
+        toast: false,
+    }
 }
 
 /// The status line, or the comment being typed.
