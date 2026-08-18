@@ -26,6 +26,7 @@ mod anchor;
 mod bindings;
 mod comment;
 mod delete;
+mod export;
 mod fold;
 mod keys;
 mod mode;

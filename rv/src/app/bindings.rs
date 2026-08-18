@@ -175,6 +175,13 @@ pub const BINDINGS: &[Binding] = &[
         command: Command::Fold,
     },
     Binding {
+        keys: "e",
+        group: Group::Comment,
+        what: "export the review",
+        codes: &[KeyCode::Char('e')],
+        command: Command::Export,
+    },
+    Binding {
         keys: "<",
         group: Group::View,
         what: "narrower sidebar",
@@ -237,6 +244,7 @@ pub(super) enum Command {
     Delete,
     Resolve,
     Abandon,
+    Export,
     Fold,
     Narrower,
     Wider,
@@ -261,6 +269,8 @@ impl App {
             | Command::Narrower
             | Command::Wider
             | Command::Help
+            // A review with no comments still has a session to export.
+            | Command::Export
             | Command::Quit => true,
             Command::Forward => self.can_move_forward(),
             Command::Back => self.can_move_back(),

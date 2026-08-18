@@ -56,7 +56,13 @@ const BOTTOM_BORDER: u16 = 1;
 /// How much of the area the help popup covers, in tenths. Large enough to hold
 /// the keymap, small enough that the panes stay visible around it — a reviewer
 /// reading about a key wants to see what it would act on.
-const POPUP_TENTHS: u16 = 7;
+///
+/// Eight rather than seven since the keymap grew past twenty rows: at seven a
+/// 24-row terminal gave the popup fourteen content rows, which the groups could
+/// not be dealt into two columns without splitting one — so the popup fell back
+/// to a single scrolling column and hid the last three keys. A keymap you must
+/// scroll to read is a keymap you will not read.
+const POPUP_TENTHS: u16 = 8;
 
 /// The same for a toast, which is one line of text and its border.
 const TOAST_TENTHS: u16 = 6;
@@ -315,14 +321,27 @@ fn pane_row(rect: Rect, column: u16, row: u16) -> Option<usize> {
 
 /// A rectangle `tenths` of the area's size, centred in it.
 fn centered(area: Rect, tenths: u16) -> Rect {
-    let width = area.width * tenths / 10;
-    let height = area.height * tenths / 10;
+    // Trimmed to the area's own parity, so the margin left over is even and can
+    // be split in half exactly. Without it a popup one row off the area's parity
+    // sits a row higher than it sits low, which reads as a mis-drawn frame
+    // rather than as a rounding decision nobody made.
+    let width = even_margin(area.width, area.width * tenths / 10);
+    let height = even_margin(area.height, area.height * tenths / 10);
     Rect::new(
         area.x + (area.width - width) / 2,
         area.y + (area.height - height) / 2,
         width,
         height,
     )
+}
+
+/// `size`, less one where that is what makes `whole - size` even.
+fn even_margin(whole: u16, size: u16) -> u16 {
+    if (whole - size).is_multiple_of(2) {
+        size
+    } else {
+        size.saturating_sub(1)
+    }
 }
 
 /// Where an alert floats: top-centre, three rows tall, over whatever the panes

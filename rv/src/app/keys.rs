@@ -106,6 +106,7 @@ impl App {
             Command::Delete => self.begin_delete(),
             Command::Resolve => self.resolve_comment()?,
             Command::Abandon => self.abandon_comment()?,
+            Command::Export => self.export()?,
             Command::Fold => self.toggle_collapse(),
             // Focus-free, like `[` and `]`.
             Command::SwitchTab => self.switch_tab(),

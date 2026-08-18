@@ -25,6 +25,7 @@ mod comment_1;
 mod comment_2;
 mod cursor;
 mod delete;
+mod export;
 mod fold;
 mod keymap;
 mod mouse_1;
