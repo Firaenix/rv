@@ -49,6 +49,8 @@ use std::process::Command;
 use std::sync::OnceLock;
 
 use crossterm::event::KeyCode;
+use crossterm::event::KeyEvent;
+use crossterm::event::KeyModifiers;
 use proptest::prelude::*;
 use proptest::test_runner::TestCaseResult;
 use proptest::test_runner::TestRunner;
@@ -62,6 +64,7 @@ use rstest::fixture;
 use rstest::rstest;
 use rv::app::Action;
 use rv::app::App;
+use rv::app::Focus;
 use rv::app::Mode;
 use rv::app::anchored_side;
 use rv::session;
@@ -483,18 +486,41 @@ fn multi_app() -> App {
 /// `Esc` is a no-op in `Browse` and discards in `Comment`, so it is safe from
 /// any state; `[` past the left edge and `k` past the top are no-ops by
 /// design, which is what makes this a total reset rather than a guess.
+///
+/// Two things make this longer than the state it restores looks:
+///
+/// * **The focus is reset first.** `j` and `k` move the *file* selection while
+///   the sidebar has focus, so a walk that ended on the sidebar would leave the
+///   line loop below pressing `k` at the file list and never touching the line
+///   at all. `Left` twice then `Right` lands on `Focus::Diff` from any of the
+///   three, since `Left` leads out of every focus and `Right` stops at the
+///   diff.
+/// * **Every file's line is reset, not just the selected one.** The highlight
+///   is remembered per file, so returning to file 0 restores file 0's position
+///   and leaves the others where the last case left them — which would make the
+///   next case's `]` land somewhere it did not ask for.
 fn rewind(app: &mut App) {
     app.on_key(KeyCode::Esc).expect("leave comment mode");
+    app.on_key(KeyCode::Left).expect("out of the stack");
+    app.on_key(KeyCode::Left).expect("onto the sidebar");
+    app.on_key(KeyCode::Right).expect("back onto the diff");
     for _ in 0..=app.files().len() {
         app.on_key(KeyCode::Char('[')).expect("first file");
     }
-    // Bounded, not `while line_index() > 0`: this reset presses the very key
-    // `line_navigation_clamps_at_both_ends` exists to pin, and an unbounded
-    // loop would turn a regression in the `k`/`Up` binding into a silent hang
-    // of the whole binary instead of a failed assertion below.
-    for _ in 0..=lines(app).len() {
-        app.on_key(KeyCode::Char('k')).expect("first line");
+    for _ in 0..app.files().len() {
+        // Bounded, not `while line_index() > 0`: this reset presses the very
+        // key `line_navigation_clamps_at_both_ends` exists to pin, and an
+        // unbounded loop would turn a regression in the `k`/`Up` binding into a
+        // silent hang of the whole binary instead of a failed assertion below.
+        for _ in 0..=lines(app).len() {
+            app.on_key(KeyCode::Char('k')).expect("first line");
+        }
+        app.on_key(KeyCode::Char(']')).expect("next file");
     }
+    for _ in 0..=app.files().len() {
+        app.on_key(KeyCode::Char('[')).expect("first file");
+    }
+    assert_eq!(app.focus(), Focus::Diff);
     assert_eq!(app.file_index(), 0);
     assert_eq!(app.line_index(), 0);
     assert_eq!(app.mode(), Mode::Browse);
@@ -728,37 +754,42 @@ fn any_body() -> impl Strategy<Value = String> {
 /// does not bind.
 ///
 /// Cross-checked against `app.rs::on_key_browse`: the two agree exactly —
-/// `j`/`Down`, `k`/`Up`, `]`, `[`, `c`, `q`, and nothing else. The start state
-/// is a fresh reviewer on `alpha.rs` (five-plus diff lines, first of five
-/// files), so every direction has somewhere to go except `k`/`Up`, which are
-/// checked at their clamp.
+/// `j`/`Down`, `k`/`Up`, `Left`, `Right`, `]`, `[`, `c`, `q`, and nothing else.
+/// The start state is a fresh reviewer on `alpha.rs` (five-plus diff lines,
+/// first of five files) with the diff focused, so every direction has somewhere
+/// to go except `k`/`Up` and `Left`, which are checked at their clamp.
+///
+/// The focus column is what makes the movement rows mean anything now that
+/// there is more than one pane: `j` moves the line *because the diff has
+/// focus*, and every row here says which pane the key left the cursor in.
 #[rstest]
-#[case::next_line_letter(KeyCode::Char('j'), Action::Continue, Mode::Browse, 0, 1)]
-#[case::next_line_arrow(KeyCode::Down, Action::Continue, Mode::Browse, 0, 1)]
-#[case::previous_line_letter(KeyCode::Char('k'), Action::Continue, Mode::Browse, 0, 0)]
-#[case::previous_line_arrow(KeyCode::Up, Action::Continue, Mode::Browse, 0, 0)]
-#[case::next_file(KeyCode::Char(']'), Action::Continue, Mode::Browse, 1, 0)]
-#[case::previous_file(KeyCode::Char('['), Action::Continue, Mode::Browse, 0, 0)]
-#[case::comment(KeyCode::Char('c'), Action::Continue, Mode::Comment, 0, 0)]
-#[case::quit(KeyCode::Char('q'), Action::Quit, Mode::Browse, 0, 0)]
+#[case::next_line_letter(KeyCode::Char('j'), Action::Continue, Mode::Browse, Focus::Diff, 0, 1)]
+#[case::next_line_arrow(KeyCode::Down, Action::Continue, Mode::Browse, Focus::Diff, 0, 1)]
+#[case::previous_line_letter(KeyCode::Char('k'), Action::Continue, Mode::Browse, Focus::Diff, 0, 0)]
+#[case::previous_line_arrow(KeyCode::Up, Action::Continue, Mode::Browse, Focus::Diff, 0, 0)]
+#[case::focus_sidebar(KeyCode::Left, Action::Continue, Mode::Browse, Focus::Sidebar, 0, 0)]
+#[case::focus_diff(KeyCode::Right, Action::Continue, Mode::Browse, Focus::Diff, 0, 0)]
+#[case::next_file(KeyCode::Char(']'), Action::Continue, Mode::Browse, Focus::Diff, 1, 0)]
+#[case::previous_file(KeyCode::Char('['), Action::Continue, Mode::Browse, Focus::Diff, 0, 0)]
+#[case::comment(KeyCode::Char('c'), Action::Continue, Mode::Comment, Focus::Diff, 0, 0)]
+#[case::quit(KeyCode::Char('q'), Action::Quit, Mode::Browse, Focus::Diff, 0, 0)]
 // Not in the table, and therefore inert.
-#[case::unbound_letter(KeyCode::Char('x'), Action::Continue, Mode::Browse, 0, 0)]
-#[case::unbound_uppercase(KeyCode::Char('J'), Action::Continue, Mode::Browse, 0, 0)]
-#[case::unbound_enter(KeyCode::Enter, Action::Continue, Mode::Browse, 0, 0)]
-#[case::unbound_escape(KeyCode::Esc, Action::Continue, Mode::Browse, 0, 0)]
-#[case::unbound_backspace(KeyCode::Backspace, Action::Continue, Mode::Browse, 0, 0)]
-#[case::unbound_tab(KeyCode::Tab, Action::Continue, Mode::Browse, 0, 0)]
-#[case::unbound_function(KeyCode::F(1), Action::Continue, Mode::Browse, 0, 0)]
-#[case::unbound_left(KeyCode::Left, Action::Continue, Mode::Browse, 0, 0)]
-#[case::unbound_right(KeyCode::Right, Action::Continue, Mode::Browse, 0, 0)]
-#[case::unbound_page_down(KeyCode::PageDown, Action::Continue, Mode::Browse, 0, 0)]
-#[case::unbound_home(KeyCode::Home, Action::Continue, Mode::Browse, 0, 0)]
-#[case::unbound_delete(KeyCode::Delete, Action::Continue, Mode::Browse, 0, 0)]
+#[case::unbound_letter(KeyCode::Char('x'), Action::Continue, Mode::Browse, Focus::Diff, 0, 0)]
+#[case::unbound_uppercase(KeyCode::Char('J'), Action::Continue, Mode::Browse, Focus::Diff, 0, 0)]
+#[case::unbound_enter(KeyCode::Enter, Action::Continue, Mode::Browse, Focus::Diff, 0, 0)]
+#[case::unbound_escape(KeyCode::Esc, Action::Continue, Mode::Browse, Focus::Diff, 0, 0)]
+#[case::unbound_backspace(KeyCode::Backspace, Action::Continue, Mode::Browse, Focus::Diff, 0, 0)]
+#[case::unbound_tab(KeyCode::Tab, Action::Continue, Mode::Browse, Focus::Diff, 0, 0)]
+#[case::unbound_function(KeyCode::F(1), Action::Continue, Mode::Browse, Focus::Diff, 0, 0)]
+#[case::unbound_page_down(KeyCode::PageDown, Action::Continue, Mode::Browse, Focus::Diff, 0, 0)]
+#[case::unbound_home(KeyCode::Home, Action::Continue, Mode::Browse, Focus::Diff, 0, 0)]
+#[case::unbound_delete(KeyCode::Delete, Action::Continue, Mode::Browse, Focus::Diff, 0, 0)]
 fn browse_keybindings(
     mut multi_app: App,
     #[case] key: KeyCode,
     #[case] action: Action,
     #[case] mode: Mode,
+    #[case] focus: Focus,
     #[case] file_index: usize,
     #[case] line_index: usize,
 ) {
@@ -772,9 +803,11 @@ fn browse_keybindings(
         lines(app).len() > 2,
         "alpha.rs has too few diff lines to navigate"
     );
+    assert_eq!(app.focus(), Focus::Diff, "a fresh reviewer reads the diff");
 
     assert_eq!(app.on_key(key).expect("handle the key"), action);
     assert_eq!(app.mode(), mode);
+    assert_eq!(app.focus(), focus);
     assert_eq!(app.file_index(), file_index);
     assert_eq!(app.line_index(), line_index);
     // Browsing never writes the status line: the help text is what a reviewer
@@ -833,9 +866,63 @@ fn comment_keybindings(
     assert_eq!(app.mode(), mode);
     assert_eq!(app.buffer(), buffer);
     assert_eq!(app.status(), status.unwrap_or(HELP));
+    assert_eq!(
+        app.focus(),
+        Focus::Diff,
+        "typing moved the cursor to another pane"
+    );
     assert!(
         shared_tables().comments().is_empty(),
         "a keybinding case saved a comment into the tables' fixture"
+    );
+}
+
+/// `on_key_event` is a thin gate in front of `on_key`: it answers Ctrl+C
+/// itself and hands every other key on by its code alone.
+///
+/// The gate exists because the terminal is in raw mode, where no SIGINT is
+/// raised on the reviewer's behalf — and where `Char('c')` with CONTROL held is
+/// indistinguishable from a typed `c` once the modifiers are dropped, which is
+/// what used to make the universal abort open the comment box.
+#[rstest]
+#[case::ctrl_c_quits(KeyCode::Char('c'), KeyModifiers::CONTROL, Action::Quit, Mode::Browse)]
+#[case::ctrl_shift_c_quits(
+    KeyCode::Char('c'),
+    KeyModifiers::CONTROL.union(KeyModifiers::SHIFT),
+    Action::Quit,
+    Mode::Browse
+)]
+#[case::plain_c_comments(
+    KeyCode::Char('c'),
+    KeyModifiers::NONE,
+    Action::Continue,
+    Mode::Comment
+)]
+#[case::alt_c_comments(KeyCode::Char('c'), KeyModifiers::ALT, Action::Continue, Mode::Comment)]
+#[case::ctrl_q_is_still_q(KeyCode::Char('q'), KeyModifiers::CONTROL, Action::Quit, Mode::Browse)]
+#[case::ctrl_x_is_still_inert(
+    KeyCode::Char('x'),
+    KeyModifiers::CONTROL,
+    Action::Continue,
+    Mode::Browse
+)]
+fn modified_keys_reach_the_state_machine_by_their_code(
+    mut multi_app: App,
+    #[case] code: KeyCode,
+    #[case] modifiers: KeyModifiers,
+    #[case] action: Action,
+    #[case] mode: Mode,
+) {
+    let app = &mut multi_app;
+    assert_eq!(
+        app.on_key_event(KeyEvent::new(code, modifiers))
+            .expect("handle the key"),
+        action
+    );
+    assert_eq!(app.mode(), mode);
+    assert!(
+        shared_tables().comments().is_empty(),
+        "a modifier case saved a comment into the tables' fixture"
     );
 }
 
@@ -1027,6 +1114,11 @@ fn quit_is_exactly_q_in_browse_mode() {
 ///
 /// Differential rather than re-derived: neither app is the oracle, which is
 /// what makes this fail if either binding drifts.
+///
+/// `Left` and `Right` are in the sequence because they are what makes the claim
+/// non-trivial now: the pair moves the *file* selection while the sidebar has
+/// focus and the *line* while the diff does, so an alias that was only wired up
+/// in one of the two arms shows up here.
 #[test]
 fn arrow_keys_are_aliases_of_the_letters() {
     let fixture = shared_multi();
@@ -1035,19 +1127,27 @@ fn arrow_keys_are_aliases_of_the_letters() {
 
     #[derive(Clone, Copy, Debug)]
     enum Move {
-        LineDown,
-        LineUp,
+        Forward,
+        Back,
         FileNext,
         FilePrevious,
+        FocusLeft,
+        FocusRight,
     }
 
     let moves = prop_oneof![
-        3 => Just(Move::LineDown),
-        3 => Just(Move::LineUp),
+        3 => Just(Move::Forward),
+        3 => Just(Move::Back),
         1 => Just(Move::FileNext),
         1 => Just(Move::FilePrevious),
+        2 => Just(Move::FocusLeft),
+        2 => Just(Move::FocusRight),
     ];
 
+    let seen = Coverage::new(&[
+        "moving with the sidebar focused",
+        "moving with the diff focused",
+    ]);
     run_cases(48, prop::collection::vec(moves, 0..24), |sequence| {
         let letters = &mut *letters.borrow_mut();
         let arrows = &mut *arrows.borrow_mut();
@@ -1056,11 +1156,16 @@ fn arrow_keys_are_aliases_of_the_letters() {
 
         for step in &sequence {
             let (letter, arrow) = match step {
-                Move::LineDown => (KeyCode::Char('j'), KeyCode::Down),
-                Move::LineUp => (KeyCode::Char('k'), KeyCode::Up),
+                Move::Forward => (KeyCode::Char('j'), KeyCode::Down),
+                Move::Back => (KeyCode::Char('k'), KeyCode::Up),
                 Move::FileNext => (KeyCode::Char(']'), KeyCode::Char(']')),
                 Move::FilePrevious => (KeyCode::Char('['), KeyCode::Char('[')),
+                Move::FocusLeft => (KeyCode::Left, KeyCode::Left),
+                Move::FocusRight => (KeyCode::Right, KeyCode::Right),
             };
+            if matches!(step, Move::Forward | Move::Back) {
+                seen.hit(usize::from(letters.focus() == Focus::Diff));
+            }
             letters.on_key(letter).expect("letter key");
             arrows.on_key(arrow).expect("arrow key");
 
@@ -1070,12 +1175,14 @@ fn arrow_keys_are_aliases_of_the_letters() {
                 "after {:?}: letters and arrows disagree",
                 step
             );
+            prop_assert_eq!(letters.focus(), arrows.focus());
             prop_assert_eq!(letters.mode(), arrows.mode());
             prop_assert_eq!(letters.buffer(), arrows.buffer());
             prop_assert_eq!(letters.status(), arrows.status());
         }
         Ok(())
     });
+    seen.assert_all();
 }
 
 /// The highlight's closed form: `n` presses of `j` from the top land on
@@ -1141,30 +1248,58 @@ fn line_navigation_clamps_at_both_ends() {
     });
 }
 
-/// The sidebar's closed form, and the invariant that pays for it: moving to
-/// another file always starts that file at its first line.
+/// The sidebar's closed form, and the invariant that replaced the line reset:
+/// every file keeps its *own* place, and `[` `]` gives it back.
 ///
-/// A `]` at the bottom or a `[` at the top is a no-op *including* the line
-/// reset — `select_file` returns before touching anything — so the model here
-/// resets the line only on a step that actually changed file.
+/// Walking away from a file and back used to drop the highlight to line 1, so
+/// comparing two files cost the reviewer their position in both. The oracle is
+/// one remembered position per file, clamped to that file's own diff — a single
+/// shared position, or a reset on the way in, both fail it.
 #[test]
-fn file_navigation_walks_in_range_and_resets_the_line() {
+fn file_navigation_walks_in_range_and_keeps_each_files_place() {
     let fixture = shared_multi();
     let app = RefCell::new(fixture.app());
     let count = app.borrow().files().len();
     assert!(count >= 3, "the fixture lost files");
 
-    // `true` is `]`, `false` is `[`; `Some(n)` presses `j` n times first, so
-    // the reset has something to reset.
+    // How long each file's diff is, so the oracle clamps `j` where the app
+    // does. Two of `multi`'s files have no lines at all, which is the clamp
+    // worth having in the model.
+    let totals: Vec<usize> = {
+        let app = &mut *app.borrow_mut();
+        rewind(app);
+        (0..count)
+            .map(|index| {
+                press_n(app, KeyCode::Char(']'), usize::from(index > 0));
+                lines(app).len()
+            })
+            .collect()
+    };
+    assert!(
+        totals.iter().any(|total| *total > 2),
+        "no file has room to move in: {totals:?}"
+    );
+
+    // `true` is `]`, `false` is `[`; the `j`s before each step are what gives
+    // the file being left a place to be remembered at.
     let step = (any::<bool>(), 0usize..6);
+    let seen = Coverage::new(&["a file returned to at a line it was left on"]);
     run_cases(48, prop::collection::vec(step, 0..20), |steps| {
         let app = &mut *app.borrow_mut();
         rewind(app);
 
         let mut expected = 0usize;
+        let mut places = vec![0usize; count];
         for (forward, downs) in &steps {
             press_n(app, KeyCode::Char('j'), *downs);
-            let before = app.file_index();
+            places[expected] = (places[expected] + downs).min(totals[expected].saturating_sub(1));
+            prop_assert_eq!(
+                app.line_index(),
+                places[expected],
+                "{} presses of j in file {}",
+                downs,
+                expected
+            );
 
             press(app, KeyCode::Char(if *forward { ']' } else { '[' }));
             expected = if *forward {
@@ -1178,19 +1313,19 @@ fn file_navigation_walks_in_range_and_resets_the_line() {
                 "walking {:?} left the sidebar somewhere else",
                 steps
             );
-            if app.file_index() == before {
-                continue;
+            if places[expected] > 0 {
+                seen.hit(0);
             }
             prop_assert_eq!(
                 app.line_index(),
-                0,
-                "moving from file {} to {} kept the old line",
-                before,
-                app.file_index()
+                places[expected],
+                "file {} did not come back to the line it was left on",
+                expected
             );
         }
         Ok(())
     });
+    seen.assert_all();
 }
 
 // ---------------------------------------------------------------------------
@@ -1368,6 +1503,20 @@ fn a_typed_comment_reaches_the_store_byte_identically() {
         prop_assert_eq!(comment.anchor.line, number);
         let saved = format!("comment saved at alpha.rs:{number}");
         prop_assert_eq!(app.status(), saved.as_str());
+
+        // The recorded commit follows the side too: it is advisory, and its one
+        // job is being a revision the quoted text can still be read out of, so
+        // a comment on a removed line has to name the base.
+        let expected_commit = match side {
+            Side::Left => &app.session().base_commit,
+            Side::Right => &app.session().head_commit,
+        };
+        prop_assert_eq!(
+            comment.commit_id.as_str(),
+            expected_commit.as_str(),
+            "a {:?}-side comment recorded the other side's commit",
+            side
+        );
 
         // The hash and the snapshot come from the side the anchor names, at
         // the number it stores.

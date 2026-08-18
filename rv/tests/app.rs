@@ -17,9 +17,14 @@ use std::path::Path;
 use std::process::Command;
 
 use crossterm::event::KeyCode;
+use crossterm::event::KeyEvent;
+use crossterm::event::KeyModifiers;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
+use rstest::rstest;
+use rv::app::Action;
 use rv::app::App;
+use rv::app::Focus;
 use rv::app::Mode;
 use rv::session;
 use rv::ui;
@@ -33,9 +38,15 @@ use rv_core::store::CommentState;
 use rv_core::store::Store;
 use tempfile::TempDir;
 
-/// The file every fixture reviews. Two indented lines so that `j` has
+/// The first file every fixture reviews. Two indented lines so that `j` has
 /// somewhere to go and the diff pane has something recognizable to render.
 const SOURCE: &str = "fn a() {\n    let x = 1;\n}\n";
+
+/// The second file [`Fixture::new`] reviews, so that the sidebar has somewhere
+/// to move to: `[`, `]` and a focused file list all need a review of more than
+/// one file to say anything. Sorts after [`SOURCE`]'s `a.rs`, which keeps
+/// `a.rs` the file the reviewer opens on.
+const SECOND: &str = "fn b() {\n    let y = 2;\n    let z = 3;\n}\n";
 
 /// The base side of [`Fixture::renamed`]'s review: `a.rs`, before the rename.
 const BASE_SIDE: &str = "fn a() {\n    let x = 1;\n    let y = 2;\n    let z = 3;\n}\n";
@@ -52,13 +63,14 @@ struct Fixture {
 
 impl Fixture {
     /// Creates a colocated jj workspace holding one described change that adds
-    /// [`SOURCE`] as `a.rs`.
+    /// [`SOURCE`] as `a.rs` and [`SECOND`] as `b.rs`.
     fn new() -> Self {
         let fixture = Self {
             tempdir: tempfile::tempdir().expect("create temp dir"),
         };
         fixture.jj(&["git", "init", "--colocate"]);
         fixture.write("a.rs", SOURCE);
+        fixture.write("b.rs", SECOND);
         fixture.jj(&["describe", "-m", "first change"]);
         fixture.jj(&["new"]);
         fixture
@@ -315,6 +327,91 @@ fn commenting_on_a_removed_line_anchors_to_the_base_side() {
     );
 }
 
+/// A comment the reviewer just saved is readable back off the line it was
+/// anchored to — the whole of what the diff pane needs in order to draw it
+/// there.
+#[test]
+fn a_saved_comment_is_visible_on_the_line_it_anchored_to() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+
+    app.on_key(KeyCode::Char('j')).expect("move down a line");
+    let line = app.line_index();
+    write_comment(&mut app, "needs a doc");
+
+    let on_line = app.comments_for_line(line);
+    assert_eq!(on_line.len(), 1, "the comment shows up on its own line");
+    assert_eq!(on_line[0].body, "needs a doc");
+    assert!(
+        app.comments_for_line(line + 1).is_empty(),
+        "and not on the next line"
+    );
+}
+
+/// Comments are read off disk when the reviewer opens, not only when this
+/// process is the one that wrote them: a review interrupted and resumed shows
+/// the notes it already has.
+#[test]
+fn reopening_the_reviewer_shows_the_comments_already_saved() {
+    let workspace = Fixture::new();
+    let mut first = workspace.app();
+    first.on_key(KeyCode::Char('j')).expect("move down a line");
+    let line = first.line_index();
+    write_comment(&mut first, "still here tomorrow");
+    drop(first);
+
+    let reopened = workspace.app();
+    let on_line = reopened.comments_for_line(line);
+    assert_eq!(on_line.len(), 1, "{:?}", reopened.comments());
+    assert_eq!(on_line[0].body, "still here tomorrow");
+}
+
+/// `commit_id` is advisory, and its one job is being the commit whose blob the
+/// quoted text can still be read from. A comment on removed text therefore has
+/// to name the base commit: the head no longer has that text at all.
+#[test]
+fn a_left_side_comment_records_the_base_commit() {
+    let workspace = Fixture::renamed();
+    let mut app = workspace.app_from("@--");
+    select_line(&mut app, |line| {
+        line.kind == LineKind::Removed && line.text.contains("let x = 1;")
+    });
+    write_comment(&mut app, "you should not have removed this");
+
+    let comment = &app.comments()[0];
+    assert_eq!(comment.anchor.side, Side::Left);
+    assert_eq!(
+        comment.commit_id,
+        app.session().base_commit,
+        "a comment on removed text points at the commit that still has that text"
+    );
+}
+
+/// The other side of the same rule, so that "the anchored side chooses" cannot
+/// be satisfied by naming the base commit for everything.
+#[test]
+fn a_head_side_comment_records_the_head_commit() {
+    let workspace = Fixture::renamed();
+    let mut app = workspace.app_from("@--");
+    select_line(&mut app, |line| {
+        line.kind == LineKind::Added && line.text.contains("let x = 42;")
+    });
+    write_comment(&mut app, "why 42?");
+
+    let comment = &app.comments()[0];
+    assert_eq!(comment.anchor.side, Side::Right);
+    assert_eq!(
+        comment.commit_id,
+        app.session().head_commit,
+        "a comment on added text points at the commit that has that text"
+    );
+    assert_ne!(
+        app.session().head_commit,
+        app.session().base_commit,
+        "the two endpoints are the same commit, so this proves nothing"
+    );
+}
+
 #[test]
 fn escape_abandons() {
     let workspace = Fixture::new();
@@ -469,6 +566,181 @@ fn insert_reply(document: &str, reply: &str) -> String {
         }
     }
     out
+}
+
+// ---------------------------------------------------------------------------
+// Aborting
+// ---------------------------------------------------------------------------
+
+/// In raw mode the terminal raises no SIGINT, so Ctrl+C is `rv`'s to answer —
+/// and answering it with the comment box (which is what dropping the modifiers
+/// does) leaves a reviewer's reflexive abort typing a note.
+#[test]
+fn ctrl_c_quits_instead_of_opening_a_comment() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+
+    let action = app
+        .on_key_event(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL))
+        .expect("ctrl-c");
+
+    assert_eq!(action, Action::Quit, "ctrl-c aborts the review");
+    assert_eq!(
+        app.mode(),
+        Mode::Browse,
+        "and does not open the comment buffer"
+    );
+}
+
+#[test]
+fn a_plain_c_still_opens_a_comment() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+
+    let action = app
+        .on_key_event(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE))
+        .expect("c");
+
+    assert_eq!(action, Action::Continue);
+    assert_eq!(app.mode(), Mode::Comment, "plain c is unchanged");
+}
+
+/// The abort is an abort from anywhere: a half-typed comment is not a state a
+/// reviewer has to escape from before they can leave.
+#[test]
+fn ctrl_c_aborts_from_inside_a_half_typed_comment() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    app.on_key(KeyCode::Char('c')).expect("enter comment mode");
+    type_text(&mut app, "half a thought");
+
+    let action = app
+        .on_key_event(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL))
+        .expect("ctrl-c");
+
+    assert_eq!(action, Action::Quit);
+    let comments = workspace.store().comments().expect("read comments.json");
+    assert!(
+        comments.is_empty(),
+        "aborting saved the half-typed comment: {comments:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Which pane the keys act on
+// ---------------------------------------------------------------------------
+
+#[test]
+fn left_and_right_move_focus_between_the_panes() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    assert_eq!(app.focus(), Focus::Diff, "the diff has focus on launch");
+
+    app.on_key(KeyCode::Left).expect("left");
+    assert_eq!(app.focus(), Focus::Sidebar);
+    app.on_key(KeyCode::Left).expect("left again");
+    assert_eq!(
+        app.focus(),
+        Focus::Sidebar,
+        "there is nothing left of the files"
+    );
+
+    app.on_key(KeyCode::Right).expect("right");
+    assert_eq!(app.focus(), Focus::Diff);
+    app.on_key(KeyCode::Right).expect("right again");
+    assert_eq!(
+        app.focus(),
+        Focus::Diff,
+        "there is nothing right of the diff"
+    );
+}
+
+#[rstest]
+#[case(KeyCode::Char('j'), KeyCode::Char('k'))]
+#[case(KeyCode::Down, KeyCode::Up)]
+fn with_the_files_focused_both_key_pairs_move_the_file_selection(
+    #[case] forward: KeyCode,
+    #[case] back: KeyCode,
+) {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    app.on_key(KeyCode::Left).expect("focus files");
+
+    app.on_key(forward).expect("forward");
+    assert_eq!(app.file_index(), 1, "moved to the second file");
+    app.on_key(back).expect("back");
+    assert_eq!(app.file_index(), 0, "and back to the first");
+    app.on_key(back).expect("back off the top");
+    assert_eq!(app.file_index(), 0, "and stays there");
+}
+
+#[rstest]
+#[case(KeyCode::Char('j'), KeyCode::Char('k'))]
+#[case(KeyCode::Down, KeyCode::Up)]
+fn with_the_diff_focused_both_key_pairs_move_the_line(
+    #[case] forward: KeyCode,
+    #[case] back: KeyCode,
+) {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    assert_eq!(app.focus(), Focus::Diff);
+
+    app.on_key(forward).expect("forward");
+    assert_eq!(app.line_index(), 1);
+    assert_eq!(app.file_index(), 0, "the file list did not move with it");
+    app.on_key(back).expect("back");
+    assert_eq!(app.line_index(), 0);
+}
+
+/// Stepping to the next file and back is how a reviewer compares two files, and
+/// it used to cost them their place in the first one: `]` `[` dropped the
+/// highlight back to line 1 every time.
+#[test]
+fn leaving_a_file_and_coming_back_keeps_your_place() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    app.on_key(KeyCode::Char('j')).expect("down");
+    app.on_key(KeyCode::Char('j')).expect("down");
+    let was = app.line_index();
+    assert!(was > 0, "the fixture has enough lines to move");
+
+    app.on_key(KeyCode::Char(']')).expect("next file");
+    assert_eq!(
+        app.line_index(),
+        0,
+        "a file being opened for the first time opens at its top"
+    );
+    app.on_key(KeyCode::Char('[')).expect("back");
+
+    assert_eq!(app.line_index(), was, "the line came back with the file");
+}
+
+/// Each file remembers its own place, not one place shared between them.
+#[test]
+fn each_file_keeps_its_own_place() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    app.on_key(KeyCode::Char('j')).expect("down");
+    app.on_key(KeyCode::Char(']')).expect("next file");
+    app.on_key(KeyCode::Char('j')).expect("down");
+    app.on_key(KeyCode::Char('j')).expect("down");
+    assert_eq!(app.line_index(), 2, "the second file is two lines down");
+
+    app.on_key(KeyCode::Char('[')).expect("back");
+    assert_eq!(app.line_index(), 1, "the first file is one line down");
+    app.on_key(KeyCode::Char(']')).expect("forward again");
+    assert_eq!(app.line_index(), 2, "and the second is still two");
+}
+
+#[test]
+fn file_navigation_keys_work_from_either_pane() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    app.on_key(KeyCode::Char(']')).expect("next file");
+    assert_eq!(app.file_index(), 1);
+    app.on_key(KeyCode::Left).expect("focus files");
+    app.on_key(KeyCode::Char('[')).expect("previous file");
+    assert_eq!(app.file_index(), 0);
 }
 
 #[test]

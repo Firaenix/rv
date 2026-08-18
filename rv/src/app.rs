@@ -7,6 +7,10 @@
 //! ordinary unit test. Only [`App::run`] touches the terminal, and it does
 //! nothing else: set up, loop, tear down.
 //!
+//! [`App::on_key_event`] sits in front of [`App::on_key`] for the one decision
+//! that cannot be made from a [`KeyCode`] alone — Ctrl+C, which raw mode leaves
+//! to the program — and is terminal-free in exactly the same way.
+//!
 //! # Restoring the terminal
 //!
 //! A TUI that panics in raw mode leaves the user's shell unusable — no echo,
@@ -23,7 +27,9 @@
 //! [`session::write_markdown`], which folds in any reply an LLM appended
 //! first. So the file an agent reads is never stale by more than one
 //! keystroke, and a comment survives the process being killed the instant
-//! after Enter.
+//! after Enter. The in-memory copy the pane draws from is then re-read from
+//! the store, so what is on screen is what is on disk rather than what this
+//! process believes it wrote.
 //!
 //! Blobs are read lazily, for the selected file only (spec §7), and the
 //! computed [`FileDiff`] is cached per file so that stepping back to a file
@@ -34,16 +40,20 @@ use anyhow::Result;
 use crossterm::event;
 use crossterm::event::Event;
 use crossterm::event::KeyCode;
+use crossterm::event::KeyEvent;
 use crossterm::event::KeyEventKind;
+use crossterm::event::KeyModifiers;
 use ratatui::DefaultTerminal;
 use rv_core::anchor;
 use rv_core::diff;
+use rv_core::diff::DiffLine;
 use rv_core::diff::FileDiff;
 use rv_core::diff::LineKind;
 use rv_core::model::FileChange;
 use rv_core::model::Side;
 use rv_core::store::Comment;
 use rv_core::store::CommentState;
+use rv_core::store::Session;
 
 use crate::session;
 use crate::session::Review;
@@ -76,6 +86,25 @@ pub enum Mode {
     Comment,
 }
 
+/// Which pane the keys act on.
+///
+/// A focus rather than a [`Mode`] because modes are for *typing*: a mode
+/// changes what a keystroke means, while this only changes what it moves. That
+/// is why `j`, `k` and the arrows keep their meaning across all three, and why
+/// `[` and `]` are answered before the focus is consulted at all — a reviewer
+/// walking the files never has to think about where the cursor is first.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Focus {
+    /// The left column, which lists the review's files.
+    Sidebar,
+    /// The diff of the selected file.
+    Diff,
+    /// Inside the comment stack of the selected diff line. Introduced here so
+    /// that the two movement helpers below are total over the enum; nothing
+    /// reaches it until the stack itself lands.
+    Stack,
+}
+
 /// What [`App::on_key`] wants the event loop to do next.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action {
@@ -87,11 +116,29 @@ pub enum Action {
 ///
 /// `diffs` is parallel to `review.files`: `None` means "not computed yet",
 /// which is the whole of the lazy-loading scheme (spec §7).
+///
+/// `comments` is a *read-through copy* of the store, not a cache in front of
+/// it: [`rv_core::store::Store`] stays the authority, every save still goes
+/// straight to disk, and this vector is refreshed from disk immediately
+/// afterwards (see [`App::reload_comments`]). It exists because the diff pane
+/// has to draw the comments on the line it is drawing, and re-reading
+/// `comments.json` once per line per frame is not a thing to do sixty times a
+/// second.
 pub struct App {
     review: Review,
     diffs: Vec<Option<FileDiff>>,
+    comments: Vec<Comment>,
     file_index: usize,
-    line_index: usize,
+    /// Where the highlight sits in each file's diff, parallel to
+    /// `review.files`.
+    ///
+    /// One position per file rather than one shared between them, because
+    /// `[`/`]` is how a reviewer compares two files and a shared cursor makes
+    /// every round trip cost them their place: the first real review of `rv`
+    /// spent a fifth of its keystrokes on `j` walking back down to where it had
+    /// just been.
+    line_indices: Vec<usize>,
+    focus: Focus,
     mode: Mode,
     buffer: String,
     status: String,
@@ -130,11 +177,22 @@ impl App {
 
     fn open(review: Review, force_fallback: bool) -> Result<Self> {
         let diffs = vec![None; review.files.len()];
+        // Read before the review is moved into `Self`, and before the first
+        // diff is computed: a reviewer who quit halfway through yesterday
+        // opens on the notes they already made, not on an empty pane that
+        // fills in only once they save something new.
+        let comments = review
+            .store
+            .comments()
+            .context("could not read the saved comments")?;
+        let line_indices = vec![0; review.files.len()];
         let mut app = Self {
             review,
             diffs,
+            comments,
             file_index: 0,
-            line_index: 0,
+            line_indices,
+            focus: Focus::Diff,
             mode: Mode::Browse,
             buffer: String::new(),
             status: HELP.to_owned(),
@@ -183,18 +241,67 @@ impl App {
         &self.review.files
     }
 
+    /// The range under review: its two endpoint commits and the changes
+    /// between them.
+    pub fn session(&self) -> &Session {
+        &self.review.session
+    }
+
     /// Which file the sidebar has selected.
     pub fn file_index(&self) -> usize {
         self.file_index
     }
 
     /// Which line of the selected diff is highlighted.
+    ///
+    /// Zero when the review has no files, which is the only way this can be
+    /// asked about a file that does not exist.
     pub fn line_index(&self) -> usize {
-        self.line_index
+        self.line_indices.get(self.file_index).copied().unwrap_or(0)
     }
 
     pub fn mode(&self) -> Mode {
         self.mode
+    }
+
+    /// Which pane the movement keys act on. The diff, on launch: that is what
+    /// a reviewer came to read.
+    pub fn focus(&self) -> Focus {
+        self.focus
+    }
+
+    /// Every comment in the review, in store order (oldest first).
+    pub fn comments(&self) -> &[Comment] {
+        &self.comments
+    }
+
+    /// The comments anchored to diff line `index` of the selected file, oldest
+    /// first.
+    ///
+    /// A line is matched by the key it would anchor *under*, never by its raw
+    /// number: [`App::anchor_target`] derives the side and the side's path from
+    /// the same [`anchored_side`] rule [`App::prepare_comment`] saves through,
+    /// so a comment can never be stored against one line and displayed against
+    /// another. Milestone 1 shipped that bug once; there is deliberately only
+    /// one side rule in this file.
+    ///
+    /// Filtered rather than pre-indexed, and returning borrows rather than a
+    /// slice, because the matches are not contiguous in the store's order.
+    pub fn comments_for_line(&self, index: usize) -> Vec<&Comment> {
+        let Some(line) = self.selected_diff().and_then(|diff| diff.lines.get(index)) else {
+            return Vec::new();
+        };
+        let Some(target) = self.anchor_target(line) else {
+            return Vec::new();
+        };
+        self.comments
+            .iter()
+            .filter(|comment| {
+                comment.anchor.file == target.path
+                    && comment.anchor.side == target.side
+                    && comment.anchor.line == target.number
+            })
+            .collect()
     }
 
     /// The comment being typed, empty outside [`Mode::Comment`].
@@ -205,6 +312,28 @@ impl App {
     /// The one-line message under the reviewer's last action.
     pub fn status(&self) -> &str {
         &self.status
+    }
+
+    /// Handles one key press, modifiers and all.
+    ///
+    /// Ctrl+C is answered here rather than in [`App::on_key`] because the state
+    /// machine below is written against plain [`KeyCode`]s — which is what
+    /// makes it testable without a pty — and `Char('c')` with CONTROL held is
+    /// indistinguishable from a plain `c` once the modifiers are dropped. In
+    /// raw mode the terminal raises no SIGINT on the reviewer's behalf and `rv`
+    /// offers no other abort, so without this the one key every terminal user
+    /// reaches for would open the comment box and type into it.
+    ///
+    /// It quits from any mode, including a half-typed comment: an abort that
+    /// first asks you to `Esc` is not an abort. The buffer is dropped
+    /// unsaved, which is the same thing `Esc` does with it.
+    pub fn on_key_event(&mut self, event: KeyEvent) -> Result<Action> {
+        if event.modifiers.contains(KeyModifiers::CONTROL)
+            && matches!(event.code, KeyCode::Char('c'))
+        {
+            return Ok(Action::Quit);
+        }
+        self.on_key(event.code)
     }
 
     /// Handles one key press. Terminal-free by construction — see the module
@@ -227,7 +356,7 @@ impl App {
             // from typing two characters there.
             if let Event::Key(key) = event::read().context("could not read a key")?
                 && key.kind == KeyEventKind::Press
-                && self.on_key(key.code)? == Action::Quit
+                && self.on_key_event(key)? == Action::Quit
             {
                 return Ok(());
             }
@@ -237,19 +366,71 @@ impl App {
     fn on_key_browse(&mut self, key: KeyCode) -> Result<Action> {
         match key {
             KeyCode::Char('q') => return Ok(Action::Quit),
-            KeyCode::Char('j') | KeyCode::Down => {
-                let last = self.line_count().saturating_sub(1);
-                self.line_index = self.line_index.saturating_add(1).min(last);
-            }
-            KeyCode::Char('k') | KeyCode::Up => {
-                self.line_index = self.line_index.saturating_sub(1);
-            }
+            KeyCode::Left => self.focus_left(),
+            KeyCode::Right => self.focus_right(),
+            KeyCode::Char('j') | KeyCode::Down => self.move_forward()?,
+            KeyCode::Char('k') | KeyCode::Up => self.move_back()?,
+            // Deliberately answered before the focus is consulted: `[` and `]`
+            // mean "the next file" wherever the cursor happens to be, so
+            // walking a review never costs a trip through the sidebar.
             KeyCode::Char(']') => self.select_file(self.file_index.saturating_add(1))?,
             KeyCode::Char('[') => self.select_file(self.file_index.saturating_sub(1))?,
             KeyCode::Char('c') => self.begin_comment(),
             _ => {}
         }
         Ok(Action::Continue)
+    }
+
+    fn focus_left(&mut self) {
+        self.focus = match self.focus {
+            Focus::Stack => Focus::Diff,
+            Focus::Diff | Focus::Sidebar => Focus::Sidebar,
+        };
+    }
+
+    /// `Right` from the comment stack does nothing: the stack is drawn inside
+    /// the diff pane, so there is no pane to its right. `Left` leads out of
+    /// every focus, which is what keeps none of them a trap.
+    fn focus_right(&mut self) {
+        self.focus = match self.focus {
+            Focus::Sidebar => Focus::Diff,
+            Focus::Diff | Focus::Stack => self.focus,
+        };
+    }
+
+    /// `j` / `Down` in the focused pane.
+    fn move_forward(&mut self) -> Result<()> {
+        match self.focus {
+            Focus::Sidebar => self.select_file(self.file_index.saturating_add(1))?,
+            Focus::Diff => self.set_line_index(self.line_index().saturating_add(1)),
+            Focus::Stack => {}
+        }
+        Ok(())
+    }
+
+    /// `k` / `Up` in the focused pane.
+    fn move_back(&mut self) -> Result<()> {
+        match self.focus {
+            // `select_file(0)` from file 0 is a no-op by its own guard, so `k`
+            // at the top of the list stays put rather than wrapping.
+            Focus::Sidebar => self.select_file(self.file_index.saturating_sub(1))?,
+            Focus::Diff => self.set_line_index(self.line_index().saturating_sub(1)),
+            Focus::Stack => {}
+        }
+        Ok(())
+    }
+
+    /// Moves the highlight to `index` of the selected file, clamped to that
+    /// file's last diff line.
+    ///
+    /// The one place a line position is written, so the clamp cannot be
+    /// forgotten on some path: a diff with no lines pins it at 0, and a review
+    /// with no files has nowhere to put it at all.
+    fn set_line_index(&mut self, index: usize) {
+        let clamped = index.min(self.line_count().saturating_sub(1));
+        if let Some(position) = self.line_indices.get_mut(self.file_index) {
+            *position = clamped;
+        }
     }
 
     fn on_key_comment(&mut self, key: KeyCode) -> Result<Action> {
@@ -288,13 +469,19 @@ impl App {
     /// Moves the sidebar selection to `index` and loads that file's diff.
     /// Out-of-range indices are ignored, which is what makes `[` at the top
     /// and `]` at the bottom no-ops rather than errors.
+    ///
+    /// The file is reopened where it was left, not at its top — see
+    /// `line_indices`. The position is re-clamped on the way in because it was
+    /// clamped against whatever the diff was when it was written, and a file
+    /// visited before its diff was computed has none to have been clamped to.
     fn select_file(&mut self, index: usize) -> Result<()> {
         if index >= self.review.files.len() || index == self.file_index {
             return Ok(());
         }
         self.file_index = index;
-        self.line_index = 0;
-        self.load_selected()
+        self.load_selected()?;
+        self.set_line_index(self.line_index());
+        Ok(())
     }
 
     /// Computes the selected file's diff if it has not been computed yet.
@@ -330,8 +517,49 @@ impl App {
         } else {
             diff::compute(old.as_deref(), new.as_deref(), &file.path)
         };
-        self.line_index = self.line_index.min(diff.lines.len().saturating_sub(1));
         self.diffs[self.file_index] = Some(diff);
+        // The clamp is [`App::select_file`]'s, applied once the diff it clamps
+        // against is in place.
+        Ok(())
+    }
+
+    /// Where a comment on `line` of the selected file belongs.
+    ///
+    /// `None` when the line carries no number on the side it belongs to, which
+    /// is the same condition [`App::prepare_comment`] refuses to save under —
+    /// so a line that cannot be commented on shows no comments either, rather
+    /// than borrowing some other line's.
+    fn anchor_target(&self, line: &DiffLine) -> Option<AnchorTarget<'_>> {
+        let file = self.selected_file()?;
+        let session = &self.review.session;
+        let side = anchored_side(line.kind);
+        let (path, number, commit) = match side {
+            Side::Left => (
+                file.source_path.as_deref().unwrap_or(&file.path),
+                line.left,
+                session.base_commit.as_str(),
+            ),
+            Side::Right => (file.path.as_str(), line.right, session.head_commit.as_str()),
+        };
+        Some(AnchorTarget {
+            side,
+            path,
+            number: number?,
+            commit,
+        })
+    }
+
+    /// Re-reads the comments from disk.
+    ///
+    /// Called after every write, so the pane shows what is stored rather than
+    /// what this process believes it stored: the store is the authority, and
+    /// its upsert may have replaced an entry rather than added one.
+    fn reload_comments(&mut self) -> Result<()> {
+        self.comments = self
+            .review
+            .store
+            .comments()
+            .context("could not re-read the saved comments")?;
         Ok(())
     }
 
@@ -339,9 +567,9 @@ impl App {
         self.selected_diff().map_or(0, |diff| diff.lines.len())
     }
 
-    fn selected_line(&self) -> Option<&rv_core::diff::DiffLine> {
+    fn selected_line(&self) -> Option<&DiffLine> {
         self.selected_diff()
-            .and_then(|diff| diff.lines.get(self.line_index))
+            .and_then(|diff| diff.lines.get(self.line_index()))
     }
 
     /// Saves the typed comment against the selected line, then rewrites the
@@ -378,6 +606,7 @@ impl App {
             .store
             .append_comment(&comment)
             .context("could not save the comment")?;
+        self.reload_comments()?;
         session::write_markdown(&self.review)?;
 
         self.status = format!(
@@ -420,16 +649,16 @@ impl App {
         if body.is_empty() {
             return Ok(Err("empty comment, nothing saved".to_owned()));
         }
-        let (Some(file), Some(line)) = (self.selected_file(), self.selected_line()) else {
+        let Some(line) = self.selected_line() else {
             return Ok(Err("no diff line selected, nothing saved".to_owned()));
         };
-        // What `change_id` and `commit_id` on the stored comment actually are,
-        // stated plainly because the names invite a stronger reading: the
-        // *first change of the reviewed range*, the same one for every comment
-        // in the review, and not the change that introduced the line being
-        // commented on. `Repository::stack` streams newest first, so for the
-        // default `trunk()..@` this is `@` — the working copy, which is usually
-        // an empty change.
+        // What `change_id` on the stored comment actually is, stated plainly
+        // because the name invites a stronger reading: the *first change of the
+        // reviewed range*, the same one for every comment in the review, and
+        // not the change that introduced the line being commented on.
+        // `Repository::stack` streams newest first, so for the default
+        // `trunk()..@` this is `@` — the working copy, which is usually an
+        // empty change.
         //
         // Two things follow, both of them current behaviour rather than
         // problems this function should solve: `markdown::render` orders each
@@ -441,21 +670,15 @@ impl App {
         // comment to the change that touched its line is Milestone 2's work
         // (spec §14) and needs per-change diffs, which this milestone does not
         // compute.
+        //
+        // `commit_id` is *not* taken from that change: it comes from the
+        // anchored side, along with the path and the number — see
+        // [`AnchorTarget`].
         let Some(change) = self.review.session.changes.first() else {
             return Ok(Err("the review covers no change to comment on".to_owned()));
         };
 
-        let side = anchored_side(line.kind);
-        let session = &self.review.session;
-        let (commit, path, number) = match side {
-            Side::Left => (
-                &session.base_commit,
-                file.source_path.as_deref().unwrap_or(&file.path),
-                line.left,
-            ),
-            Side::Right => (&session.head_commit, file.path.as_str(), line.right),
-        };
-        let Some(number) = number else {
+        let Some(target) = self.anchor_target(line) else {
             return Ok(Err(
                 "this line has no number on the side it belongs to".to_owned()
             ));
@@ -466,21 +689,51 @@ impl App {
         let blob = self
             .review
             .repo
-            .read_blob(commit, path)
-            .with_context(|| format!("could not read {path} to anchor the comment"))?;
+            .read_blob(target.commit, target.path)
+            .with_context(|| format!("could not read {} to anchor the comment", target.path))?;
         let text = blob.map(|bytes| String::from_utf8_lossy(&bytes).into_owned());
-        let anchor = anchor::create(path, side, number, text.as_deref().unwrap_or_default());
+        let anchor = anchor::create(
+            target.path,
+            target.side,
+            target.number,
+            text.as_deref().unwrap_or_default(),
+        );
 
         Ok(Ok(Comment {
-            id: comment_id(&change.change_id, path, side, number, body),
+            id: comment_id(
+                &change.change_id,
+                target.path,
+                target.side,
+                target.number,
+                body,
+            ),
             change_id: change.change_id.clone(),
-            commit_id: change.commit_id.clone(),
+            commit_id: target.commit.to_owned(),
             anchor,
             body: body.to_owned(),
             state: CommentState::Open,
             reply: None,
         }))
     }
+}
+
+/// Where a comment on one diff line belongs: which side it is anchored to, and
+/// the path, line number and commit **on that side**.
+///
+/// Four values, one function ([`App::anchor_target`]), because they have to
+/// agree: the pane labels a line with `number`, the store anchors it at
+/// `path`:`number` on `side`, and `commit` is the revision whose blob that text
+/// is read and hashed from. Milestone 1 shipped a version where the pane and
+/// the anchor each decided the side for themselves and disagreed; the first
+/// real review of `rv` then found `commit` deciding separately too, and
+/// recording the head for text that only exists on the base. A comment on a
+/// removed line whose `commit` names the head points at a revision the quoted
+/// text cannot be read back from, which is `commit`'s only job.
+struct AnchorTarget<'a> {
+    side: Side,
+    path: &'a str,
+    number: u32,
+    commit: &'a str,
 }
 
 /// Which side of the diff a comment on a line of this kind belongs to: a
