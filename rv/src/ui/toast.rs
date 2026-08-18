@@ -1,0 +1,74 @@
+//! The floating panel: what has gone wrong, in orange, over the panes.
+
+use std::time::Instant;
+
+use ratatui::Frame;
+use ratatui::layout::Rect;
+use ratatui::style::Style;
+use ratatui::text::Line;
+use ratatui::widgets::Block;
+use ratatui::widgets::BorderType;
+use ratatui::widgets::Clear;
+use ratatui::widgets::Paragraph;
+
+use super::BORDER_ROWS;
+use super::text::clip;
+use super::text::colour;
+use crate::app::Alert;
+use crate::gradient;
+
+/// The mark an alert leads with, so the panel says what it is before it is
+/// read: a warning, not a status.
+const ALERT_MARK: char = '⚠';
+
+/// What sits between two alerts sharing the panel.
+const ALERT_SEPARATOR: &str = " · ";
+
+/// **One panel, however many alerts.** [`crate::layout::layout`] gives the
+/// toast three rows and no rectangle in this reviewer is computed anywhere but
+/// there, so several alerts share the row rather than stacking down the screen.
+/// What matters is that none is lost.
+///
+/// It is **not** a click target: [`crate::layout`] has no `Target` for it on
+/// purpose, because a toast that could be clicked would be a dialog, and a
+/// dialog is something a reviewer has to answer.
+///
+/// The fade is an Oklab ramp in `Rgb`, like the rest of the chrome and unlike
+/// the *code*. Spec §9 asks for it to disappear without fading at sixteen
+/// colours; nothing in this codebase detects colour depth, so a probe written
+/// for the toast alone would be the only one there is — and a second opinion
+/// about the terminal is worse than a fade that degrades the way every other
+/// colour here already does.
+pub(super) fn draw_toast(frame: &mut Frame, alerts: &[&Alert], area: Rect, now: Instant) {
+    if alerts.is_empty() {
+        return;
+    }
+    // The freshest alert decides the fade: they share one border, and dimming
+    // it because an older message is nearly done would fade out a warning that
+    // has just arrived.
+    let fade = alerts
+        .iter()
+        .map(|alert| alert.fade(now))
+        .fold(1.0_f32, f32::min);
+    let style = Style::default().fg(colour(gradient::oklab_mix(
+        gradient::ALERT,
+        gradient::INK_DARK,
+        fade,
+    )));
+
+    let width = usize::from(area.width.saturating_sub(BORDER_ROWS));
+    let messages: Vec<&str> = alerts.iter().map(|alert| alert.message.as_str()).collect();
+    let text = format!("{ALERT_MARK} {}", messages.join(ALERT_SEPARATOR));
+
+    // Over whatever the panes drew there, rather than blended with it: a
+    // warning read through a diff is a warning read twice.
+    frame.render_widget(Clear, area);
+    frame.render_widget(
+        Paragraph::new(Line::styled(clip(&text, width), style)).block(
+            Block::bordered()
+                .border_type(BorderType::Rounded)
+                .border_style(style),
+        ),
+        area,
+    );
+}
