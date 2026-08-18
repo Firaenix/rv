@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc ead8225afb7d2dd1356b7e609dc22ca15bf43e6a9d8c7f9332250dd01fcc9069 # shrinks to session = Session { revset: "trunk()..@", base_commit: "a1b2c3d4", head_commit: "e5f6a7b8", changes: [], started_at: "epoch:1755440000" }, specs = []
+cc f168cc81b247be76b4399d440ac07293e4b1ec8a415a4794ba7b58c21e04cc2c # shrinks to session = Session { revset: "trunk()..@", base_commit: "a1b2c3d4", head_commit: "e5f6a7b8", changes: [], started_at: "epoch:1755440000" }, specs = []

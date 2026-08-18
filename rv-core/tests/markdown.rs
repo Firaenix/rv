@@ -145,12 +145,20 @@ fn open_renders_expanded_with_anchor_and_protocol() {
         "protocol must spell out what breaks it:\n{document}"
     );
     assert!(
-        document.contains("Do not edit `<!-- rv: -->` markers, headings, or section order."),
+        document.contains("Do not edit `<!-- rv: -->` markers, headings, or section order"),
         "protocol must forbid editing markers/headings/order:\n{document}"
     );
+    // The prohibition is on writing a *state* into the export, not on resolving:
+    // `session.toml` is the authority, and rv records who settled a comment. It
+    // used to forbid resolving outright, which only moved the act somewhere
+    // nobody could see it.
     assert!(
-        document.contains("Do not mark anything resolved — the human verifies in the TUI."),
-        "protocol must reserve resolution for the human:\n{document}"
+        document.contains("do not\n> write a state into this file"),
+        "protocol must keep the export out of the lifecycle:\n{document}"
+    );
+    assert!(
+        document.contains("records who\n> did"),
+        "protocol must say the actor is recorded:\n{document}"
     );
 
     // All four sections always appear, in order, each with its count.

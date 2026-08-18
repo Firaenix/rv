@@ -167,13 +167,15 @@ impl App {
     /// what this process believes it stored: the store is the authority, and
     /// its upsert may have replaced an entry rather than added one.
     pub(super) fn reload_comments(&mut self) -> Result<()> {
-        self.comments = in_range(
+        let mut comments = in_range(
             &self.review,
             self.review
                 .store
                 .comments()
                 .context("could not re-read the saved comments")?,
         );
+        crate::stale::mark_outdated(&self.review, &mut comments);
+        self.comments = comments;
         // The browser indexes this vector, so it is clamped where the vector is
         // written.
         self.clamp_browser();

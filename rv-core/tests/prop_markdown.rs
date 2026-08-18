@@ -90,7 +90,26 @@ const SECTION_ORDER: [(&str, CommentState); 4] = [
 const EXPANDED_STATES: [CommentState; 2] = [CommentState::Open, CommentState::AwaitingVerification];
 
 /// The number of `> ` lines in the protocol block.
-const PROTOCOL_LINES: usize = 5;
+///
+/// Read off a rendered document rather than written down: the two properties
+/// below are about the block being **contiguous** and being the **only** quoted
+/// run at column 0, and neither is a claim about its length. Hard-coding the
+/// length made both fail the day a line was added to the protocol, which is a
+/// test failing on its own bookkeeping rather than on the code.
+fn protocol_lines() -> usize {
+    let empty = Session {
+        revset: "trunk()..@".to_owned(),
+        base_commit: "0".repeat(40),
+        head_commit: "1".repeat(40),
+        changes: Vec::new(),
+        started_at: "epoch:0".to_owned(),
+    };
+    rv_core::markdown::render(&empty, &[])
+        .lines()
+        .skip_while(|line| !line.starts_with("> "))
+        .take_while(|line| line.starts_with("> "))
+        .count()
+}
 
 fn base_session() -> Session {
     session_with(KNOWN_CHANGES)
@@ -1013,7 +1032,7 @@ proptest! {
         );
         prop_assert_eq!(
             count_lines(&document, |line| line.starts_with("> ")),
-            PROTOCOL_LINES,
+            protocol_lines(),
             "the protocol block must be the only quoted block at column 0"
         );
         prop_assert_eq!(
@@ -1076,7 +1095,7 @@ proptest! {
             .iter()
             .take_while(|line| line.starts_with("> "))
             .count();
-        prop_assert_eq!(run, PROTOCOL_LINES, "the protocol block must be contiguous");
+        prop_assert_eq!(run, protocol_lines(), "the protocol block must be contiguous");
         prop_assert!(
             lines[first_quote].contains("**For LLMs:**"),
             "the protocol block must address the model"
@@ -1084,8 +1103,8 @@ proptest! {
         prop_assert!(
             lines[first_quote..first_quote + run]
                 .iter()
-                .any(|line| line.contains("Do not mark anything resolved")),
-            "the protocol block must reserve resolution for the human"
+                .any(|line| line.contains("do not")),
+            "the protocol block must state what the model may not do"
         );
     }
 }

@@ -117,16 +117,28 @@ const REPLY_MARKER: &str = "**Reply:**";
 /// list content — never as an indented code block, which needs four.
 const BODY_INDENT: &str = "  ";
 
-/// The protocol block, addressed to the LLM that reads this file. It states
-/// the one permitted edit (append a reply) and the two prohibitions that keep
-/// the file machine-readable and keep verification human: markers, headings
-/// and section order are `rv`'s, and only the human resolves anything — an
-/// agent that grades its own homework is how bad fixes land (spec §9).
+/// The protocol block, addressed to the LLM that reads this file: the one edit
+/// it may make, and the one it may not.
+///
+/// **Replies are appended; structure is `rv`'s.** Markers, headings and section
+/// order are what make the file machine-readable, and a reply is the only thing
+/// the parser goes looking for.
+///
+/// It no longer forbids resolving. It used to, on the grounds that an agent
+/// grading its own homework is how bad fixes land — but the ban only pushed the
+/// act into prose nobody reads. The storage model now records **who** settled a
+/// comment and shows it, so an agent may resolve its own finding and the file
+/// and the screen both say it was the agent (storage spec §3). That is the safe
+/// half of the original rule kept and the unenforceable half dropped: the danger
+/// was never the resolving, it was the resolving going unnoticed. Editing the
+/// state *here* is still out — `session.toml` is the authority, and a state
+/// written into the export would be overwritten by the next render.
 const PROTOCOL: &str = "> **For LLMs:** fix each open comment, then append a `**Reply:**` block directly\n\
      > beneath it, with the `**Reply:**` marker at the start of the line — never\n\
      > indented, never inside a list item, or the reply is not read.\n\
-     > Do not edit `<!-- rv: -->` markers, headings, or section order.\n\
-     > Do not mark anything resolved — the human verifies in the TUI.\n";
+     > Do not edit `<!-- rv: -->` markers, headings, or section order, and do not\n\
+     > write a state into this file — `rv` resolves and abandons, and records who\n\
+     > did.\n";
 
 /// How many characters of a comment body are quoted in a collapsed entry's
 /// `<summary>` before it is elided, so a collapsed entry is identifiable

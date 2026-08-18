@@ -166,3 +166,71 @@ fn the_file_list_settles_nothing_and_says_why(#[case] key: KeyCode) {
         app.status()
     );
 }
+
+/// `outdated` is derived on load, and un-derives itself when the code comes
+/// back.
+///
+/// `rv_core::anchor::resolve` had been written and tested since milestone 1 and
+/// was called by nothing, so a comment read as `open` however far its code had
+/// moved — including a comment about a line that no longer existed. The store
+/// still holds `open`, because the state is a fact about the *current* text and
+/// a stored flag would need something to invalidate it.
+#[test]
+fn a_comment_whose_line_has_gone_reads_outdated_without_being_stored_so() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    write_comment(&mut app, "about this exact line");
+    assert_eq!(stored_state(&workspace).0, CommentState::Open);
+
+    // The commented line is rewritten under the comment.
+    workspace.write("a.rs", "fn completely_different() {\n    let y = 9;\n}\n");
+    workspace.jj(&["describe", "-m", "rewrite the file"]);
+    workspace.jj(&["new"]);
+
+    let reopened = workspace.app();
+    assert_eq!(
+        reopened.comments().first().map(|comment| comment.state),
+        Some(CommentState::Outdated),
+        "the comment still claims to describe code that has gone"
+    );
+    assert_eq!(
+        stored_state(&workspace).0,
+        CommentState::Open,
+        "the derived state was written to disk"
+    );
+}
+
+/// And a comment whose code is still there is not swept up with it.
+#[test]
+fn a_comment_on_live_code_stays_open() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    write_comment(&mut app, "about live code");
+
+    let reopened = workspace.app();
+    assert_eq!(
+        reopened.comments().first().map(|comment| comment.state),
+        Some(CommentState::Open)
+    );
+}
+
+/// A settled comment is not re-opened as outdated by a later edit: it was
+/// addressed, which is a fact about what happened rather than about the text.
+#[test]
+fn a_resolved_comment_does_not_become_outdated() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    write_comment(&mut app, "fixed, then the file moved on");
+    app.on_key(KeyCode::Char('r')).expect("resolve");
+
+    workspace.write("a.rs", "fn completely_different() {\n    let y = 9;\n}\n");
+    workspace.jj(&["describe", "-m", "rewrite the file"]);
+    workspace.jj(&["new"]);
+
+    let reopened = workspace.app();
+    assert_eq!(
+        reopened.comments().first().map(|comment| comment.state),
+        Some(CommentState::Resolved),
+        "a resolved comment was reported as outdated"
+    );
+}

@@ -323,7 +323,16 @@ Base `root()` → head `@ zkqrsuvw` · rv 0.1.0 · 2026-08-17T14:02Z
 
 > **For LLMs:** fix each open comment, then append a `**Reply:**` block directly
 > beneath it. Do not edit `<!-- rv: -->` markers, headings, or section order.
-> Do not mark anything resolved — the human verifies in the TUI.
+> Do not edit `<!-- rv: -->` markers, headings, or section order, and do not
+> write a state into this file — `rv` resolves and abandons, and records who did.
+
+**Amended by `2026-08-17-rv-storage-model-design.md` §3.** This block used to end
+`Do not mark anything resolved — the human verifies in the TUI`, on the grounds
+that an agent grading its own homework is how bad fixes land. The ban was
+unenforceable and only moved the act out of sight; the storage model records
+**who** settled a comment and shows it, which keeps the safe half of the rule.
+The export is still out of the lifecycle: `session.toml` is the authority, and a
+state written here would be overwritten by the next render.
 
 ## Open (3)
 

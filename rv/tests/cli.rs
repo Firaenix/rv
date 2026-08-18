@@ -182,3 +182,58 @@ fn empty_range_fails_naming_endpoints() {
     assert!(stderr.contains("empty"), "{}", streams(&output));
     assert!(stderr.contains("@..@"), "{}", streams(&output));
 }
+
+/// `rv status` derives `outdated` like every other load, so the command and the
+/// TUI never disagree about the same review.
+///
+/// This reported `1 open, 0 outdated` for a comment about a line that no longer
+/// existed, which is the number a script would have acted on. On this repository
+/// it claimed twenty-two open comments where fourteen were stale.
+#[test]
+fn status_reports_a_stale_comment_as_outdated() {
+    let workspace = Fixture::new();
+
+    // A comment written against a line, by hand — the TUI is not what is under
+    // test here — and then the line rewritten under it.
+    let head = workspace
+        .rv(&["status", "--json"])
+        .stdout
+        .clone();
+    let head: serde_json::Value =
+        serde_json::from_slice(&head).expect("status --json is valid json");
+    let head_commit = head["head"].as_str().expect("a head commit");
+    let comment = serde_json::json!([{
+        "id": "deadbee1",
+        "change_id": "z".repeat(32),
+        "commit_id": head_commit,
+        "anchor": {
+            "file": "a.rs",
+            "side": "Right",
+            "line": 2,
+            "content_hash": "0".repeat(64),
+            "context": ["    let x = 1;"],
+        },
+        "body": "about a line that is about to change",
+        "state": "open",
+        "reply": null,
+    }]);
+    std::fs::write(
+        workspace.root().join(".review/comments.json"),
+        serde_json::to_vec_pretty(&comment).expect("serialize"),
+    )
+    .expect("write comments.json");
+
+    let output = workspace.rv(&["status", "--json"]);
+    let report: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("status --json is valid json");
+    assert_eq!(
+        report["comments"]["outdated"], 1,
+        "a comment whose hash cannot be found is not reported outdated: {}",
+        streams(&output)
+    );
+    assert_eq!(
+        report["comments"]["open"], 0,
+        "and it is not also counted as open: {}",
+        streams(&output)
+    );
+}

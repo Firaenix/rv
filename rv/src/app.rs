@@ -257,13 +257,16 @@ impl App {
         let diffs = vec![None; review.files.len()];
         // Read before the first diff is computed: a reviewer who quit halfway
         // through yesterday opens on the notes they already made.
-        let comments = in_range(
+        let mut comments = in_range(
             &review,
             review
                 .store
                 .comments()
                 .context("could not read the saved comments")?,
         );
+        // Derived, never stored: a comment whose anchor no longer resolves is
+        // outdated for as long as that stays true and no longer.
+        crate::stale::mark_outdated(&review, &mut comments);
         let cursor_rows = vec![0; review.files.len()];
         // A comment that is no longer open starts folded: still exactly where
         // the reviewer left it, without competing for the screen with the ones

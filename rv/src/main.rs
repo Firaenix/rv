@@ -32,6 +32,7 @@ use clap::Parser;
 use clap::Subcommand;
 use rv::app::App;
 use rv::session;
+use rv::stale;
 use rv::session::Review;
 use rv_core::model::ChangeKind;
 use rv_core::store::Comment;
@@ -198,10 +199,16 @@ fn status(review: &Review, json: bool) -> Result<()> {
 }
 
 fn read_comments(review: &Review) -> Result<Vec<Comment>> {
-    review
+    let mut comments = review
         .store
         .comments()
-        .context("could not read the review's comments")
+        .context("could not read the review's comments")?;
+    // `status` is a load, and `outdated` is derived on every load — see
+    // [`stale::mark_outdated`]. Reporting the stored state here would have the
+    // command and the TUI disagree about the same review, and the command is the
+    // half a script reads.
+    stale::mark_outdated(review, &mut comments);
+    Ok(comments)
 }
 
 /// How many comments sit in each state.
