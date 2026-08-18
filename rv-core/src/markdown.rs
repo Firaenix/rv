@@ -1,91 +1,25 @@
 //! `.review/REVIEW-FEEDBACK.md`: the round-trip surface between a human
-//! reviewer and an LLM (spec §10).
+//! reviewer and an LLM.
 //!
-//! This module is pure string work — no filesystem, no jj-lib, no terminal.
-//! [`render`] turns a [`Session`] plus its [`Comment`]s into the markdown
-//! document, and [`parse_replies`] reads back the one thing an LLM is allowed
-//! to add to that document: `**Reply:**` blocks. Ownership is disjoint by
-//! design (`rv` writes entries and anchors, the LLM only appends replies), so
-//! the parser deliberately extracts *only* replies and ignores everything
-//! else it meets.
+//! Pure string work — no filesystem, no jj-lib, no terminal. [`render`] turns a
+//! [`Session`] and its [`Comment`]s into the document; [`parse_replies`] reads
+//! back the one thing an LLM may add to it, `**Reply:**` blocks.
 //!
-//! # Structure lives at column 0
+//! Three constraints hold this module together. The reasoning behind each is in
+//! `docs/superpowers/specs/2026-08-17-rv-storage-model-design.md` §10, which is
+//! where it can be revised once instead of restated here.
 //!
-//! The document interpolates reviewer- and LLM-written prose, and quoted
-//! source from the repository under review, into a structure-sensitive
-//! grammar — so content must not be able to imitate structure. The
-//! separation is positional: **in a rendered document, every column-0 line is
-//! structure**, because [`render`] indents everything it did not author
-//! itself by [`BODY_INDENT`] — continuation lines of comment and reply
-//! bodies, and whole context fences.
-//!
-//! Two spaces is enough to leave column 0 and few enough that markdown
-//! renders the result identically (lazy paragraph continuation; a fenced
-//! block strips its opener's indent from each line). A reviewer quoting the
-//! protocol (`**Reply:** …` as the second line of a comment — exactly what
-//! happens when `rv` reviews this file) therefore cannot fabricate a reply,
-//! and a body or a quoted line reading `<!-- rv:anchor id=… -->` cannot
-//! rebind the parser to a comment that does not exist. [`parse_replies`]
-//! removes the indent again, so a rendered body parses back byte-identical.
-//!
-//! # Why the parser is forgiving
-//!
-//! The document is handed to a language model and to a human with an editor,
-//! and both will mangle it. Nothing either can write may cost a comment, so
-//! [`parse_replies`] has no error path at all. Its rules, in the order they
-//! matter:
-//!
-//! - **A reply binds only within its own entry.** Every entry boundary — a
-//!   `### <n>.` entry heading, a `## ` section heading, a `<details>` — clears
-//!   the binding. A marker that was deleted, indented, or garbled beyond
-//!   recognition therefore leaves the following reply bound to *nothing*, and
-//!   it is dropped rather than silently attributed to the entry above it.
-//! - **Marker fields are read by name, not position.** `<!--rv:anchor id=…`,
-//!   `<!-- rv:anchor  id=…` and a reordered `<!-- rv:anchor change=… id=… -->`
-//!   all read. A line that announces itself as `rv:anchor` but carries no
-//!   readable `id=` clears the binding, for the same reason as above.
-//! - **A reply above every marker is dropped**, never bound to a *later* id.
-//! - **An unbalanced fence is text, not a fence.** A fence only counts when
-//!   its closing partner sits in the same region — no entry boundary and no
-//!   column-0 `**Comment:**`/`**Reply:**` marker in between (see
-//!   [`bounds_fence`]). Otherwise the opener is an ordinary line. One stray
-//!   ` ``` ` in a comment body can therefore neither swallow the entry's own
-//!   reply by pairing with a fence *inside* it, nor reach across an entry
-//!   boundary to pair with the next entry's context fence.
-//!
-//! `comments.json` — not this file — remains the authority on which comments
-//! exist, so the worst case here is a reply that fails to attach, never a
-//! comment that disappears.
-//!
-//! M2: nothing in this milestone consumes [`parse_replies`] (spec §14 puts
-//! reply consumption and state transitions in Milestone 2). When it does, M2
-//! needs two things this signature cannot express: a diagnostics channel
-//! alongside the replies (so a marker the parser had to give up on is
-//! reported rather than silently dropped), and an "Unattached replies"
-//! section that [`render`] preserves, so an LLM's work is not erased by the
-//! next render when it fails to bind.
-//!
-//! # The `**Reply:**` body rule
-//!
-//! A reply body is the text after the marker on its own line, plus every
-//! following line, up to (excluding) the first **structural** line — see
-//! [`is_structural`]: an entry or section heading, an HTML comment, a
-//! `<details>`/`</details>`/`<summary>` tag, or another
-//! `**Comment:**`/`**Reply:**` marker, each at column 0. Blank lines *inside*
-//! the body are kept, so a multi-paragraph reply survives whole; leading and
-//! trailing blank lines are trimmed. A balanced fenced block inside the body
-//! is consumed whole, so structural-looking lines inside a snippet cannot
-//! truncate the reply.
-//!
-//! Only the heading levels [`render`] actually emits terminate a body: `## `
-//! and a numbered `### <n>.`. An LLM writing `### What I changed` or a
-//! `# shell comment` inside its reply keeps them, because truncating a reply
-//! loses work that goes nowhere — the tail would be attributed to nothing and
-//! erased by the next render.
-//!
-//! Blank lines are not terminators for the same reason, and the cost of that
-//! choice is cosmetic: stray prose a human leaves directly below a reply is
-//! absorbed into that reply's body.
+//! 1. **Every column-0 line of a rendered document is structure.** [`render`]
+//!    indents everything it did not author itself by [`BODY_INDENT`], so content
+//!    can never imitate structure — and [`parse_replies`] removes the indent
+//!    again, so a body round-trips byte-identically.
+//! 2. **[`parse_replies`] has no error path.** A reply that cannot be bound is
+//!    dropped, never attributed to a neighbouring entry. `comments.json` is the
+//!    authority on which comments exist, so the worst case is a reply that fails
+//!    to attach.
+//! 3. **A fence counts only when its closing partner is in the same region** —
+//!    see [`bounds_fence`]. An unbalanced one is ordinary text, so a stray fence
+//!    in a body cannot swallow a reply or reach into the next entry.
 
 use crate::model::Side;
 use crate::store::Comment;

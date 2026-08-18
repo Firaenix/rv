@@ -27,9 +27,7 @@ use crate::tree;
 /// lists and the sizes come from the same pair of commits.
 #[derive(Default)]
 pub(super) struct CommitIndex {
-    /// Each change's files, parallel to `session.changes`.
     files: Vec<Vec<FileChange>>,
-    /// Each change's endpoints: the commit before it, and its own.
     endpoints: Vec<(String, String)>,
     /// One entry per file row, in the order [`tree::build_grouped`] numbers
     /// them: which change it belongs to and which of that change's files it is.

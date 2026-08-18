@@ -90,11 +90,9 @@ pub enum Role {
     /// The selected file, how far through the list it is, and the shape of its
     /// change.
     Position,
-    /// The change the sidebar cursor is in.
     Change,
     /// The revset under review.
     Scope,
-    /// How many comments are open.
     Comments,
     /// The last thing that happened.
     Status,
@@ -185,7 +183,6 @@ pub struct Segment {
 pub struct View<'a> {
     /// What the next keystroke does, already spelled the way the bar shows it.
     pub mode: &'a str,
-    /// The selected file, or `None` when the review has none.
     pub file: Option<&'a str>,
     /// Its zero-based position in the file list; shown one-based.
     pub file_index: usize,
@@ -198,7 +195,6 @@ pub struct View<'a> {
     /// The change the sidebar cursor is in, already spelled for the bar, or
     /// empty where the cursor is not in one.
     pub change: String,
-    /// How many comments are open.
     pub open_comments: usize,
     /// The last thing that happened, or empty once it has expired.
     pub status: &'a str,

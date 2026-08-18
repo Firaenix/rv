@@ -296,3 +296,80 @@ power. It stays in the seed because ids outlive the review that made them: a
 `.review/` from another range, keyed by these ids, must not collide with this
 one's. Attributing a comment to the change that introduced its line is
 Milestone 2's work and needs per-change diffs.
+
+---
+
+## 10. The export's parser, and why it is forgiving
+
+Moved here out of `rv-core/src/markdown.rs`, whose module doc had grown to
+eighty-nine lines — a review comment on that file read *"This is a LOT of
+comments. necessary? Code should document itself"*, and it was right: what
+follows is argument, not constraint, and the file now states the constraints and
+points here.
+
+### Structure lives at column 0
+
+The document interpolates reviewer- and LLM-written prose, and quoted source from
+the repository under review, into a structure-sensitive grammar — so content must
+not be able to imitate structure. The separation is positional: **in a rendered
+document, every column-0 line is structure**, because `render` indents everything
+it did not author itself by two spaces: continuation lines of comment and reply
+bodies, and whole context fences.
+
+Two spaces is enough to leave column 0 and few enough that markdown renders the
+result identically (lazy paragraph continuation; a fenced block strips its
+opener's indent from each line). A reviewer quoting the protocol — `**Reply:**` as
+the second line of a comment, which is exactly what happens when `rv` reviews
+`markdown.rs` — therefore cannot fabricate a reply, and a body or a quoted line
+reading `<!-- rv:anchor id=… -->` cannot rebind the parser to a comment that does
+not exist. `parse_replies` removes the indent again, so a rendered body parses
+back byte-identical.
+
+### Why the parser has no error path
+
+The document is handed to a language model and to a human with an editor, and both
+will mangle it. Nothing either can write may cost a comment. The rules, in the
+order they matter:
+
+- **A reply binds only within its own entry.** Every entry boundary — a `### <n>.`
+  heading, a `## ` section heading, a `<details>` — clears the binding. A marker
+  that was deleted, indented or garbled therefore leaves the following reply bound
+  to *nothing*, and it is dropped rather than attributed to the entry above it.
+- **Marker fields are read by name, not position.** `<!--rv:anchor id=…`,
+  `<!-- rv:anchor  id=…` and a reordered `<!-- rv:anchor change=… id=… -->` all
+  read. A line announcing itself as `rv:anchor` with no readable `id=` clears the
+  binding, for the same reason.
+- **A reply above every marker is dropped**, never bound to a *later* id.
+- **An unbalanced fence is text, not a fence.** A fence counts only when its
+  closing partner sits in the same region — no entry boundary and no column-0
+  `**Comment:**`/`**Reply:**` between. One stray fence in a comment body can then
+  neither swallow the entry's own reply by pairing with a fence inside it, nor
+  reach across a boundary to pair with the next entry's context fence.
+
+`comments.json` remains the authority on which comments exist, so the worst case
+is a reply that fails to attach, never a comment that disappears.
+
+### The reply body rule
+
+A reply body is the text after the marker on its own line plus every following
+line, up to the first **structural** line at column 0: an entry or section
+heading, an HTML comment, a `<details>`/`</details>`/`<summary>`, or another
+`**Comment:**`/`**Reply:**`. Blank lines *inside* the body are kept so a
+multi-paragraph reply survives whole; leading and trailing ones are trimmed. A
+balanced fenced block inside the body is consumed whole.
+
+Only the heading levels `render` emits terminate a body: `## ` and a numbered
+`### <n>.`. An LLM writing `### What I changed` or a `# shell comment` inside its
+reply keeps them, because truncating a reply loses work that goes nowhere — the
+tail would be attributed to nothing and erased by the next render. Blank lines are
+not terminators for the same reason, and the cost is cosmetic: stray prose a human
+leaves directly below a reply is absorbed into it.
+
+### Milestone 2
+
+Nothing in milestone 1 consumes `parse_replies`. When it does, two things this
+signature cannot express are needed: a diagnostics channel alongside the replies,
+so a marker the parser gave up on is reported rather than dropped; and an
+"Unattached replies" section that `render` preserves, so an LLM's work is not
+erased by the next render when it fails to bind.
+

@@ -21,9 +21,7 @@ pub enum Sort {
     /// stack order in the commits view.
     #[default]
     Natural,
-    /// Most lines added first.
     Added,
-    /// Most lines removed first.
     Removed,
 }
 

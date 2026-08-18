@@ -1,55 +1,35 @@
-//! Which grammar a path selects, and how each one is built.
-//!
-//! One table, asked by `Highlights::of` and by `language_of`. Detection lives
-//! here and nowhere else: a second table would drift, and the day it drifted a
-//! file would be coloured as one language and searched as another.
-
+//! One table, asked by both `Highlights::of` and `language_of`. A second table
+//! would drift, and the day it drifted a file would be coloured as one language
+//! and searched as another.
 
 use tree_sitter_highlight::HighlightConfiguration;
 
 use super::configs;
 
-/// One language rv can highlight. Adding a grammar is one row in [`GRAMMARS`]
-/// plus the function that row points at; nothing else in this module knows
-/// about a particular language.
 #[derive(Clone, Copy)]
 pub(super) struct Grammar {
-    /// What [`Highlights::language`] reports.
     pub(super) name: &'static str,
-    /// The extensions that select it, without the dot. Matched
-    /// case-insensitively, so these are written lowercase.
+    /// Without the dot, lowercase; matched case-insensitively.
     pub(super) extensions: &'static [&'static str],
-    /// Whole file names that select it, for files whose extension does not
-    /// name their language (`Cargo.lock`) or which have none (`.bashrc`).
-    /// Matched case-insensitively against the path's last segment.
+    /// For files whose extension does not name their language (`Cargo.lock`) or
+    /// which have none (`.bashrc`).
     pub(super) filenames: &'static [&'static str],
-    /// The compiled highlight configuration, built once per process.
-    ///
-    /// A function pointer rather than a name matched in a `match`, so a
-    /// grammar cannot be listed here and then silently produce no
-    /// highlighting because nothing dispatched to it.
+    /// A function pointer rather than a name matched in a `match`, so a grammar
+    /// cannot be listed here and then produce no highlighting because nothing
+    /// dispatched to it.
     pub(super) configuration: fn() -> Option<&'static HighlightConfiguration>,
-    /// Resolves a language name this grammar's *injections* query asks for.
-    ///
-    /// Almost every grammar answers [`configs::no_injection`]: rv highlights a file as
-    /// one language, and resolving, say, the `rust` a markdown fence declares
-    /// would be reading the content to decide what it is — the thing the
-    /// module's first rule forbids. Markdown is the exception, and it is not
-    /// really an exception: its inline content is parsed by a *second parser
-    /// of the same language*, not by a language guessed from the text.
+    /// Almost every grammar answers `no_injection`: resolving the `rust` a
+    /// markdown fence declares would mean reading content to decide what it is.
+    /// Markdown's own inline pass is a second parser of the same language, not a
+    /// language guessed from the text.
     pub(super) injection: fn(&str) -> Option<&'static HighlightConfiguration>,
 }
 
-/// Every grammar rv ships, in the order a reviewer of a Rust repository meets
-/// them. The lists are what a user reads as "which files get colour", and
-/// `tests/highlight.rs` states every entry again as a case, so a row added
-/// here without a test is a failing test rather than a silent claim.
-///
-/// What is *not* here matters too. `zsh` is not an alias for `bash`: bash is a
-/// superset of POSIX `sh`, so the bash grammar over a `.sh` file is safe,
-/// while zsh has syntax bash does not and would parse as errors. `.mdx` is not
-/// markdown, `Gemfile.lock` and `yarn.lock` are not TOML, and `.eslintrc` is
-/// as often YAML as JSON — each of those renders plain instead.
+/// What is deliberately absent: `zsh` is not an alias for `bash` (bash is a
+/// superset of POSIX `sh`, so bash over `.sh` is safe, while zsh has syntax bash
+/// would parse as errors); `.mdx` is not markdown; `Gemfile.lock` and
+/// `yarn.lock` are not TOML; `.eslintrc` is as often YAML as JSON. Each renders
+/// plain instead.
 const GRAMMARS: &[Grammar] = &[
     Grammar {
         name: "rust",

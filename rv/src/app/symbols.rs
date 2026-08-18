@@ -25,7 +25,6 @@ use rv_core::model::Side;
 pub(super) enum Scope {
     /// Every changed file in the range.
     Bookmark,
-    /// One change's files, by its position in the stack.
     Change(usize),
 }
 

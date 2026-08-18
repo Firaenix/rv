@@ -79,7 +79,6 @@ pub struct Node {
     pub label: String,
     /// How many levels in the row sits.
     pub depth: usize,
-    /// What the row is, and everything only that kind of row has.
     pub kind: NodeKind,
     /// What the row costs to review: its own lines for a file, and its whole
     /// subtree's for a directory or a change — including the part a fold is

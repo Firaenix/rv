@@ -194,11 +194,9 @@ pub struct Layout {
     pub sidebar: Rect,
     /// The one column between the panes, which is also the resize handle.
     pub divider: Rect,
-    /// The selected file's diff.
     pub diff: Rect,
     /// The status line, or the comment box, along the bottom under both panes.
     pub bar: Rect,
-    /// The `?` popup, when it is open.
     pub popup: Option<Rect>,
     /// The floating alert, when there is one. Drawn over the panes; never a
     /// click target — see [`Target`].
@@ -225,15 +223,12 @@ pub struct Layout {
 /// key and no gesture, so a click where one floats reaches the pane beneath it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Target {
-    /// A row of the sidebar's list.
     SidebarRow(usize),
-    /// A row of the diff pane's row plan — see [`crate::rows`].
     DiffRow(usize),
     /// The resize handle between the panes.
     Divider,
     /// The status line or the comment box.
     Bar,
-    /// Anywhere inside the `?` popup.
     Popup,
     /// The one cell that opens and closes the sidebar.
     Chevron,

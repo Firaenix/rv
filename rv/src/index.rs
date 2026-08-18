@@ -86,9 +86,7 @@ pub struct Scoped<'a> {
     /// The change that touched it, in the commits view. `None` in the bookmark
     /// view, where a symbol belongs to the range rather than to one change.
     pub change_id: Option<&'a str>,
-    /// The file's bytes at the base revision, if it has any there.
     pub base: Option<&'a [u8]>,
-    /// The file's bytes at the head revision, if it has any there.
     pub head: Option<&'a [u8]>,
 }
 
