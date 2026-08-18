@@ -59,3 +59,15 @@ pub fn to_commits(app: &mut App) {
     }
     panic!("the commits tab is not in the Tab cycle");
 }
+
+/// The same, for the file list — which is also the tab `t` and `o` mean something
+/// in.
+pub fn to_files(app: &mut App) {
+    for _ in 0..8 {
+        if app.sidebar_tab() == SidebarTab::Files {
+            return;
+        }
+        app.on_key(KeyCode::Tab).expect("switch the sidebar tab");
+    }
+    panic!("the files tab is not in the Tab cycle");
+}

@@ -552,3 +552,81 @@ fn a_narrow_commit_row_drops_the_subject_before_an_id() {
         );
     }
 }
+
+/// The description is under the list, where a narrow row cannot carry it.
+///
+/// It was on the status bar first, which is exactly where a reviewer could not
+/// find it: the bar drops segments by rank when the row is short, and a long
+/// subject is the widest thing on it — so the one segment that had to survive was
+/// the first to go. The border under the rows was carrying only the shape and the
+/// order, and it is directly under the thing it describes.
+#[test]
+fn the_change_under_the_cursor_is_described_under_the_list() {
+    let workspace = two_changes();
+    let mut app = workspace.app();
+    to_commits(&mut app);
+    app.on_key(KeyCode::Left).expect("focus the sidebar");
+    down_to_a_file(&mut app);
+
+    let (_, _, subject) = app.change_under_cursor().expect("a change");
+    let frame = frame_at(&app, 100, 24);
+    let border = sidebar_shape(&frame);
+    assert!(
+        border.contains(&subject),
+        "the description is not under the list: {border:?}"
+    );
+
+    // And the file list still says its shape and its order there.
+    to_comments(&mut app);
+    to_commits(&mut app);
+    to_comments(&mut app);
+    to_files(&mut app);
+    let files = sidebar_shape(&frame_at(&app, 100, 24));
+    assert!(
+        files.contains("list") && files.contains("natural"),
+        "the file list lost its shape and order: {files:?}"
+    );
+}
+
+/// A directory reads dimmer than the files in it, so a hundred paths in one ink
+/// stop being a wall.
+///
+/// Foreground only: there is no background wash on a sidebar row, and the counts
+/// are still the one thing in this pane that means green and red.
+#[test]
+fn a_directory_row_is_quieter_than_the_files_under_it() {
+    let workspace = Fixture::nested();
+    let mut app = workspace.app();
+    app.on_key(KeyCode::Left).expect("focus the sidebar");
+    app.on_key(KeyCode::Char('t')).expect("tree");
+    // Off row 0, so the selection's own styling is not what is measured.
+    app.on_key(KeyCode::Down).expect("next row");
+
+    let frame = frame_at(&app, 100, 24);
+    let nodes = app.nodes();
+    let directory = nodes
+        .iter()
+        .find(|node| matches!(node.kind, NodeKind::Dir { .. }))
+        .expect("a directory row");
+    let file = nodes
+        .iter()
+        .find(|node| matches!(node.kind, NodeKind::File { .. }))
+        .expect("a file row");
+
+    let dim = |label: &str| {
+        let row = sidebar_row_for(&frame, label);
+        style_of_text(&frame, row, label)
+            .add_modifier
+            .contains(Modifier::DIM)
+    };
+    assert!(
+        dim(&directory.label),
+        "a directory reads exactly like a file: {:?}",
+        directory.label
+    );
+    assert!(
+        !dim(&file.label),
+        "a file is dimmed too, so the tiers are not distinguishable: {:?}",
+        file.label
+    );
+}

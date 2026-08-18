@@ -85,7 +85,16 @@ pub(super) fn draw_files(frame: &mut Frame, app: &App, area: Rect, focused: bool
 /// same rows drawn from the same model.
 pub(super) fn draw_commits(frame: &mut Frame, app: &App, area: Rect, focused: bool) {
     let title = format!("Commits ({})", app.changes().len());
-    draw_nodes(frame, app, area, focused, &app.commit_nodes(), title);
+    let width = usize::from(area.width.saturating_sub(BORDER_ROWS));
+    draw_nodes_titled(
+        frame,
+        app,
+        area,
+        focused,
+        &app.commit_nodes(),
+        title,
+        under_the_commits(app, width),
+    );
 }
 
 /// One list of [`Node`]s, with its counts column, its change bars and its
@@ -97,6 +106,22 @@ fn draw_nodes(
     focused: bool,
     nodes: &[Node],
     title: String,
+) {
+    let bottom = shape(app);
+    draw_nodes_titled(frame, app, area, focused, nodes, title, bottom);
+}
+
+/// The same, with what the bottom border says passed in: the file list states its
+/// shape and its order there, and the commits list states which change the cursor
+/// is in.
+fn draw_nodes_titled(
+    frame: &mut Frame,
+    app: &App,
+    area: Rect,
+    focused: bool,
+    nodes: &[Node],
+    title: String,
+    bottom: String,
 ) {
     let width = usize::from(area.width.saturating_sub(BORDER_ROWS));
     let heads: Vec<String> = nodes.iter().map(|node| head(app, node)).collect();
@@ -131,7 +156,7 @@ fn draw_nodes(
         })
         .collect();
     let list = List::new(items)
-        .block(pane(title, focused).title_bottom(shape(app)))
+        .block(pane(title, focused).title_bottom(bottom))
         .highlight_style(selection_style(focused));
 
     let mut state = list_state(app, area, nodes.len(), app.sidebar_row());
@@ -150,6 +175,36 @@ fn shape(app: &App) -> String {
         if app.tree_view() { "tree" } else { "list" },
         app.sort().label()
     )
+}
+
+/// What the commits list says along its bottom border: the change the cursor is
+/// on or inside, and its description.
+///
+/// A change row has room for two ids or two ids and a subject, never reliably
+/// both — a 22-column sidebar cannot hold thirty characters. So the subject goes
+/// *here*, on a border that was carrying only the shape and the order, directly
+/// under the rows it describes.
+///
+/// It was on the status bar first, which is where a reviewer could not find it:
+/// the bar drops segments by rank when the row is short, and a long subject is
+/// the widest thing on it, so the one segment that had to survive was the first
+/// to go.
+fn under_the_commits(app: &App, width: usize) -> String {
+    let Some((change, commit, subject)) = app.change_under_cursor() else {
+        return shape(app);
+    };
+    let full = format!(" {change} {commit} · {subject} ");
+    if full.chars().count() <= width {
+        return full;
+    }
+    // The subject is what this line is for, so the ids give way to it rather than
+    // the other way round: they are already on the row above.
+    let subject_only = format!(" {subject} ");
+    if subject_only.chars().count() <= width {
+        subject_only
+    } else {
+        clip(&subject_only, width)
+    }
 }
 
 /// One row: its name on the left, and — right-aligned in a column shared by the
@@ -224,6 +279,27 @@ fn lead_of(app: &App, node: &Node) -> usize {
     node.depth * 2 + row_mark(app, node).chars().count()
 }
 
+/// What tier of the tree a row is, as a style.
+///
+/// Three, because a list of a hundred paths in one ink is a wall: a **directory**
+/// is scaffolding and reads dim, a **file** is the thing being reviewed and keeps
+/// the terminal's own foreground, and a **change** is a heading and is handled by
+/// [`name_spans`], which colours its ids.
+///
+/// Foreground only. Spec §7 rules out a background wash on a sidebar row after
+/// two rounds of looking at the running tool — thirty files became thirty slabs
+/// of green and the tree stopped looking like a tree — and the selection is still
+/// the one full-row background in this pane.
+fn structure_style(node: &Node) -> Style {
+    match node.kind {
+        // Dim, not coloured: a directory is where a file *is*, and a hue here
+        // would compete with the counts, which are the only thing in this pane
+        // that means green and red.
+        NodeKind::Dir { .. } => Style::default().add_modifier(Modifier::DIM),
+        NodeKind::File { .. } | NodeKind::Commit { .. } => Style::default(),
+    }
+}
+
 /// A change row's name, cut down to what `names` columns can hold.
 ///
 /// Three forms, widest first: both ids and the subject, both ids, the change id
@@ -284,7 +360,7 @@ fn name_spans(node: &Node, name: &str, lead: usize) -> Vec<Span<'static>> {
         ..
     } = &node.kind
     else {
-        return vec![Span::raw(name.to_owned())];
+        return vec![Span::styled(name.to_owned(), structure_style(node))];
     };
 
     // Where the ids sit in the drawn row: the indent and the fold mark come
@@ -316,7 +392,12 @@ fn name_spans(node: &Node, name: &str, lead: usize) -> Vec<Span<'static>> {
         spans.push(Span::raw(rest));
         at += 1;
     }
-    spans.push(Span::raw(name.chars().skip(at).collect::<String>()));
+    // Whatever is left is the subject: quieter than the ids, which are the part
+    // you act on.
+    spans.push(Span::styled(
+        name.chars().skip(at).collect::<String>(),
+        Style::default().add_modifier(Modifier::DIM),
+    ));
     spans
 }
 
