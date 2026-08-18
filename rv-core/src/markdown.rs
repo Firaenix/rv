@@ -215,6 +215,9 @@ pub fn render(session: &Session, comments: &[Comment]) -> String {
         env!("CARGO_PKG_VERSION"),
         session.started_at,
     ));
+    if let Some(note) = degraded_base(session) {
+        out.push_str(&note);
+    }
     out.push('\n');
     out.push_str(PROTOCOL);
 
@@ -330,6 +333,34 @@ pub fn parse_replies(document: &str) -> Vec<(String, String)> {
     }
 
     replies
+}
+
+/// What a degraded `trunk()` means, in one sentence, for whoever is reading.
+pub const DEGRADED: &str = "`trunk()` resolved to the repository root — this repo has no \
+     `origin`/`upstream` main, master or trunk bookmark — so the range is the whole history \
+     and every file reads as an addition.";
+
+/// A line naming the case where the range is not what the revset suggests.
+///
+/// `trunk()` is a union of the usual remote bookmarks *and the repository root*,
+/// so in a repo with no remote it resolves to the root and `trunk()..@` becomes
+/// the whole history. The header then reads `trunk()..@` over an all-zero base
+/// with every file marked added, and a model handed that document cannot tell a
+/// whole-repo dump from a real branch review — nor can a reviewer tell why
+/// everything is a `+`.
+///
+/// The revset records what the user *typed*; this names what it *resolved to*,
+/// which is the difference the finding was about.
+#[must_use]
+pub fn degraded_base(session: &Session) -> Option<String> {
+    let root = session.base_commit.chars().all(|c| c == '0');
+    let asked_for_trunk = session.revset.starts_with("trunk()");
+    (root && asked_for_trunk).then(|| {
+        // Not a blockquote: the protocol block is the *only* quoted run at column
+        // 0, which is a property the parser's shape rules rest on and worth more
+        // than the indentation.
+        format!("**Note:** {DEGRADED}\n")
+    })
 }
 
 /// Which lines the excerpt below covers, and which of them the comment is about.

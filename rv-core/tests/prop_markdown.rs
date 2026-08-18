@@ -1019,7 +1019,10 @@ proptest! {
                 || line == "</details>"
                 || line.starts_with("<!-- rv:anchor ")
                 || line.starts_with("**Comment:**")
-                || line.starts_with("**Reply:**");
+                || line.starts_with("**Reply:**")
+                // Names a `trunk()` that resolved to the root — see
+                // `markdown::degraded_base`.
+                || line.starts_with("**Note:**");
             prop_assert!(
                 line.is_empty() || line.starts_with("  ") || authored,
                 "line at column 0 that render did not author: {:?}",

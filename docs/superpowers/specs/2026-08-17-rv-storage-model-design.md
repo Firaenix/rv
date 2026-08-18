@@ -149,10 +149,24 @@ code that is there now:
       ╰──────────────────────────────────────────────────────────╯
 ```
 
-The before/after is produced by the existing `diff::compute` over
-(`anchor.context` joined, the current lines at the resolved region) — the same
-function the diff pane already uses, so there is no second diff implementation and
-no new dependency. When the anchor cannot be located at all, the block says so and
+The before/after is produced by the existing `diff::compute_with(old, new, path,
+false)` over (`anchor.context` joined, the current lines at the resolved region) —
+the same engine the diff pane falls back to, so there is no second diff
+implementation and no new dependency.
+
+**Ruling — `compute_with(.., false)`, not `compute`.** The sibling that spawns
+difftastic writes two temp files and runs a child process on every call, and this
+box is drawn *inside a frame*: the comment browser can hold many outdated rows, so
+`compute` would put one process spawn per row on the paint path. It is also the
+wrong tool for the job — a slice of stored context lines is not a parseable file,
+and the language difftastic infers from the extension would be right about the
+path and wrong about the fragment.
+
+**Consequence to settle with it:** over a fragment, a terminator-only difference
+sets `suppressed`, and on the fallback path `suppressed` arrives with a full set of
+`Context` lines. The box therefore needs a rule for "changed, but nothing a line
+can show": it prints the stored lines under the existing
+`no semantic change` note rather than an empty frame. When the anchor cannot be located at all, the block says so and
 shows the stored lines alone, which is still the most useful thing available.
 
 **Ruling — the before/after is an inline block, not a modal over the screen.** It

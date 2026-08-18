@@ -32,6 +32,7 @@ use clap::Parser;
 use clap::Subcommand;
 use rv::app::App;
 use rv::session;
+use rv_core::markdown;
 use rv::stale;
 use rv::session::Review;
 use rv_core::model::ChangeKind;
@@ -143,6 +144,7 @@ fn status(review: &Review, json: bool) -> Result<()> {
             "revset": session.revset,
             "base": session.base_commit,
             "head": session.head_commit,
+            "degraded_base": markdown::degraded_base(session).is_some(),
             "changes": session
                 .changes
                 .iter()
@@ -178,6 +180,11 @@ fn status(review: &Review, json: bool) -> Result<()> {
     println!("revset  {}", session.revset);
     println!("base    {}", session.base_commit);
     println!("head    {}", session.head_commit);
+    // The revset records what was typed; this says what it resolved to, which is
+    // the difference between a branch review and a whole-history dump.
+    if markdown::degraded_base(session).is_some() {
+        println!("\nnote    {}", markdown::DEGRADED);
+    }
 
     println!("\nchanges ({})", session.changes.len());
     for change in &session.changes {

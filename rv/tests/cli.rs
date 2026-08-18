@@ -357,3 +357,41 @@ fn tree(root: &std::path::Path) -> Vec<(String, std::time::SystemTime, Vec<u8>)>
     files.sort();
     files
 }
+
+/// A repo with no remote has no `trunk()`, and the export says so instead of
+/// presenting the whole history as a branch review.
+///
+/// `trunk()` is a union of the usual remote bookmarks *and the repository root*,
+/// so it degrades silently. The export used to come out headed `trunk()..@` over
+/// an all-zero base with every file marked added, and a model handed that document
+/// cannot tell a whole-repo dump from a real review — nor can a reviewer tell why
+/// everything is a `+`.
+#[test]
+fn a_degraded_trunk_is_named_rather_than_implied() {
+    let workspace = Fixture::new();
+
+    let status = workspace.rv(&["status"]);
+    let text = String::from_utf8_lossy(&status.stdout);
+    assert!(
+        text.contains("resolved to the repository root"),
+        "`rv status` presents the whole history as a branch review: {}",
+        streams(&status)
+    );
+
+    let json = workspace.rv(&["status", "--json"]);
+    let report: serde_json::Value =
+        serde_json::from_slice(&json.stdout).expect("status --json is valid json");
+    assert_eq!(
+        report["degraded_base"], true,
+        "a script cannot tell the difference: {}",
+        streams(&json)
+    );
+
+    workspace.rv(&["render"]);
+    let document = std::fs::read_to_string(workspace.root().join(".review/REVIEW-FEEDBACK.md"))
+        .expect("read the export");
+    assert!(
+        document.contains("resolved to the repository root"),
+        "the export does not name the degradation:\n{document}"
+    );
+}
