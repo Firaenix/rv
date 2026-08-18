@@ -59,8 +59,6 @@ pub use mode::Focus;
 pub use mode::Mode;
 pub use mode::SidebarTab;
 
-use comment::in_range;
-
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -292,7 +290,7 @@ impl App {
         let diffs = vec![None; review.files.len()];
         // Read before the first diff is computed: a reviewer who quit halfway
         // through yesterday opens on the notes they already made.
-        let mut comments = in_range(
+        let mut comments = crate::session::in_range(
             &review,
             review
                 .store

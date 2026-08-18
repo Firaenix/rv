@@ -26,6 +26,14 @@ impl App {
             SidebarTab::Commits => SidebarTab::Comments,
             SidebarTab::Comments => SidebarTab::Files,
         };
+        // An enumeration failure renders as a change with no files under it, so
+        // it is also *said*: the alert dedupes, so revisiting the tab does not
+        // stack toasts.
+        if self.sidebar_tab == SidebarTab::Commits {
+            for error in self.commit_index().errors().to_vec() {
+                self.raise(error);
+            }
+        }
         // The two node tabs share one cursor — they are never both on screen —
         // so it has to be clamped onto whichever list just appeared.
         self.sidebar_row = self.sidebar_row.min(self.nodes().len().saturating_sub(1));

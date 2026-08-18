@@ -19,7 +19,13 @@ use crate::NO_DESCRIPTION;
 /// is what makes the command its own undo — and refreshes the export so a
 /// polling worker sees the change.
 pub fn settle(review: &Review, id: &str, state: CommentState, by: SettledBy) -> Result<()> {
-    let comments = read_comments(review)?;
+    // The *store*, not the range-filtered view: `.review/` outlives any one
+    // revset, and a worker must be able to tick off a comment whose file has
+    // left the range it is currently standing in.
+    let comments = review
+        .store
+        .comments()
+        .context("could not read the review's comments")?;
     let comment = comments
         .iter()
         .find(|comment| comment.id == id)
@@ -166,10 +172,16 @@ pub fn status(review: &Review, json: bool) -> Result<()> {
 }
 
 fn read_comments(review: &Review) -> Result<Vec<Comment>> {
-    let mut comments = review
-        .store
-        .comments()
-        .context("could not read the review's comments")?;
+    // The same in-range filter the TUI applies: `.review/` outlives any one
+    // revset, and a count including comments this range cannot display is a
+    // count a script acts wrongly on.
+    let mut comments = session::in_range(
+        review,
+        review
+            .store
+            .comments()
+            .context("could not read the review's comments")?,
+    );
     // `status` is a load, and `outdated` is derived on every load — see
     // [`stale::mark_outdated`]. Reporting the stored state here would have the
     // command and the TUI disagree about the same review, and the command is the

@@ -752,3 +752,52 @@ fn the_change_and_the_commit_are_not_the_same_colour() {
         "both ids are picked out in one colour, so the row reads as one long id"
     );
 }
+
+/// A change whose files cannot be enumerated is *said*, not drawn as a change
+/// that touched nothing.
+///
+/// `+0 -0` under a change reads as "this change touched nothing", which is a
+/// claim about the change when the truth is a claim about the repository. The
+/// rest of the stack still renders — one broken change must not cost the review —
+/// but an alert names the failure the first time the list is shown.
+#[test]
+fn a_change_that_cannot_be_enumerated_raises_an_alert() {
+    let workspace = two_changes();
+    let mut review =
+        rv::session::read(workspace.root(), None, None).expect("build the review");
+    // A commit id that names nothing, as a rewritten-away change would.
+    review.session.changes[1].commit_id = "f".repeat(40);
+    let mut app = rv::app::App::open(review, rv::app::DiffEngine::Structural).expect("open");
+    assert!(app.alerts().is_empty());
+
+    to_commits(&mut app);
+
+    assert!(
+        app.alerts()
+            .iter()
+            .any(|alert| alert.message.contains("could not list")),
+        "the failure was swallowed into an empty change: {:?}",
+        app.alerts()
+    );
+    // And the rest of the stack survived it.
+    assert!(
+        !app.commit_nodes().is_empty(),
+        "one broken change cost the whole commits view"
+    );
+
+    // Two failures, because a broken commit breaks two enumerations: its own,
+    // and its neighbour's, whose base it is.
+    let told = |app: &rv::app::App| {
+        app.alerts()
+            .iter()
+            .filter(|alert| alert.message.contains("could not list"))
+            .count()
+    };
+    let first_visit = told(&app);
+    assert_eq!(first_visit, 2, "each failed change is named once");
+
+    // Revisiting the tab does not stack toasts: the alert dedupes.
+    to_comments(&mut app);
+    to_commits(&mut app);
+    assert_eq!(told(&app), first_visit, "the same failures were told twice");
+}

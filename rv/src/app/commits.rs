@@ -32,11 +32,24 @@ pub(super) struct CommitIndex {
     /// One entry per file row, in the order [`tree::build_grouped`] numbers
     /// them: which change it belongs to and which of that change's files it is.
     pairs: Vec<(usize, usize)>,
+    /// What went wrong enumerating, one sentence per failed change.
+    ///
+    /// Kept rather than swallowed: an enumeration error shown as an empty change
+    /// gives the summary a `+0 -0` that reads as "this change touched nothing",
+    /// which is a claim about the change when the truth is a claim about the
+    /// repository. [`App::switch_tab`] raises these as alerts the first time the
+    /// list is shown.
+    errors: Vec<String>,
     /// The size of each pair's change, parallel to `pairs`.
     stats: Vec<Stat>,
 }
 
 impl CommitIndex {
+    /// What went wrong enumerating, if anything did.
+    pub(super) fn errors(&self) -> &[String] {
+        &self.errors
+    }
+
     /// One change's files, or nothing for a change that is not in the stack.
     pub(super) fn files_of(&self, change: usize) -> &[FileChange] {
         self.files.get(change).map_or(&[], Vec::as_slice)
@@ -95,11 +108,20 @@ impl App {
                 .map_or(self.review.session.base_commit.as_str(), |older| {
                     older.commit_id.as_str()
                 });
-            let files = self
-                .review
-                .repo
-                .files(base, &change.commit_id)
-                .unwrap_or_default();
+            let files = match self.review.repo.files(base, &change.commit_id) {
+                Ok(files) => files,
+                // The rest of the stack is still worth reading, but the failure
+                // is said out loud rather than drawn as a change that touched
+                // nothing: `+0 -0` under a change reads as a claim about the
+                // change when the truth is a claim about the repository.
+                Err(error) => {
+                    index.errors.push(format!(
+                        "could not list {}'s files: {error}",
+                        &change.change_id[..8.min(change.change_id.len())]
+                    ));
+                    Vec::new()
+                }
+            };
             index
                 .endpoints
                 .push((base.to_owned(), change.commit_id.clone()));

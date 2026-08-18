@@ -192,6 +192,8 @@ fn empty_range_fails_naming_endpoints() {
 #[test]
 fn status_reports_a_stale_comment_as_outdated() {
     let workspace = Fixture::new();
+    workspace.write("a.rs", "fn a() {\n    let x = 1;\n}\n");
+    workspace.commit("first change");
 
     // A comment written against a line, by hand — the TUI is not what is under
     // test here — and then the line rewritten under it.

@@ -9,15 +9,11 @@
 use anyhow::Context as _;
 use anyhow::Result;
 use crossterm::event::KeyCode;
-use rv_core::anchor;
 use rv_core::store::Comment;
-use rv_core::store::CommentState;
 
 use super::Action;
 use super::App;
-use crate::session::Review;
 use super::Mode;
-use super::anchor::comment_id;
 use crate::session;
 
 impl App {
@@ -72,17 +68,14 @@ impl App {
             }
         };
 
-        // A new box adds rows to the plan the cursor indexes, so the cursor
-        // comes back to the line it commented on rather than to a row number
-        // that now means something else.
+        // `prepare_comment` saved it through `session::save_comment`, export
+        // refresh included; what is left is the screen. A new box adds rows to
+        // the plan the cursor indexes, so the cursor comes back to the line it
+        // commented on rather than to a row number that now means something
+        // else.
         let line = self.line_index();
-        self.review
-            .store
-            .append_comment(&comment)
-            .context("could not save the comment")?;
         self.reload_comments()?;
         self.resettle_cursor(line);
-        session::write_markdown(&self.review)?;
 
         self.status = format!(
             "comment saved at {}:{}",
@@ -91,20 +84,12 @@ impl App {
         Ok(())
     }
 
-    /// Builds the [`Comment`] the current selection and buffer describe, or —
-    /// as the inner `Err` — the sentence to show instead of saving anything.
-    /// The outer [`Result`] is reserved for a repository that could not be
-    /// read, which is a real failure rather than a refusal.
+    /// Resolves where the comment goes — the selected line's side, path, number
+    /// and commit — or, as the inner `Err`, the sentence to show instead.
     ///
-    /// Two of the refusals cannot be provoked from the keyboard alone. "the
-    /// review covers no change to comment on" needs an empty `session.changes`,
-    /// which only a hand-assembled [`crate::session::Review`] has — and
-    /// `rv/tests/app_cases` assembles one. "this line has no number on the side
-    /// it belongs to" really is unreachable, and is kept as defence in depth:
-    /// every producer in [`rv_core::diff`] numbers the side it dispatches to.
-    ///
-    /// The body is stored trimmed: surrounding whitespace is a slip of the
-    /// keyboard, and it would otherwise end up in the comment id.
+    /// Construction and saving happen in [`session::save_comment`], the one
+    /// path the CLI also uses: everything after "which line is this about" is
+    /// policy the two must not answer differently.
     fn prepare_comment(&self) -> Result<Result<Comment, String>> {
         let body = self.buffer.trim();
         if body.is_empty() {
@@ -113,52 +98,22 @@ impl App {
         let Some(line) = self.selected_line() else {
             return Ok(Err("no diff line selected, nothing saved".to_owned()));
         };
-        // `change_id` is the *first change of the reviewed range* — the same one
-        // for every comment in the review, not the change that introduced the
-        // line. Attributing a comment to the change that touched its line is
-        // Milestone 2's work (spec §14) and needs per-change diffs. `commit_id`
-        // is not taken from it: that comes from the anchored side.
-        let Some(change) = self.review.session.changes.first() else {
-            return Ok(Err("the review covers no change to comment on".to_owned()));
-        };
-
         let Some(target) = self.anchor_target(line) else {
             return Ok(Err(
                 "this line has no number on the side it belongs to".to_owned()
             ));
         };
-
-        // The anchor hashes the line as it stands in the file, not as the diff
-        // rendered it, so it resolves against the file's own future text.
-        let blob = self
-            .review
-            .repo
-            .read_blob(&target.commit, target.path)
-            .with_context(|| format!("could not read {} to anchor the comment", target.path))?;
-        let text = blob.map(|bytes| String::from_utf8_lossy(&bytes).into_owned());
-        let anchor = anchor::create(
+        if self.review.session.changes.is_empty() {
+            return Ok(Err("the review covers no change to comment on".to_owned()));
+        }
+        Ok(Ok(session::save_comment(
+            &self.review,
             target.path,
             target.side,
             target.number,
-            text.as_deref().unwrap_or_default(),
-        );
-
-        Ok(Ok(Comment {
-            id: comment_id(
-                &change.change_id,
-                target.path,
-                target.side,
-                target.number,
-                body,
-            ),
-            change_id: change.change_id.clone(),
-            commit_id: target.commit.to_owned(),
-            anchor,
-            body: body.to_owned(),
-            state: CommentState::Open,
-            reply: None,
-            settled_by: None,
-        }))
+            &target.commit,
+            body,
+        )?))
     }
 
     /// Re-reads the comments from disk.
@@ -167,7 +122,7 @@ impl App {
     /// what this process believes it stored: the store is the authority, and
     /// its upsert may have replaced an entry rather than added one.
     pub(super) fn reload_comments(&mut self) -> Result<()> {
-        let mut comments = in_range(
+        let mut comments = crate::session::in_range(
             &self.review,
             self.review
                 .store
@@ -183,31 +138,3 @@ impl App {
     }
 }
 
-/// The comments this review can show: the ones anchored to a file it covers.
-///
-/// `.review/` outlives any one range. A comment written against `trunk()..@`
-/// last week may be anchored to a file the range open now does not touch, and
-/// listing it offers the reviewer a jump that cannot land — which is exactly
-/// what it used to do: the browser showed the row and `Enter` answered with an
-/// alert saying the file had left the range.
-///
-/// Filtered once, where the store is read, rather than in the browser: the count
-/// in the bar, the rows in the sidebar and the boxes in the diff then all
-/// describe the same set of comments. **The store keeps every one of them** —
-/// nothing is deleted and the export still carries them — so a comment hidden
-/// by a narrow range comes back with a wider one.
-///
-/// Either side's path matches, because a comment on a removed line is filed
-/// under the base-side path, which for a rename is not the path the file is
-/// listed under.
-pub(super) fn in_range(review: &Review, comments: Vec<Comment>) -> Vec<Comment> {
-    comments
-        .into_iter()
-        .filter(|comment| {
-            review.files.iter().any(|file| {
-                file.path == comment.anchor.file
-                    || file.source_path.as_deref() == Some(comment.anchor.file.as_str())
-            })
-        })
-        .collect()
-}

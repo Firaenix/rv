@@ -23,6 +23,7 @@ use anyhow::Context as _;
 use anyhow::Result;
 use rv_core::markdown;
 use rv_core::anchor;
+use rv_core::model::ChangeRef;
 use rv_core::model::FileChange;
 use rv_core::model::Side;
 use rv_core::store::Comment;
@@ -181,19 +182,87 @@ fn resolve(repo_root: &Path, base: Option<&str>, head: Option<&str>) -> Result<R
     })
 }
 
-/// Saves a comment against `line` of `path`, exactly as the TUI would.
+/// The change a comment on `path` belongs to: the newest change in the range
+/// whose own diff touches it.
 ///
-/// This is `rv comment`, the entry point an agent uses: the TUI's rules for the
-/// id seed and the anchor are called rather than restated, because the project
-/// has already shipped one bug from two places deciding the same fact.
+/// One rule for the TUI and the CLI. The CLI used `changes.first()`, which is
+/// the newest entry and as often as not the *empty working-copy change* — so a
+/// comment on code an older change introduced was filed under a change that
+/// touched nothing. Falls back to the newest change where no diff claims the
+/// path, which is also the answer for an empty stack's error path.
+pub fn owning_change<'a>(review: &'a Review, path: &str) -> Result<&'a ChangeRef> {
+    let changes = &review.session.changes;
+    for (position, change) in changes.iter().enumerate() {
+        let base = changes
+            .get(position + 1)
+            .map_or(review.session.base_commit.as_str(), |older| {
+                older.commit_id.as_str()
+            });
+        let Ok(files) = review.repo.files(base, &change.commit_id) else {
+            continue;
+        };
+        if files
+            .iter()
+            .any(|file| file.path == path || file.source_path.as_deref() == Some(path))
+        {
+            return Ok(change);
+        }
+    }
+    changes
+        .first()
+        .context("the review covers no change to comment on")
+}
+
+/// Builds and saves a comment, given the side-resolved location.
 ///
-/// `path` is the file as the review lists it — its head-side name. For a comment
-/// on the base side of a rename, the anchor is filed under the base-side name,
-/// which is the same mapping the diff pane applies.
-///
-/// The refusals are errors rather than silent skips because the caller is a
-/// program: a reviewer agent that mistypes a path must hear so, not discover a
-/// missing comment three rounds later.
+/// The one construction path: the TUI resolves its location from the selected
+/// diff line and the CLI from its arguments, and everything after that — the
+/// blob read, the anchor, the id seed, the assembly, the save, the export
+/// refresh — happens here once. The project has already shipped one bug from
+/// two places deciding the same fact, and a second copy of this policy would be
+/// a two-file migration lying in wait.
+pub fn save_comment(
+    review: &Review,
+    path: &str,
+    side: Side,
+    line: u32,
+    commit: &str,
+    body: &str,
+) -> Result<Comment> {
+    let body = body.trim();
+    if body.is_empty() {
+        anyhow::bail!("an empty comment says nothing — nothing saved");
+    }
+    let change = owning_change(review, path)?;
+
+    // The anchor hashes the line as it stands in the file, not as the diff
+    // rendered it, so it resolves against the file's own future text.
+    let blob = review
+        .repo
+        .read_blob(commit, path)
+        .with_context(|| format!("could not read {path} to anchor the comment"))?;
+    let text = blob.map(|bytes| String::from_utf8_lossy(&bytes).into_owned());
+
+    let comment = Comment {
+        id: crate::app::comment_id(&change.change_id, path, side, line, body),
+        change_id: change.change_id.clone(),
+        commit_id: commit.to_owned(),
+        anchor: anchor::create(path, side, line, text.as_deref().unwrap_or_default()),
+        body: body.to_owned(),
+        state: CommentState::Open,
+        reply: None,
+        settled_by: None,
+    };
+    review
+        .store
+        .append_comment(&comment)
+        .context("could not save the comment")?;
+    write_markdown(review)?;
+    Ok(comment)
+}
+
+/// `rv comment`: resolves the CLI's arguments to a side-specific location and
+/// saves through [`save_comment`].
 pub fn add_comment(
     review: &Review,
     path: &str,
@@ -218,52 +287,21 @@ pub fn add_comment(
         ),
         Side::Right => (file.path.as_str(), review.session.head_commit.as_str()),
     };
-    let blob = review
-        .repo
-        .read_blob(commit, anchored_path)?
-        .with_context(|| {
-            let where_ = match side {
-                Side::Left => "the base",
-                Side::Right => "the head",
-            };
-            format!("{anchored_path} does not exist at {where_} of this review")
-        })?;
+    // A refusal a program can act on beats an anchor that never resolves.
+    let blob = review.repo.read_blob(commit, anchored_path)?.with_context(|| {
+        let where_ = match side {
+            Side::Left => "the base",
+            Side::Right => "the head",
+        };
+        format!("{anchored_path} does not exist at {where_} of this review")
+    })?;
     let text = String::from_utf8(blob)
         .with_context(|| format!("{anchored_path} is not text on that side"))?;
     let lines = u32::try_from(text.lines().count()).unwrap_or(u32::MAX);
     if line == 0 || line > lines {
         anyhow::bail!("{anchored_path} has lines 1..={lines}, not {line}");
     }
-
-    let body = body.trim();
-    if body.is_empty() {
-        anyhow::bail!("an empty comment says nothing — pass a body with -m");
-    }
-    let change = review
-        .session
-        .changes
-        .first()
-        .context("the review covers no change to comment on")?;
-
-    let comment = Comment {
-        id: crate::app::comment_id(&change.change_id, anchored_path, side, line, body),
-        change_id: change.change_id.clone(),
-        commit_id: commit.to_owned(),
-        anchor: anchor::create(anchored_path, side, line, &text),
-        body: body.to_owned(),
-        state: CommentState::Open,
-        reply: None,
-        settled_by: None,
-    };
-    review
-        .store
-        .append_comment(&comment)
-        .context("could not save the comment")?;
-    // The export stays in step with a save, exactly as it does in the TUI —
-    // ingesting any replies already in the document first, so saving cannot
-    // erase an answer.
-    write_markdown(review)?;
-    Ok(comment)
+    save_comment(review, anchored_path, side, line, commit, body)
 }
 
 /// Rewrites `.review/REVIEW-FEEDBACK.md` from the store's comments.
@@ -353,4 +391,33 @@ fn started_at() -> String {
         .map(|elapsed| elapsed.as_secs())
         .unwrap_or(0);
     format!("epoch:{seconds}")
+}
+
+/// The comments this review can show: the ones anchored to a file it covers.
+///
+/// `.review/` outlives any one range. A comment written against `trunk()..@`
+/// last week may be anchored to a file the range open now does not touch, and
+/// listing it offers the reviewer a jump that cannot land — which is exactly
+/// what it used to do: the browser showed the row and `Enter` answered with an
+/// alert saying the file had left the range.
+///
+/// Filtered once, where the store is read, rather than in the browser: the count
+/// in the bar, the rows in the sidebar and the boxes in the diff then all
+/// describe the same set of comments. **The store keeps every one of them** —
+/// nothing is deleted and the export still carries them — so a comment hidden
+/// by a narrow range comes back with a wider one.
+///
+/// Either side's path matches, because a comment on a removed line is filed
+/// under the base-side path, which for a rename is not the path the file is
+/// listed under.
+pub fn in_range(review: &Review, comments: Vec<Comment>) -> Vec<Comment> {
+    comments
+        .into_iter()
+        .filter(|comment| {
+            review.files.iter().any(|file| {
+                file.path == comment.anchor.file
+                    || file.source_path.as_deref() == Some(comment.anchor.file.as_str())
+            })
+        })
+        .collect()
 }

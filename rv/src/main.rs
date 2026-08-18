@@ -1,11 +1,11 @@
 //! The `rv` command line.
 //!
-//! Every invocation assembles the same thing first — a [`Review`] over one
-//! revision range, via [`session::build`] — and only then branches on what the
-//! user asked for. With no subcommand that is the interactive reviewer. Two
-//! subcommands exist beside it, for the same review without a terminal:
-//! `render` writes `.review/REVIEW-FEEDBACK.md`, and `status` reports the
-//! range, its stack, its files and its comment counts as text or as JSON.
+//! One invariant decides who writes what: **only the bare TUI opens a review**
+//! — [`session::build`], which records the session — and every subcommand
+//! resolves the same range through [`session::read`] and writes no session
+//! record. The subcommands fall into two families: queries (`status`, `render`)
+//! and the agent's comment operations (`comment`, `resolve`, `abandon`), which
+//! write comments and the export but never the session.
 //!
 //! # Naming the range
 //!

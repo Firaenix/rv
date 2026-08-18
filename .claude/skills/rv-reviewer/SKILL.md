@@ -20,7 +20,7 @@ root (git-excluded automatically):
 | `comments.json` | **The authority.** Every comment, with its anchor | rv only — never by hand |
 | `session.toml` | The range under review (revset, base/head commits) | rv only |
 | `REVIEW-FEEDBACK.md` | An **export** of the comments, for reading and for replies | `rv render`, and rv after every save |
-| `snapshots/` | Legacy artefacts | ignore |
+| `snapshots/` | rv-owned crash-safety data, written beside every save | rv only — never edit |
 
 A comment is **anchored**: it records the file, side, line, a content hash of
 that line, and an excerpt of surrounding code. If the code later moves, rv
