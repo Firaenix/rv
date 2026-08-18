@@ -67,6 +67,7 @@ use rv::app::Action;
 use rv::app::App;
 use rv::app::Focus;
 use rv::app::Mode;
+use rv::app::SidebarTab;
 use rv::app::anchored_side;
 use rv::session;
 use rv::ui;
@@ -221,6 +222,24 @@ const SUPPRESSED: &str = "no semantic change";
 /// any pane height the rendering properties sweep, so the diff pane has to
 /// scroll.
 const LONG_LINES: usize = 40;
+
+/// The terminal sizes that have historically broken ratatui layout arithmetic:
+/// a single cell, a single row, a single column, and the ones where a bar
+/// asking for three rows meets a frame that has one or two.
+///
+/// Spelled out rather than sampled wherever they are swept, because these are
+/// *the* cases and a uniform draw over a plausible range visits them almost
+/// never.
+const PATHOLOGICAL: [(u16, u16); 8] = [
+    (1, 1),
+    (80, 1),
+    (1, 40),
+    (2, 5),
+    (5, 2),
+    (3, 3),
+    (40, 2),
+    (40, 3),
+];
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -481,6 +500,42 @@ fn multi_app() -> App {
     shared_tables().app()
 }
 
+/// The comment browser's own workspace: [`Fixture::multi`] with two comments
+/// already saved into `alpha.rs`, so that the browser has rows to move between.
+///
+/// Shared, and read-only from here on: no case in the browser's table saves or
+/// deletes anything, which is what lets them share one `jj` workspace. The
+/// table asserts that at the end of every case.
+fn shared_browser() -> &'static Fixture {
+    static BROWSER: OnceLock<Fixture> = OnceLock::new();
+    BROWSER.get_or_init(|| {
+        let fixture = Fixture::multi();
+        let mut app = fixture.app();
+        assert_eq!(app.selected_file().expect("a file").path, "alpha.rs");
+        for (downs, body) in [(0, "first finding"), (1, "second finding")] {
+            press_n(&mut app, KeyCode::Char('j'), downs);
+            press(&mut app, KeyCode::Char('c'));
+            type_text(&mut app, body);
+            press(&mut app, KeyCode::Enter);
+        }
+        assert_eq!(fixture.comments().len(), 2, "{:?}", fixture.comments());
+        fixture
+    })
+}
+
+/// A reviewer over [`shared_browser`], already in the comment browser with the
+/// sidebar focused — reached the way a reviewer reaches it.
+#[fixture]
+fn browser_app() -> App {
+    let mut app = shared_browser().app();
+    press(&mut app, KeyCode::Tab);
+    press(&mut app, KeyCode::Left);
+    assert_eq!(app.sidebar_tab(), SidebarTab::Comments);
+    assert_eq!(app.focus(), Focus::Sidebar);
+    assert_eq!(app.browser_index(), 0);
+    app
+}
+
 // ---------------------------------------------------------------------------
 // Driving the app
 // ---------------------------------------------------------------------------
@@ -504,10 +559,24 @@ fn multi_app() -> App {
 ///   is remembered per file, so returning to file 0 restores file 0's position
 ///   and leaves the others where the last case left them — which would make the
 ///   next case's `]` land somewhere it did not ask for.
+/// * **The sidebar's tab and the comment browser's own cursor are reset too.**
+///   `Tab` is bound from every focus, so a random walk leaves the left column
+///   listing whichever of the two it last flipped to, with its cursor wherever
+///   `j` left it — and `j` then means something different in the next case
+///   than it did in this one.
 fn rewind(app: &mut App) {
     app.on_key(KeyCode::Esc).expect("leave comment mode");
     app.on_key(KeyCode::Left).expect("out of the stack");
     app.on_key(KeyCode::Left).expect("onto the sidebar");
+    if app.sidebar_tab() != SidebarTab::Comments {
+        app.on_key(KeyCode::Tab).expect("onto the comment browser");
+    }
+    for _ in 0..=app.comments().len() {
+        // Bounded for the same reason the line loop below is: this presses the
+        // very key the browser's clamp is about.
+        app.on_key(KeyCode::Up).expect("first comment");
+    }
+    app.on_key(KeyCode::Tab).expect("back to the file list");
     app.on_key(KeyCode::Right).expect("back onto the diff");
     for _ in 0..=app.files().len() {
         app.on_key(KeyCode::Char('[')).expect("first file");
@@ -530,6 +599,8 @@ fn rewind(app: &mut App) {
     assert_eq!(app.line_index(), 0);
     assert_eq!(app.mode(), Mode::Browse);
     assert_eq!(app.buffer(), "");
+    assert_eq!(app.sidebar_tab(), SidebarTab::Files);
+    assert_eq!(app.browser_index(), 0);
 }
 
 fn press(app: &mut App, key: KeyCode) -> Action {
@@ -766,8 +837,8 @@ fn any_body() -> impl Strategy<Value = String> {
 ///
 /// Cross-checked against `app.rs::on_key_browse`, which binds exactly these and
 /// nothing else: `j`/`Down`, `k`/`Up`, `Left`, `Right`, `]`, `[`, `c`, `d`,
-/// `s`, `Enter`, `Esc`, `q` — every one of which has a row below, and the rows
-/// after them are keys the table deliberately leaves inert.
+/// `s`, `Tab`, `Enter`, `Esc`, `q` — every one of which has a row below, and
+/// the rows after them are keys the table deliberately leaves inert.
 ///
 /// The start state is a fresh reviewer on `alpha.rs` (five-plus diff lines,
 /// first of five files) with the diff focused and **no comments anywhere in the
@@ -799,11 +870,16 @@ fn any_body() -> impl Strategy<Value = String> {
 #[case::escape_outside_a_stack(KeyCode::Esc, Action::Continue, Mode::Browse, Focus::Diff, (0, 0), None)]
 #[case::delete_nothing(KeyCode::Char('d'), Action::Continue, Mode::Browse, Focus::Diff, (0, 0), Some(NO_COMMENTS))]
 #[case::collapse_nothing(KeyCode::Char('s'), Action::Continue, Mode::Browse, Focus::Diff, (0, 0), Some(NO_COMMENTS))]
+// `Tab` changes what the left column *lists* and nothing else: not the focus,
+// not the selection, and not the status line — which is where the reviewer
+// reads the rest of the keymap, and is not a place for a navigation key to
+// announce itself. Which tab it left behind is asserted in the body.
+#[case::switch_sidebar_tab(KeyCode::Tab, Action::Continue, Mode::Browse, Focus::Diff, (0, 0), None)]
 // Not in the table, and therefore inert.
 #[case::unbound_letter(KeyCode::Char('x'), Action::Continue, Mode::Browse, Focus::Diff, (0, 0), None)]
 #[case::unbound_uppercase(KeyCode::Char('J'), Action::Continue, Mode::Browse, Focus::Diff, (0, 0), None)]
 #[case::unbound_backspace(KeyCode::Backspace, Action::Continue, Mode::Browse, Focus::Diff, (0, 0), None)]
-#[case::unbound_tab(KeyCode::Tab, Action::Continue, Mode::Browse, Focus::Diff, (0, 0), None)]
+#[case::unbound_backtab(KeyCode::BackTab, Action::Continue, Mode::Browse, Focus::Diff, (0, 0), None)]
 #[case::unbound_function(KeyCode::F(1), Action::Continue, Mode::Browse, Focus::Diff, (0, 0), None)]
 #[case::unbound_page_down(KeyCode::PageDown, Action::Continue, Mode::Browse, Focus::Diff, (0, 0), None)]
 #[case::unbound_home(KeyCode::Home, Action::Continue, Mode::Browse, Focus::Diff, (0, 0), None)]
@@ -853,6 +929,199 @@ fn browse_keybindings(
         app.comment_index(),
         0,
         "no browsing key moves the stack cursor off the top"
+    );
+    // Exactly one key in the table changes what the left column lists.
+    assert_eq!(
+        app.sidebar_tab(),
+        if key == KeyCode::Tab {
+            SidebarTab::Comments
+        } else {
+            SidebarTab::Files
+        },
+        "{key:?} left the sidebar listing the wrong thing"
+    );
+}
+
+/// Every key, from inside the sidebar's **Comments** tab — the one focus whose
+/// keys mean something different from everywhere else, since `j`/`k` walk the
+/// review's comments there rather than its files or its lines.
+///
+/// The start state is the browser, focused, on the first of two comments, both
+/// of them on `alpha.rs` (the first file). Nothing here saves or deletes: `d`
+/// is checked as far as its question, because what answering it does is pinned
+/// end-to-end in `rv/tests/app.rs` and doing it here would empty the shared
+/// fixture under the other cases.
+#[rstest]
+#[case::next_comment_letter(
+    KeyCode::Char('j'),
+    Action::Continue,
+    Mode::Browse,
+    Focus::Sidebar,
+    SidebarTab::Comments,
+    (1, 0)
+)]
+#[case::next_comment_arrow(
+    KeyCode::Down,
+    Action::Continue,
+    Mode::Browse,
+    Focus::Sidebar,
+    SidebarTab::Comments,
+    (1, 0)
+)]
+#[case::previous_comment_letter(
+    KeyCode::Char('k'),
+    Action::Continue,
+    Mode::Browse,
+    Focus::Sidebar,
+    SidebarTab::Comments,
+    (0, 0)
+)]
+#[case::previous_comment_arrow(
+    KeyCode::Up,
+    Action::Continue,
+    Mode::Browse,
+    Focus::Sidebar,
+    SidebarTab::Comments,
+    (0, 0)
+)]
+// `Enter` jumps to the code, which hands the focus to the diff.
+#[case::jump(
+    KeyCode::Enter,
+    Action::Continue,
+    Mode::Browse,
+    Focus::Diff,
+    SidebarTab::Comments,
+    (0, 0)
+)]
+// `d` asks about the *browsed* comment, and stays in the browser to be answered.
+#[case::delete_asks(KeyCode::Char('d'), Action::Continue, Mode::ConfirmDelete { id: String::new(), label: String::new() }, Focus::Sidebar, SidebarTab::Comments, (0, 0))]
+#[case::back_to_files(
+    KeyCode::Tab,
+    Action::Continue,
+    Mode::Browse,
+    Focus::Sidebar,
+    SidebarTab::Files,
+    (0, 0)
+)]
+#[case::nothing_further_left(
+    KeyCode::Left,
+    Action::Continue,
+    Mode::Browse,
+    Focus::Sidebar,
+    SidebarTab::Comments,
+    (0, 0)
+)]
+#[case::out_to_the_diff(
+    KeyCode::Right,
+    Action::Continue,
+    Mode::Browse,
+    Focus::Diff,
+    SidebarTab::Comments,
+    (0, 0)
+)]
+// File navigation still means files, from here as from everywhere.
+#[case::next_file(
+    KeyCode::Char(']'),
+    Action::Continue,
+    Mode::Browse,
+    Focus::Sidebar,
+    SidebarTab::Comments,
+    (0, 1)
+)]
+#[case::previous_file(
+    KeyCode::Char('['),
+    Action::Continue,
+    Mode::Browse,
+    Focus::Sidebar,
+    SidebarTab::Comments,
+    (0, 0)
+)]
+#[case::comment(
+    KeyCode::Char('c'),
+    Action::Continue,
+    Mode::Comment,
+    Focus::Sidebar,
+    SidebarTab::Comments,
+    (0, 0)
+)]
+#[case::quit(
+    KeyCode::Char('q'),
+    Action::Quit,
+    Mode::Browse,
+    Focus::Sidebar,
+    SidebarTab::Comments,
+    (0, 0)
+)]
+#[case::escape_is_inert(
+    KeyCode::Esc,
+    Action::Continue,
+    Mode::Browse,
+    Focus::Sidebar,
+    SidebarTab::Comments,
+    (0, 0)
+)]
+#[case::unbound_function(
+    KeyCode::F(1),
+    Action::Continue,
+    Mode::Browse,
+    Focus::Sidebar,
+    SidebarTab::Comments,
+    (0, 0)
+)]
+#[case::unbound_home(
+    KeyCode::Home,
+    Action::Continue,
+    Mode::Browse,
+    Focus::Sidebar,
+    SidebarTab::Comments,
+    (0, 0)
+)]
+#[case::unbound_backspace(
+    KeyCode::Backspace,
+    Action::Continue,
+    Mode::Browse,
+    Focus::Sidebar,
+    SidebarTab::Comments,
+    (0, 0)
+)]
+fn comment_browser_keybindings(
+    mut browser_app: App,
+    #[case] key: KeyCode,
+    #[case] action: Action,
+    #[case] mode: Mode,
+    #[case] focus: Focus,
+    #[case] tab: SidebarTab,
+    // The selection the key should leave behind, as `(browsed row, file)`: one
+    // column rather than two, so a row still reads as a row.
+    #[case] selection: (usize, usize),
+) {
+    let app = &mut browser_app;
+    assert_eq!(app.comments().len(), 2, "the browser has nothing to walk");
+
+    assert_eq!(app.on_key(key).expect("handle the key"), action);
+    // `ConfirmDelete` carries the id it is about, which no row can spell out;
+    // the rows say *which* mode, and `rv/tests/app.rs` says which comment.
+    assert_eq!(
+        std::mem::discriminant(&app.mode()),
+        std::mem::discriminant(&mode),
+        "{key:?} left the reviewer in {:?}",
+        app.mode()
+    );
+    assert_eq!(
+        app.focus(),
+        focus,
+        "{key:?} left the cursor in the wrong pane"
+    );
+    assert_eq!(app.sidebar_tab(), tab);
+    assert_eq!(
+        (app.browser_index(), app.file_index()),
+        selection,
+        "{key:?} left the browser or the file list somewhere else"
+    );
+    assert_eq!(
+        shared_browser().comments().len(),
+        2,
+        "{key:?} wrote to the browser's shared fixture"
     );
 }
 
@@ -1706,6 +1975,75 @@ fn both_halves_of_a_same_position_rewrite_keep_their_own_comment() {
     assert_ne!(left.anchor.content_hash, right.anchor.content_hash);
 }
 
+/// A jump tells the two halves of a same-position rewrite apart.
+///
+/// `same.rs` rewrites line 2 without moving it, so difftastic pairs the halves
+/// and both come back with `left == right == 2`: same file, same *path* (there
+/// is no rename here), same number, opposite sides. The side is therefore the
+/// only thing that distinguishes the two comments, and a jump that dropped it
+/// from its lookup would send the reviewer to whichever half the diff lists
+/// first — for both of them — while the status line named the right place.
+///
+/// That is not a hypothetical: dropping the side from `line_of_anchor` survives
+/// every rename-based test in this suite, because for a rename the *path*
+/// happens to carry the same information. This is the shape where it does not.
+#[test]
+fn a_jump_tells_the_two_halves_of_a_rewrite_apart() {
+    let fixture = Fixture::collisions();
+    let mut app = fixture.app();
+    select_path(&mut app, "same.rs");
+    assert_difftastic(&app);
+
+    let diff_lines = lines(&app);
+    let paired = |kind: LineKind| {
+        diff_lines
+            .iter()
+            .position(|line| line.kind == kind && line.left.is_some() && line.left == line.right)
+            .unwrap_or_else(|| {
+                panic!("no paired {kind:?} line whose two numbers agree: {diff_lines:?}")
+            })
+    };
+    let removed = paired(LineKind::Removed);
+    let added = paired(LineKind::Added);
+    assert_ne!(removed, added, "the two halves are the same diff line");
+
+    // One comment on each half, in diff order, so the browser lists them in
+    // that order too.
+    for (index, body) in [(removed, "the old one"), (added, "the new one")] {
+        select_path(&mut app, "same.rs");
+        press_n(&mut app, KeyCode::Char('j'), index);
+        press(&mut app, KeyCode::Char('c'));
+        assert_eq!(app.mode(), Mode::Comment);
+        type_text(&mut app, body);
+        press(&mut app, KeyCode::Enter);
+    }
+    assert_eq!(fixture.comments().len(), 2, "{:?}", fixture.comments());
+
+    for (row, expected, kind) in [(0, removed, LineKind::Removed), (1, added, LineKind::Added)] {
+        rewind(&mut app);
+        press(&mut app, KeyCode::Tab);
+        press(&mut app, KeyCode::Left);
+        press_n(&mut app, KeyCode::Down, row);
+        press(&mut app, KeyCode::Enter);
+
+        assert_eq!(app.selected_file().expect("a file").path, "same.rs");
+        assert_eq!(
+            app.line_index(),
+            expected,
+            "row {row} jumped to the other half of the rewrite: {:?}",
+            lines(&app)[app.line_index()]
+        );
+        assert_eq!(lines(&app)[app.line_index()].kind, kind);
+        assert_eq!(
+            app.comments_for_line(app.line_index()).len(),
+            1,
+            "the line jumped to shows both comments, so the two halves are not \
+             being told apart"
+        );
+    }
+    fixture.clear_comments();
+}
+
 /// Nothing a reviewer saves is ever lost or duplicated: after any run of
 /// comments, `comments.json` holds exactly one entry per distinct
 /// **(file, side, line, trimmed body)** the reviewer committed — the same body
@@ -2192,6 +2530,103 @@ fn no_key_leaves_the_reviewer_stuck_at_a_confirmation() {
         Ok(())
     });
     seen.assert_all();
+}
+
+// ---------------------------------------------------------------------------
+// Jumping to a comment's code
+// ---------------------------------------------------------------------------
+
+/// Every comment in the browser jumps to a line that shows it.
+///
+/// The oracle is the app's own display index — `comments_for_line` — rather
+/// than the anchor arithmetic the jump uses, which is the point: the jump and
+/// the save go through one `anchor_target`, so a jump that landed anywhere else
+/// would mean the reviewer's own comment was not on the line the reviewer was
+/// sent to. Written through the keyboard, so every anchor under test is one the
+/// save path actually made.
+#[test]
+fn jumping_to_any_comment_lands_on_a_line_that_shows_it() {
+    let fixture = Fixture::multi();
+    let app = RefCell::new(fixture.app());
+
+    // Only the files with diff lines can carry a comment at all; drawing from
+    // the others would spend most cases writing nothing.
+    let commentable: Vec<usize> = {
+        let app = &mut *app.borrow_mut();
+        let count = app.files().len();
+        (0..count)
+            .filter(|index| {
+                rewind(app);
+                press_n(app, KeyCode::Char(']'), *index);
+                !lines(app).is_empty()
+            })
+            .collect()
+    };
+    assert!(
+        commentable.len() >= 2,
+        "fewer than two files can hold a comment: {commentable:?}"
+    );
+
+    let write = (proptest::sample::select(commentable), 0usize..6);
+    let seen = Coverage::new(&["a jump that changed file", "a jump inside the open file"]);
+    run_cases(24, prop::collection::vec(write, 1..5), |writes| {
+        fixture.clear_comments();
+        let app = &mut *app.borrow_mut();
+
+        for (index, (file, downs)) in writes.iter().enumerate() {
+            rewind(app);
+            press_n(app, KeyCode::Char(']'), *file);
+            press_n(app, KeyCode::Char('j'), *downs);
+            press(app, KeyCode::Char('c'));
+            prop_assert_eq!(app.mode(), Mode::Comment);
+            // Distinct bodies, so that two writes at one location are two
+            // comments rather than one upsert of the other.
+            type_text(app, &format!("finding {index}"));
+            press(app, KeyCode::Enter);
+        }
+
+        let ids: Vec<String> = app.comments().iter().map(|c| c.id.clone()).collect();
+        prop_assert!(!ids.is_empty(), "{:?} wrote nothing", writes);
+
+        for (row, id) in ids.iter().enumerate() {
+            rewind(app);
+            press(app, KeyCode::Tab);
+            press(app, KeyCode::Left);
+            press_n(app, KeyCode::Down, row);
+            prop_assert_eq!(
+                app.browsed_comment()
+                    .expect("a browsed comment")
+                    .id
+                    .as_str(),
+                id.as_str(),
+                "the browser's {}th row is not the {}th comment",
+                row,
+                row
+            );
+
+            let before = app.file_index();
+            press(app, KeyCode::Enter);
+            seen.hit(usize::from(app.file_index() == before));
+
+            prop_assert_eq!(
+                app.focus(),
+                Focus::Diff,
+                "the jump did not hand over the diff"
+            );
+            let landed = app.comments_for_line(app.line_index());
+            prop_assert!(
+                landed.iter().any(|comment| &comment.id == id),
+                "row {} jumped to {}:{} , which does not show it: {:?}",
+                row,
+                app.file_index(),
+                app.line_index(),
+                app.status()
+            );
+        }
+        Ok(())
+    });
+    seen.assert_all();
+    fixture.clear_comments();
 }
 
 // ---------------------------------------------------------------------------
@@ -2858,6 +3293,99 @@ fn drawing_never_panics_at_any_size() {
         Ok(())
     });
     seen.assert_all();
+}
+
+/// The same totality claim, with **comment boxes on screen** — which is where
+/// the arithmetic actually is.
+///
+/// A box subtracts a seven-column gutter, two borders and their padding from
+/// whatever width it is given, and its body is wrapped to what is left; the
+/// row model then windows over rows rather than lines. Every one of those is a
+/// subtraction that panics if it is not saturating, and none of them runs at
+/// all in `drawing_never_panics_at_any_size`, whose fixture has no comments in
+/// it by construction.
+///
+/// The walk is navigation only. `d` and `y` would empty the fixture under the
+/// sweep — and what a delete does is pinned elsewhere — while every key here
+/// changes what is *drawn*: the focus, the tab, the browser's row, which boxes
+/// are folded, and which line the window is centred on.
+#[test]
+fn drawing_never_panics_with_comment_boxes_on_screen() {
+    let fixture = Fixture::multi();
+    let app = RefCell::new(fixture.app());
+    {
+        let app = &mut *app.borrow_mut();
+        rewind(app);
+        for body in [
+            "first finding",
+            "a second finding, long enough that it has to wrap several times over in any pane \
+             narrow enough to be worth sweeping",
+        ] {
+            press(app, KeyCode::Char('c'));
+            type_text(app, body);
+            press(app, KeyCode::Enter);
+        }
+        press(app, KeyCode::Char('j'));
+        press(app, KeyCode::Char('c'));
+        type_text(app, "third finding");
+        press(app, KeyCode::Enter);
+    }
+    assert_eq!(fixture.comments().len(), 3, "{:?}", fixture.comments());
+
+    let key = prop_oneof![
+        Just(KeyCode::Char('j')),
+        Just(KeyCode::Char('k')),
+        Just(KeyCode::Enter),
+        Just(KeyCode::Esc),
+        Just(KeyCode::Left),
+        Just(KeyCode::Right),
+        Just(KeyCode::Tab),
+        Just(KeyCode::Char('s')),
+        Just(KeyCode::Char(']')),
+        Just(KeyCode::Char('[')),
+    ];
+    let inputs = (
+        prop_oneof![3 => 1u16..60, 1 => 1u16..5],
+        prop_oneof![3 => 1u16..40, 1 => 1u16..5],
+        prop::collection::vec(key, 0..12),
+    );
+    let seen = Coverage::new(&[
+        "a terminal with no room for a diff row",
+        "a box actually drawn",
+    ]);
+    run_cases(48, inputs, |(width, height, keys)| {
+        let app = &mut *app.borrow_mut();
+        rewind(app);
+        for key in &keys {
+            app.on_key(*key)
+                .map_err(|error| TestCaseError::fail(format!("{key:?}: {error}")))?;
+            let frame = render(app, width, height);
+            prop_assert_eq!(
+                frame.backend().buffer().area,
+                Rect::new(0, 0, width, height)
+            );
+        }
+        if height <= 3 {
+            seen.hit(0);
+        }
+        // Whatever the walk left behind, drawn at the sizes that have
+        // historically broken ratatui layout arithmetic — spelled out rather
+        // than sampled, because 1x1 is the case and a uniform draw would visit
+        // it once in a hundred runs.
+        for (width, height) in PATHOLOGICAL {
+            let frame = render(app, width, height);
+            prop_assert_eq!(
+                frame.backend().buffer().area,
+                Rect::new(0, 0, width, height)
+            );
+        }
+        if render(app, 120, 44).backend().to_string().contains('╭') {
+            seen.hit(1);
+        }
+        Ok(())
+    });
+    seen.assert_all();
+    fixture.clear_comments();
 }
 
 // ---------------------------------------------------------------------------

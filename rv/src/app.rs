@@ -63,6 +63,7 @@ use rv_core::diff;
 use rv_core::diff::DiffLine;
 use rv_core::diff::FileDiff;
 use rv_core::diff::LineKind;
+use rv_core::model::Anchor;
 use rv_core::model::FileChange;
 use rv_core::model::Side;
 use rv_core::store::Comment;
@@ -97,12 +98,19 @@ const ID_CHARS: usize = 8;
 /// the 80-column terminal that is the narrowest anyone reviews in.
 const HELP: &str = "j/k line  [/] file  c comment  enter stack  d delete  s fold  q quit";
 
-/// What `d` says from the sidebar, where there is no comment under the cursor
-/// to delete.
+/// What `d` says from the sidebar's **Files** tab, where there is no comment
+/// under the cursor to delete.
 ///
 /// It names the way out rather than only refusing: the reviewer pressed a key
-/// meaning "delete this", and the answer they need is where "this" lives.
-const DELETE_NEEDS_A_COMMENT: &str = "the file list selects files, not comments: right to the diff";
+/// meaning "delete this", and the answer they need is where "this" lives —
+/// which is now either pane, since `tab` puts a list of comments in this very
+/// column.
+const DELETE_NEEDS_A_COMMENT: &str =
+    "the file list selects files, not comments: tab for those, right for the diff";
+
+/// What `d` says from the sidebar's **Comments** tab when the review has no
+/// comments in it at all.
+const NO_COMMENTS_IN_REVIEW: &str = "no comments in this review yet";
 
 /// What `Enter`, `d` and `s` say when the selected line carries no comments.
 ///
@@ -135,6 +143,21 @@ pub enum Mode {
     ConfirmDelete { id: String, label: String },
 }
 
+/// What the left column is listing.
+///
+/// The sidebar browses comments the same way it browses files — same column,
+/// same keys, one idiom rather than two — because the alternative is what the
+/// first real session on `rv` actually did: 2,200 of its 11,101 keystrokes went
+/// on `j` and `]` hunting down its own remarks, one of them 940 consecutive
+/// presses of `j`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SidebarTab {
+    /// The review's changed files.
+    Files,
+    /// Every comment in the review, wherever it is anchored.
+    Comments,
+}
+
 /// Which pane the keys act on.
 ///
 /// A focus rather than a [`Mode`] because modes are for *typing*: a mode
@@ -144,7 +167,8 @@ pub enum Mode {
 /// walking the files never has to think about where the cursor is first.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Focus {
-    /// The left column, which lists the review's files.
+    /// The left column, which lists either the review's files or its comments
+    /// — see [`SidebarTab`].
     Sidebar,
     /// The diff of the selected file.
     Diff,
@@ -188,6 +212,15 @@ pub struct App {
     /// just been.
     line_indices: Vec<usize>,
     focus: Focus,
+    /// What the left column lists.
+    sidebar_tab: SidebarTab,
+    /// Which row of the comment browser the cursor is on: an index into
+    /// [`App::comments`], which is the whole review's comments in store order.
+    ///
+    /// Kept in range by [`App::clamp_browser`] rather than left to answer
+    /// `None`, so that deleting the comment the browser was on leaves the
+    /// cursor on the list instead of past the end of it.
+    browser_index: usize,
     /// Which comment of the selected line's stack the cursor is on, meaningful
     /// only while the focus is [`Focus::Stack`].
     ///
@@ -252,6 +285,17 @@ impl App {
             .comments()
             .context("could not read the saved comments")?;
         let line_indices = vec![0; review.files.len()];
+        // A comment that is no longer open starts folded: it is still exactly
+        // where the reviewer left it, in file and line order, without competing
+        // for the screen with the comments that are still asking for an answer.
+        // Seeded here rather than forced at every frame so that `s` can expand
+        // one like any other box — a box a reviewer cannot open is a worse
+        // failure than a loud one.
+        let collapsed = comments
+            .iter()
+            .filter(|comment| comment.state != CommentState::Open)
+            .map(|comment| comment.id.clone())
+            .collect();
         let mut app = Self {
             review,
             diffs,
@@ -259,8 +303,10 @@ impl App {
             file_index: 0,
             line_indices,
             focus: Focus::Diff,
+            sidebar_tab: SidebarTab::Files,
+            browser_index: 0,
             comment_index: 0,
-            collapsed: HashSet::new(),
+            collapsed,
             mode: Mode::Browse,
             buffer: String::new(),
             status: HELP.to_owned(),
@@ -344,6 +390,33 @@ impl App {
     /// a reviewer came to read.
     pub fn focus(&self) -> Focus {
         self.focus
+    }
+
+    /// What the left column is listing. Files, on launch: a review starts with
+    /// no comments in it.
+    pub fn sidebar_tab(&self) -> SidebarTab {
+        self.sidebar_tab
+    }
+
+    /// Which row of the comment browser the cursor is on.
+    pub fn browser_index(&self) -> usize {
+        self.browser_index
+    }
+
+    /// The comment the browser's cursor is on, or `None` when the sidebar is
+    /// not listing comments.
+    ///
+    /// Gated on the tab for the same reason [`App::selected_comment`] is gated
+    /// on the focus: `d` asks this question to decide what it destroys, and
+    /// answering it with a comment that is not on screen is how a delete hits
+    /// the wrong one. Not gated on the *focus*, though — the browser draws its
+    /// selection whether or not the keys are pointed at it, so the selection is
+    /// real either way.
+    pub fn browsed_comment(&self) -> Option<&Comment> {
+        if self.sidebar_tab != SidebarTab::Comments {
+            return None;
+        }
+        self.comments.get(self.browser_index)
     }
 
     /// Every comment in the review, in store order (oldest first).
@@ -489,20 +562,127 @@ impl App {
             KeyCode::Char('c') => self.begin_comment(),
             KeyCode::Char('d') => self.begin_delete(),
             KeyCode::Char('s') => self.toggle_collapse(),
-            KeyCode::Enter => self.enter_stack(),
+            // Answered before the focus is consulted, like `[` and `]`: what
+            // the left column lists is not a question about where the cursor
+            // is, and a reviewer who wants their comments should not have to
+            // travel to the sidebar first to ask for them.
+            KeyCode::Tab => self.switch_tab(),
+            KeyCode::Enter => self.on_enter()?,
             KeyCode::Esc => self.leave_stack(),
             _ => {}
         }
         Ok(Action::Continue)
     }
 
+    /// Flips the left column between the files and the comments.
+    ///
+    /// Says nothing in the status line: it is navigation, and the pane's own
+    /// title reports which tab is up. A key that overwrote the help text to
+    /// announce itself would cost the reviewer the line they read the rest of
+    /// the keymap off.
+    fn switch_tab(&mut self) {
+        self.sidebar_tab = match self.sidebar_tab {
+            SidebarTab::Files => SidebarTab::Comments,
+            SidebarTab::Comments => SidebarTab::Files,
+        };
+        self.clamp_browser();
+    }
+
+    /// `Enter`: into the selected line's comment stack, or — from the comment
+    /// browser — to the code the browsed comment is about.
+    fn on_enter(&mut self) -> Result<()> {
+        if self.focus == Focus::Sidebar && self.sidebar_tab == SidebarTab::Comments {
+            return self.jump_to_comment(self.browser_index);
+        }
+        self.enter_stack();
+        Ok(())
+    }
+
+    /// Selects the file and line a comment is anchored to and hands the focus
+    /// to the diff, so that reading a comment and looking at the code it is
+    /// about are one keystroke apart.
+    ///
+    /// Two honest failure cases, both reported rather than papered over:
+    ///
+    /// * the anchored **file** may no longer be in the review's file list — the
+    ///   range moved under the comment — in which case nothing moves at all,
+    ///   because there is nowhere to move to;
+    /// * the anchored **line** may not be in the current diff — the content
+    ///   moved — in which case the file is opened anyway, at its top, with the
+    ///   line named in the status. Being in the right file with a warning beats
+    ///   staying put and saying nothing.
+    ///
+    /// Which line that is comes from [`App::line_of_anchor`], which asks the
+    /// same question the save path asked, so a jump and a save can never
+    /// disagree about which line a comment belongs to.
+    fn jump_to_comment(&mut self, index: usize) -> Result<()> {
+        let Some(comment) = self.comments.get(index) else {
+            return Ok(());
+        };
+        let anchor = comment.anchor.clone();
+
+        // Either side's path: a comment on a removed line is filed under the
+        // base-side path, which for a rename is not the path the file is listed
+        // under.
+        let found = self.review.files.iter().position(|file| {
+            file.path == anchor.file || file.source_path.as_deref() == Some(anchor.file.as_str())
+        });
+        let Some(file_index) = found else {
+            self.status = format!("{} is not in this review's range any more", anchor.file);
+            return Ok(());
+        };
+
+        self.file_index = file_index;
+        self.load_selected()?;
+        match self.line_of_anchor(&anchor) {
+            Some(line) => {
+                self.set_line_index(line);
+                self.status = format!("jumped to {}:{}", anchor.file, anchor.line);
+            }
+            None => {
+                self.set_line_index(0);
+                self.status = format!(
+                    "{}: line {} is not in this diff any more",
+                    anchor.file, anchor.line
+                );
+            }
+        }
+        self.focus = Focus::Diff;
+        Ok(())
+    }
+
+    /// The diff line whose anchor key matches `anchor`, using the same
+    /// [`App::anchor_target`] the save path goes through — so the line a jump
+    /// lands on is by construction the line the comment was stored against,
+    /// rename, side rule and all.
+    fn line_of_anchor(&self, anchor: &Anchor) -> Option<usize> {
+        let diff = self.selected_diff()?;
+        (0..diff.lines.len()).find(|index| {
+            self.anchor_target(&diff.lines[*index])
+                .is_some_and(|target| {
+                    target.path == anchor.file
+                        && target.side == anchor.side
+                        && target.number == anchor.line
+                })
+        })
+    }
+
+    /// Keeps the browser's cursor on the list after the list has changed under
+    /// it. An empty list parks it at 0, which is where the next comment lands.
+    fn clamp_browser(&mut self) {
+        self.browser_index = self
+            .browser_index
+            .min(self.comments.len().saturating_sub(1));
+    }
+
     /// Steps the cursor into the selected line's comment stack.
     ///
-    /// From [`Focus::Diff`] only. From the sidebar `Enter` is still unbound (it
-    /// gains a meaning when the sidebar learns to list comments), and from
+    /// From [`Focus::Diff`] only. From the sidebar's **Files** tab `Enter` is
+    /// unbound — a file is already selected by being highlighted — and from
     /// inside the stack it is inert rather than a jump back to the first
     /// comment: a key that quietly moved the cursor while the reviewer was
     /// already choosing with `j`/`k` would be a key they had to be careful of.
+    /// From the **Comments** tab it jumps instead; see [`App::on_enter`].
     ///
     /// A line with nothing on it is refused with a sentence rather than
     /// entered. An empty stack is a focus containing nothing, which the
@@ -576,10 +756,17 @@ impl App {
         };
     }
 
-    /// `j` / `Down` in the focused pane.
+    /// `j` / `Down` in the focused pane — and, in the sidebar, in whichever
+    /// list that pane is showing.
     fn move_forward(&mut self) -> Result<()> {
         match self.focus {
-            Focus::Sidebar => self.select_file(self.file_index.saturating_add(1))?,
+            Focus::Sidebar => match self.sidebar_tab {
+                SidebarTab::Files => self.select_file(self.file_index.saturating_add(1))?,
+                SidebarTab::Comments => {
+                    let last = self.comments.len().saturating_sub(1);
+                    self.browser_index = self.browser_index.saturating_add(1).min(last);
+                }
+            },
             Focus::Diff => self.set_line_index(self.line_index().saturating_add(1)),
             Focus::Stack => {
                 let last = self.stack_len().saturating_sub(1);
@@ -594,7 +781,12 @@ impl App {
         match self.focus {
             // `select_file(0)` from file 0 is a no-op by its own guard, so `k`
             // at the top of the list stays put rather than wrapping.
-            Focus::Sidebar => self.select_file(self.file_index.saturating_sub(1))?,
+            Focus::Sidebar => match self.sidebar_tab {
+                SidebarTab::Files => self.select_file(self.file_index.saturating_sub(1))?,
+                SidebarTab::Comments => {
+                    self.browser_index = self.browser_index.saturating_sub(1);
+                }
+            },
             Focus::Diff => self.set_line_index(self.line_index().saturating_sub(1)),
             Focus::Stack => self.comment_index = self.comment_index.saturating_sub(1),
         }
@@ -691,29 +883,34 @@ impl App {
     ///   oldest would be the strange choice: it is the note they have lived
     ///   with longest.
     ///
-    /// **From the sidebar it deletes nothing**, and says why. `c` does write
-    /// against the selected diff line from there, and the symmetry is tempting,
-    /// but the two keys are not symmetrical: `c` creates and is undone by `d`,
-    /// while `d` destroys and is undone by nothing. The file list shows files,
-    /// so a `d` pressed in it would be aimed at a comment the reviewer cannot
-    /// see — on a diff line they may never have looked at. When the sidebar
-    /// learns to list comments (Task 13) it will have a selection of its own for
-    /// this key to mean, and this arm is where that goes.
+    /// * **in the sidebar**, it depends on what the sidebar is listing. The
+    ///   **Comments** tab has a comment selected and on screen, so `d` takes
+    ///   exactly that one — the unambiguous path, and the one to prefer. The
+    ///   **Files** tab deletes nothing and says why: `c` does write against the
+    ///   selected diff line from there and the symmetry is tempting, but the
+    ///   two keys are not symmetrical. `c` creates, and a comment made by
+    ///   mistake is undone by `d`; `d` destroys, and nothing undoes it. A `d`
+    ///   pressed at a list of *files* would be aimed at a comment the reviewer
+    ///   cannot see, on a diff line they may never have opened.
     ///
-    /// With nothing on the line there is no question worth asking, so it says
-    /// so and stays in [`Mode::Browse`] rather than opening a confirmation
-    /// about nothing.
+    /// With nothing to delete there is no question worth asking, so it says so
+    /// and stays in [`Mode::Browse`] rather than opening a confirmation about
+    /// nothing.
     fn begin_delete(&mut self) {
         let target = match self.focus {
             Focus::Stack => self.selected_comment(),
             Focus::Diff => self.comments_for_line(self.line_index()).last().copied(),
-            Focus::Sidebar => {
-                self.status = DELETE_NEEDS_A_COMMENT.to_owned();
-                return;
-            }
+            // `browsed_comment` is already `None` on the Files tab, so the
+            // refusal below covers both of the sidebar's shapes.
+            Focus::Sidebar => self.browsed_comment(),
         };
         let Some(comment) = target else {
-            self.status = NO_COMMENTS.to_owned();
+            self.status = match (self.focus, self.sidebar_tab) {
+                (Focus::Sidebar, SidebarTab::Files) => DELETE_NEEDS_A_COMMENT,
+                (Focus::Sidebar, SidebarTab::Comments) => NO_COMMENTS_IN_REVIEW,
+                _ => NO_COMMENTS,
+            }
+            .to_owned();
             return;
         };
 
@@ -908,6 +1105,10 @@ impl App {
             .store
             .comments()
             .context("could not re-read the saved comments")?;
+        // The browser indexes this vector, so it is clamped where the vector is
+        // written: a delete from the browser must leave the cursor on a row
+        // rather than one past the end of the list it just shortened.
+        self.clamp_browser();
         Ok(())
     }
 

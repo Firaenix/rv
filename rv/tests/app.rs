@@ -22,11 +22,15 @@ use crossterm::event::KeyEvent;
 use crossterm::event::KeyModifiers;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
+use ratatui::buffer::Buffer;
+use ratatui::style::Color;
+use ratatui::style::Modifier;
 use rstest::rstest;
 use rv::app::Action;
 use rv::app::App;
 use rv::app::Focus;
 use rv::app::Mode;
+use rv::app::SidebarTab;
 use rv::session;
 use rv::ui;
 use rv_core::anchor;
@@ -95,6 +99,21 @@ impl Fixture {
         fs::remove_file(fixture.root().join("a.rs")).expect("remove a.rs");
         fixture.write("b.rs", HEAD_SIDE);
         fixture.jj(&["describe", "-m", "rename and edit"]);
+        fixture.jj(&["new"]);
+        fixture
+    }
+
+    /// Creates a workspace whose one file is a single line of `length`
+    /// characters — longer than any pane in this suite, and no longer than
+    /// this repository's own longest line.
+    fn with_long_line(length: usize) -> Self {
+        let fixture = Self {
+            tempdir: tempfile::tempdir().expect("create temp dir"),
+        };
+        fixture.jj(&["git", "init", "--colocate"]);
+        let line: String = std::iter::repeat_n('x', length).collect();
+        fixture.write("long.rs", &format!("{line}\n"));
+        fixture.jj(&["describe", "-m", "one very long line"]);
         fixture.jj(&["new"]);
         fixture
     }
@@ -184,6 +203,71 @@ fn render(app: &App) -> String {
         .draw(|frame| ui::draw(frame, app))
         .expect("draw a frame");
     terminal.backend().to_string()
+}
+
+/// One frame at an arbitrary size, as **cells** rather than as text.
+///
+/// The wave that draws comment boxes is a wave about style: "blue and
+/// bordered", "bold where the focus is", "grey when the comment is outdated".
+/// A test that only greps the text of a frame passes on an unstyled box, so
+/// everything below asserts against the buffer and reads the colours out of it.
+fn frame_at(app: &App, width: u16, height: u16) -> Buffer {
+    let mut terminal =
+        Terminal::new(TestBackend::new(width, height)).expect("build a test terminal");
+    terminal
+        .draw(|frame| ui::draw(frame, app))
+        .expect("draw a frame");
+    terminal.backend().buffer().clone()
+}
+
+/// The frame's rows, one string per terminal row.
+fn rows_of(buffer: &Buffer) -> Vec<String> {
+    (0..buffer.area.height)
+        .map(|y| {
+            (0..buffer.area.width)
+                .map(|x| buffer[(x, y)].symbol())
+                .collect()
+        })
+        .collect()
+}
+
+/// The whole frame as text, rows separated by newlines.
+fn buffer_text(buffer: &Buffer) -> String {
+    rows_of(buffer).join("\n")
+}
+
+/// Where `needle` first appears in the frame, scanning rows top to bottom.
+fn find_char(buffer: &Buffer, needle: char) -> Option<(u16, u16)> {
+    let wanted = needle.to_string();
+    (0..buffer.area.height)
+        .flat_map(|y| (0..buffer.area.width).map(move |x| (x, y)))
+        .find(|(x, y)| buffer[(*x, *y)].symbol() == wanted)
+}
+
+/// Whether the first cell holding `needle` is drawn in blue — the colour this
+/// reviewer reserves for comments.
+fn styled_blue(buffer: &Buffer, needle: char) -> bool {
+    find_char(buffer, needle).is_some_and(|(x, y)| buffer[(x, y)].style().fg == Some(Color::Blue))
+}
+
+/// The row `needle` first appears on, as an index into [`rows_of`].
+fn row_holding(buffer: &Buffer, needle: &str) -> usize {
+    rows_of(buffer)
+        .iter()
+        .position(|row| row.contains(needle))
+        .unwrap_or_else(|| panic!("{needle:?} is not on screen:\n{}", buffer_text(buffer)))
+}
+
+/// The style of the first cell of `needle` on row `y`.
+fn style_of_text(buffer: &Buffer, y: u16, needle: &str) -> ratatui::style::Style {
+    let row: String = (0..buffer.area.width)
+        .map(|x| buffer[(x, y)].symbol())
+        .collect();
+    let column = row
+        .char_indices()
+        .position(|(offset, _)| row[offset..].starts_with(needle))
+        .unwrap_or_else(|| panic!("{needle:?} is not on row {y}: {row:?}"));
+    buffer[(u16::try_from(column).expect("a small column"), y)].style()
 }
 
 /// Every file in the **whole workspace**, as `(path relative to the root,
@@ -1301,8 +1385,9 @@ fn deleting_the_last_comment_on_a_line_returns_focus_to_the_diff() {
 /// symmetrical. `c` creates, and a comment made by mistake is undone by `d`;
 /// `d` destroys, and nothing undoes it. The file list shows files, so the
 /// comment `d` would take from there is one the reviewer cannot see, on a diff
-/// line they may never have opened. Until the sidebar has a comment of its own
-/// selected, a destructive key aimed into it is wrong.
+/// line they may never have opened. The sidebar's *other* tab does have a
+/// comment of its own selected, and `d` deletes it — see
+/// `d_from_the_comment_browser_deletes_behind_the_same_confirmation`.
 #[test]
 fn d_from_the_file_list_deletes_nothing() {
     let workspace = Fixture::new();
@@ -1511,5 +1596,877 @@ fn deleting_a_folded_comment_forgets_that_it_was_folded() {
         app.collapsed().is_empty(),
         "a fresh comment inherited a fold: {:?}",
         app.collapsed()
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Drawing a comment box, and which pane has the focus
+// ---------------------------------------------------------------------------
+
+/// A saved comment is drawn as a bordered box hanging off the line it is
+/// anchored to — the whole point of this milestone, and the thing a reviewer
+/// could not see at all before it.
+///
+/// Asserted on the *cells* rather than on the text: "blue and bordered" is the
+/// requirement, and a test that only greps for the body passes against an
+/// unstyled box. The rounded corners are what distinguish a comment box from
+/// the panes' own plain borders.
+#[test]
+fn a_comment_renders_as_a_blue_bordered_box_under_its_line() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    select_line(&mut app, |line| line.text.contains("let x = 1;"));
+    write_comment(&mut app, "needs a doc");
+
+    let buffer = frame_at(&app, 100, 24);
+    let text = buffer_text(&buffer);
+    assert!(
+        text.contains("needs a doc"),
+        "the body is on screen:\n{text}"
+    );
+    assert!(
+        text.contains('╭') && text.contains('╰'),
+        "the box has borders:\n{text}"
+    );
+    assert!(
+        styled_blue(&buffer, '╭'),
+        "the border is blue, which is the requirement:\n{text}"
+    );
+    assert!(
+        styled_blue(&buffer, '╰'),
+        "and so is its other end:\n{text}"
+    );
+
+    // ...and it hangs off *its own* line, in order: top border, body, bottom.
+    let rows = rows_of(&buffer);
+    let anchored = row_holding(&buffer, "let x = 1;");
+    assert!(
+        rows[anchored + 1].contains('╭'),
+        "the box does not open directly under the line it is about:\n{text}"
+    );
+    assert!(
+        rows[anchored + 2].contains("needs a doc") && rows[anchored + 2].contains('│'),
+        "the body is not inside the box:\n{text}"
+    );
+    assert!(
+        rows[anchored + 3].contains('╰'),
+        "the box does not close under its body:\n{text}"
+    );
+}
+
+/// The box is indented to the diff's gutter, so it reads as hanging off the
+/// line rather than as another pane.
+#[test]
+fn a_comment_box_is_indented_to_the_diff_gutter() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    write_comment(&mut app, "needs a doc");
+
+    let buffer = frame_at(&app, 100, 24);
+    let (corner_x, _) = find_char(&buffer, '╭').expect("a box top is on screen");
+    // Counted in characters, not bytes: the panes' own borders are multi-byte,
+    // so a byte offset is not a column.
+    let sigil_row = rows_of(&buffer)[row_holding(&buffer, "+fn a() {")].clone();
+    let sigil = sigil_row
+        .char_indices()
+        .position(|(offset, _)| sigil_row[offset..].starts_with("+fn a() {"))
+        .expect("the added line carries its sigil");
+
+    assert_eq!(
+        usize::from(corner_x),
+        sigil + 1,
+        "the box does not start one column past the sigil, where the line's own \
+         text starts:\n{}",
+        buffer_text(&buffer)
+    );
+}
+
+/// Border and title are blue; the body keeps the terminal's own foreground, so
+/// the part being *read* is at full contrast.
+#[test]
+fn the_box_body_keeps_the_default_foreground() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    write_comment(&mut app, "needs a doc");
+
+    let buffer = frame_at(&app, 100, 24);
+    let body_row = u16::try_from(row_holding(&buffer, "needs a doc")).expect("a small row");
+
+    assert_eq!(
+        style_of_text(&buffer, body_row, "needs a doc").fg,
+        Some(Color::Reset),
+        "the comment body is recoloured, which is what makes it hard to read:\n{}",
+        buffer_text(&buffer)
+    );
+    // The box's own left side, not the sidebar's border, which is the first
+    // `│` on the row.
+    assert_eq!(
+        style_of_text(&buffer, body_row, "│ needs a doc").fg,
+        Some(Color::Blue),
+        "the box's side is not blue:\n{}",
+        buffer_text(&buffer)
+    );
+}
+
+/// Focus is shown with a `▸` on the focused pane's title and a bold border —
+/// never with colour, because blue already means "comment".
+#[test]
+fn the_focused_pane_is_marked() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+
+    let diff_focused = buffer_text(&frame_at(&app, 100, 24));
+    app.on_key(KeyCode::Left).expect("focus files");
+    let files_focused = buffer_text(&frame_at(&app, 100, 24));
+
+    assert_ne!(
+        diff_focused, files_focused,
+        "focus is invisible on screen:\n{files_focused}"
+    );
+    assert!(
+        files_focused.contains("▸ Files"),
+        "the focused pane's title is not marked:\n{files_focused}"
+    );
+    assert!(
+        !files_focused.contains("▸ a.rs"),
+        "the unfocused diff is marked too:\n{files_focused}"
+    );
+    assert!(
+        diff_focused.contains("▸ a.rs") && !diff_focused.contains("▸ Files"),
+        "the mark did not move with the focus:\n{diff_focused}"
+    );
+}
+
+/// The same, in the borders: exactly one pane is bold, and it is the one the
+/// next keystroke lands in.
+#[test]
+fn only_the_focused_panes_border_is_bold() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+
+    // The bar takes row 0, so both panes' top-left corners sit on row 1: the
+    // sidebar's at column 0 and the diff's at 30% of 100.
+    let bold = |app: &App| {
+        let buffer = frame_at(app, 100, 24);
+        (
+            buffer[(0, 1)].modifier.contains(Modifier::BOLD),
+            buffer[(30, 1)].modifier.contains(Modifier::BOLD),
+        )
+    };
+
+    assert_eq!(bold(&app), (false, true), "the diff has focus on launch");
+    app.on_key(KeyCode::Left).expect("focus files");
+    assert_eq!(bold(&app), (true, false), "the mark did not move");
+    app.on_key(KeyCode::Right).expect("focus the diff");
+    assert_eq!(bold(&app), (false, true), "and did not come back");
+}
+
+/// The sidebar's selection is `REVERSED` only while the sidebar has the focus;
+/// unfocused it drops to a dim mark, so there is exactly one place on screen
+/// the next keystroke will land.
+#[test]
+fn the_unfocused_sidebar_dims_its_selection() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+
+    // Scanned inside the sidebar's own columns: the diff pane's title names
+    // `a.rs` too, and it is the *list row* whose highlight this is about.
+    let reversed = |app: &App| {
+        let buffer = frame_at(app, 100, 24);
+        (0..24).any(|y| {
+            let row: String = (0..30).map(|x| buffer[(x, y)].symbol()).collect();
+            row.contains("a.rs")
+                && (0..30).any(|x| buffer[(x, y)].modifier.contains(Modifier::REVERSED))
+        })
+    };
+
+    assert!(!reversed(&app), "the unfocused file list is still reversed");
+    app.on_key(KeyCode::Left).expect("focus files");
+    assert!(reversed(&app), "the focused file list lost its highlight");
+}
+
+/// Inside a stack the selected box is brighter and bold, so a reviewer can see
+/// which of several comments `d` and `s` are aimed at.
+#[test]
+fn the_selected_box_in_the_stack_is_brighter_and_bold() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    write_comment(&mut app, "first finding");
+    write_comment(&mut app, "second finding");
+
+    let browsing = frame_at(&app, 100, 24);
+    let first_corner = find_char(&browsing, '╭').expect("a box top");
+    assert_eq!(
+        browsing[first_corner].style().fg,
+        Some(Color::Blue),
+        "an unselected box is not plain blue"
+    );
+
+    app.on_key(KeyCode::Enter).expect("enter the stack");
+    let selected = frame_at(&app, 100, 24);
+    let corner = &selected[first_corner];
+    assert_eq!(
+        corner.style().fg,
+        Some(Color::LightBlue),
+        "the selected box is not brighter:\n{}",
+        buffer_text(&selected)
+    );
+    assert!(
+        corner.modifier.contains(Modifier::BOLD),
+        "the selected box is not bold:\n{}",
+        buffer_text(&selected)
+    );
+
+    // ...and the box the cursor is *not* on stays plain, so "selected" means
+    // one box rather than the whole stack.
+    app.on_key(KeyCode::Char('j')).expect("select the second");
+    let moved = frame_at(&app, 100, 24);
+    assert_eq!(
+        moved[first_corner].style().fg,
+        Some(Color::Blue),
+        "the highlight did not move off the first box:\n{}",
+        buffer_text(&moved)
+    );
+}
+
+/// A folded comment is one row: no borders, and the body still readable enough
+/// to find it again.
+#[test]
+fn a_collapsed_box_is_a_single_row() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    write_comment(&mut app, "needs a doc");
+    let id = app.comments()[0].id.clone();
+
+    app.on_key(KeyCode::Char('s')).expect("fold it away");
+
+    let buffer = frame_at(&app, 100, 24);
+    let text = buffer_text(&buffer);
+    assert!(
+        !text.contains('╭') && !text.contains('╰'),
+        "a folded comment still draws a box:\n{text}"
+    );
+    let rows = rows_of(&buffer);
+    let anchored = row_holding(&buffer, "fn a() {");
+    assert!(
+        rows[anchored + 1].contains(&id) && rows[anchored + 1].contains("needs a doc"),
+        "the folded row does not say what it is folding:\n{text}"
+    );
+}
+
+/// A comment that is no longer open is drawn grey and dim rather than blue, and
+/// opens folded: it is still exactly where the reviewer left it, without
+/// competing for attention with the comments that still need answering.
+///
+/// Driven through the store because nothing in the reviewer can produce a
+/// non-`Open` comment yet — state transitions are milestone 2's work — and a
+/// `.review/` written by that milestone, or by an agent, must render sensibly
+/// today rather than whenever the keyboard catches up.
+#[test]
+fn an_outdated_comment_is_grey_and_folded() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    write_comment(&mut app, "this line moved");
+    let id = app.comments()[0].id.clone();
+
+    let mut stored = workspace.store().comments().expect("read comments");
+    stored[0].state = CommentState::Outdated;
+    workspace
+        .store()
+        .append_comment(&stored[0])
+        .expect("store the outdated comment");
+
+    let reopened = workspace.app();
+    assert!(
+        reopened.collapsed().contains(&id),
+        "an outdated comment opens expanded: {:?}",
+        reopened.collapsed()
+    );
+    let buffer = frame_at(&reopened, 100, 24);
+    let text = buffer_text(&buffer);
+    let row = u16::try_from(row_holding(&buffer, "this line moved")).expect("a small row");
+    let style = style_of_text(&buffer, row, &id);
+    assert_eq!(
+        style.fg,
+        Some(Color::Gray),
+        "an outdated comment is drawn as loud as an open one:\n{text}"
+    );
+    assert!(
+        style.add_modifier.contains(Modifier::DIM),
+        "an outdated comment is not dimmed:\n{text}"
+    );
+    assert!(
+        text.contains("outdated"),
+        "the row does not say why it is grey:\n{text}"
+    );
+
+    drop(app);
+}
+
+/// The selected box is kept on screen in its own right, so stepping through a
+/// stack in a short pane does not leave the cursor on a box below the fold.
+#[test]
+fn the_selected_box_stays_on_screen_in_a_short_pane() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    for body in ["first finding", "second finding", "third finding"] {
+        write_comment(&mut app, body);
+    }
+
+    app.on_key(KeyCode::Enter).expect("enter the stack");
+    app.on_key(KeyCode::Char('j')).expect("second");
+    app.on_key(KeyCode::Char('j')).expect("third");
+
+    // Eight rows: a status bar, two borders, and five rows of pane — far less
+    // than the three boxes need.
+    let text = buffer_text(&frame_at(&app, 100, 8));
+    assert!(
+        text.contains("third finding"),
+        "the selected box is below the fold:\n{text}"
+    );
+}
+
+/// Drawing must be total. A one-column pane is where ratatui layout code
+/// classically panics, and a comment box subtracts a gutter, two borders and a
+/// pad from whatever width it is given.
+#[rstest]
+#[case(1, 1)]
+#[case(2, 5)]
+#[case(20, 3)]
+#[case(1, 40)]
+#[case(5, 2)]
+#[case(3, 3)]
+#[case(9, 6)]
+#[case(12, 24)]
+fn drawing_never_panics_at_awkward_sizes(#[case] width: u16, #[case] height: u16) {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    write_comment(
+        &mut app,
+        "needs a doc, and a body long enough to have to wrap somewhere",
+    );
+    write_comment(&mut app, "second finding");
+
+    let _ = frame_at(&app, width, height);
+
+    app.on_key(KeyCode::Enter).expect("enter the stack");
+    let _ = frame_at(&app, width, height);
+
+    app.on_key(KeyCode::Char('s'))
+        .expect("fold the selected box");
+    let _ = frame_at(&app, width, height);
+
+    app.on_key(KeyCode::Left).expect("back to the diff");
+    app.on_key(KeyCode::Left).expect("onto the sidebar");
+    let _ = frame_at(&app, width, height);
+}
+
+// ---------------------------------------------------------------------------
+// Never clipping content silently
+// ---------------------------------------------------------------------------
+
+/// A diff line too long for the pane says so. Neither pane wraps or scrolls
+/// horizontally, and this repository contains 154-character lines: a review
+/// tool that silently hides the code being judged is failing at its one job.
+#[test]
+fn a_long_diff_line_is_marked_rather_than_silently_clipped() {
+    let workspace = Fixture::with_long_line(200);
+    let app = workspace.app();
+
+    let buffer = frame_at(&app, 60, 24);
+    let text = buffer_text(&buffer);
+
+    assert!(
+        text.contains('…'),
+        "a clipped line says so; silent truncation hides the code under review:\n{text}"
+    );
+    // ...and the marker sits against the pane's own right-hand border, so what
+    // it reports is the edge of the pane rather than something dropped out of
+    // the middle of the line.
+    let row = rows_of(&buffer)[row_holding(&buffer, "xxx")].clone();
+    let after: String = row.chars().skip_while(|c| *c != '…').skip(1).collect();
+    assert_eq!(
+        after, "│",
+        "the marker is not against the pane's edge: {row:?}"
+    );
+}
+
+/// ...and it is *clipped*, not wrapped. The row model is built on one row per
+/// diff line, and a reviewer counting lines against a file needs that
+/// correspondence: a wrapped line would put the highlight and the line's own
+/// number on different rows from the rest of it.
+#[test]
+fn a_long_diff_line_is_never_wrapped_onto_a_second_row() {
+    let workspace = Fixture::with_long_line(200);
+    let app = workspace.app();
+
+    let buffer = frame_at(&app, 60, 24);
+    let rows = rows_of(&buffer);
+    let carrying: Vec<&String> = rows.iter().filter(|row| row.contains("xxx")).collect();
+
+    assert_eq!(
+        carrying.len(),
+        1,
+        "one diff line was drawn on {} rows:\n{}",
+        carrying.len(),
+        buffer_text(&buffer)
+    );
+}
+
+/// A short line is left exactly as it was: the marker is a report of clipping,
+/// not decoration.
+#[test]
+fn a_line_that_fits_is_not_marked() {
+    let workspace = Fixture::new();
+    let app = workspace.app();
+
+    let text = buffer_text(&frame_at(&app, 100, 24));
+
+    assert!(
+        !text.contains('…'),
+        "a pane with room to spare still claims it clipped something:\n{text}"
+    );
+    assert!(text.contains("    let x = 1;"), "{text}");
+}
+
+/// The comment bar follows the end of what is being typed. Past the bar's
+/// width the reviewer used to be typing blind — the bar kept showing the
+/// opening words while the cursor was 80 characters further on.
+#[test]
+fn the_comment_buffer_shows_the_tail_while_typing_past_the_width() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    app.on_key(KeyCode::Char('c')).expect("begin a comment");
+    type_text(&mut app, "HEAD");
+    type_text(&mut app, &"x".repeat(200));
+    type_text(&mut app, "TAIL");
+
+    let text = buffer_text(&frame_at(&app, 40, 24));
+
+    assert!(
+        text.contains("TAIL"),
+        "what is being typed is not on screen:\n{text}"
+    );
+    assert!(
+        !text.contains("HEAD"),
+        "the bar is showing the start of a buffer whose end is where the cursor is:\n{text}"
+    );
+    assert_eq!(
+        app.buffer().chars().count(),
+        208,
+        "the bar's window ate the buffer itself"
+    );
+}
+
+/// A comment that fits is shown whole, from its first character: the tail is
+/// what a long buffer falls back to, not what every buffer gets.
+#[test]
+fn a_short_comment_is_shown_from_its_beginning() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    app.on_key(KeyCode::Char('c')).expect("begin a comment");
+    type_text(&mut app, "needs a doc");
+
+    let text = buffer_text(&frame_at(&app, 40, 24));
+
+    assert!(text.contains("needs a doc"), "{text}");
+}
+
+// ---------------------------------------------------------------------------
+// Browsing comments in the sidebar
+// ---------------------------------------------------------------------------
+
+/// Walks the sidebar's comment browser to row `index` and presses `Enter`,
+/// exactly the way a reviewer does — no test-only entry point into the jump.
+fn jump_to_row(app: &mut App, index: usize) {
+    app.on_key(KeyCode::Tab).expect("comments tab");
+    app.on_key(KeyCode::Left).expect("focus the sidebar");
+    for _ in 0..index {
+        app.on_key(KeyCode::Down).expect("next row");
+    }
+    app.on_key(KeyCode::Enter).expect("jump");
+}
+
+#[test]
+fn tab_switches_the_sidebar_between_files_and_comments() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    assert_eq!(app.sidebar_tab(), SidebarTab::Files, "files by default");
+
+    app.on_key(KeyCode::Tab).expect("tab");
+    assert_eq!(app.sidebar_tab(), SidebarTab::Comments);
+    app.on_key(KeyCode::Tab).expect("tab back");
+    assert_eq!(app.sidebar_tab(), SidebarTab::Files);
+}
+
+/// From any focus, and without disturbing anything else: `Tab` is about what
+/// the left column *lists*, not about where the cursor is.
+#[rstest]
+#[case(&[])]
+#[case(&[KeyCode::Left])]
+#[case(&[KeyCode::Enter])]
+fn tab_switches_the_tab_from_any_focus(#[case] approach: &[KeyCode]) {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    write_comment(&mut app, "needs a doc");
+    for key in approach {
+        app.on_key(*key).expect("get into position");
+    }
+    let (focus, file, line) = (app.focus(), app.file_index(), app.line_index());
+
+    app.on_key(KeyCode::Tab).expect("tab");
+
+    assert_eq!(app.sidebar_tab(), SidebarTab::Comments);
+    assert_eq!(app.focus(), focus, "tab moved the cursor to another pane");
+    assert_eq!((app.file_index(), app.line_index()), (file, line));
+    assert_eq!(app.mode(), Mode::Browse);
+}
+
+#[test]
+fn the_comment_browser_lists_every_comment_in_the_review() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    write_comment(&mut app, "first finding");
+    app.on_key(KeyCode::Char(']')).expect("next file");
+    write_comment(&mut app, "second finding");
+
+    app.on_key(KeyCode::Tab).expect("comments tab");
+    app.on_key(KeyCode::Left).expect("focus the sidebar");
+
+    assert_eq!(
+        app.browsed_comment().expect("a first row").body,
+        "first finding",
+        "the browser opens on the oldest comment"
+    );
+    app.on_key(KeyCode::Down).expect("next row");
+    assert_eq!(
+        app.browsed_comment().expect("a second row").body,
+        "second finding",
+        "the browser lists comments from every file, not only the open one"
+    );
+    app.on_key(KeyCode::Down).expect("past the end");
+    assert_eq!(
+        app.browsed_comment().expect("still the second").body,
+        "second finding",
+        "the cursor stops at the newest rather than wrapping"
+    );
+    app.on_key(KeyCode::Up).expect("back");
+    assert_eq!(
+        app.browsed_comment().expect("the first again").body,
+        "first finding"
+    );
+    assert_eq!(
+        app.file_index(),
+        1,
+        "walking the comment browser moved the file selection"
+    );
+}
+
+/// The whole point of the browser: reading a comment and looking at the code it
+/// is about are one keystroke apart.
+#[test]
+fn enter_on_a_comment_row_jumps_to_its_code() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    // Comment on the second file, then walk away to the first.
+    app.on_key(KeyCode::Char(']')).expect("next file");
+    app.on_key(KeyCode::Char('j')).expect("move down");
+    let commented_file = app.file_index();
+    let commented_line = app.line_index();
+    write_comment(&mut app, "look at this");
+    app.on_key(KeyCode::Char('['))
+        .expect("back to the first file");
+    assert_ne!(
+        app.file_index(),
+        commented_file,
+        "the walk away did nothing"
+    );
+
+    jump_to_row(&mut app, 0);
+
+    assert_eq!(app.file_index(), commented_file, "landed on the right file");
+    assert_eq!(app.line_index(), commented_line, "and the right line");
+    assert_eq!(
+        app.focus(),
+        Focus::Diff,
+        "with the diff focused, ready to act"
+    );
+    assert_eq!(
+        app.comments_for_line(app.line_index()).len(),
+        1,
+        "the comment is not on the line the jump landed on"
+    );
+    assert!(
+        app.status().contains("b.rs"),
+        "the jump does not say where it went: {:?}",
+        app.status()
+    );
+}
+
+/// The jump uses the same anchor key the save used, so it lands where the
+/// comment says it is even when the two sides of the diff number that line
+/// differently.
+#[test]
+fn a_jump_lands_on_the_line_the_comment_is_anchored_to() {
+    let workspace = Fixture::renamed();
+    let mut app = workspace.app_from("@--");
+    let removed = select_line(&mut app, |line| {
+        line.kind == LineKind::Removed && line.text.contains("let x = 1;")
+    });
+    let line = app.line_index();
+    write_comment(&mut app, "why was this rewritten?");
+    assert_eq!(
+        removed.left,
+        Some(2),
+        "the fixture stopped pairing the rewrite"
+    );
+    assert_eq!(removed.right, Some(3), "{removed:?}");
+
+    // Walk away, then come back through the browser.
+    app.on_key(KeyCode::Char('k')).expect("up");
+    app.on_key(KeyCode::Char('k')).expect("up");
+    jump_to_row(&mut app, 0);
+
+    assert_eq!(
+        app.line_index(),
+        line,
+        "the jump used a different rule from the save: {:?}",
+        app.selected_diff().expect("a diff").lines[app.line_index()]
+    );
+    assert_eq!(app.comments_for_line(app.line_index()).len(), 1);
+}
+
+/// A comment whose file has left the review's range is reported, not papered
+/// over — and the reviewer is left exactly where they were.
+#[test]
+fn a_jump_to_a_file_outside_the_review_says_so() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    write_comment(&mut app, "on a file that moved away");
+    store_variant(&workspace, "deadbee1", "gone.rs", 1);
+
+    let mut reopened = workspace.app();
+    let was = (reopened.file_index(), reopened.line_index());
+    jump_to_row(&mut reopened, 1);
+
+    assert!(
+        reopened.status().contains("gone.rs") && reopened.status().contains("range"),
+        "the jump did not say why it went nowhere: {:?}",
+        reopened.status()
+    );
+    assert_eq!(
+        (reopened.file_index(), reopened.line_index()),
+        was,
+        "a jump that could not be made moved the reviewer anyway"
+    );
+    drop(app);
+}
+
+/// A comment whose line has left the diff still opens its file: being in the
+/// right file with a warning beats staying put.
+#[test]
+fn a_jump_to_a_missing_line_opens_the_file_anyway() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    app.on_key(KeyCode::Char(']')).expect("next file");
+    write_comment(&mut app, "on the second file");
+    store_variant(&workspace, "deadbee2", "a.rs", 99);
+
+    let mut reopened = workspace.app();
+    reopened.on_key(KeyCode::Char(']')).expect("open b.rs");
+    jump_to_row(&mut reopened, 1);
+
+    assert_eq!(
+        reopened.selected_file().expect("a file").path,
+        "a.rs",
+        "the jump did not open the file the comment names"
+    );
+    assert_eq!(reopened.line_index(), 0, "and put the cursor at its top");
+    assert_eq!(reopened.focus(), Focus::Diff);
+    assert!(
+        reopened.status().contains("99") && reopened.status().contains("not in this diff"),
+        "the jump did not say what it could not find: {:?}",
+        reopened.status()
+    );
+    drop(app);
+}
+
+/// Stores a copy of the review's first comment under a different id, file and
+/// line — the two shapes a jump has to fail honestly on, neither of which the
+/// keyboard can produce.
+fn store_variant(workspace: &Fixture, id: &str, file: &str, line: u32) {
+    let mut comment = workspace
+        .store()
+        .comments()
+        .expect("read comments")
+        .swap_remove(0);
+    comment.id = id.to_owned();
+    comment.anchor.file = file.to_owned();
+    comment.anchor.line = line;
+    comment.anchor.side = Side::Right;
+    workspace
+        .store()
+        .append_comment(&comment)
+        .expect("store the variant");
+}
+
+/// `d` from the browser deletes the comment the browser has selected, behind
+/// the same confirmation as everywhere else.
+#[test]
+fn d_from_the_comment_browser_deletes_behind_the_same_confirmation() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    write_comment(&mut app, "first finding");
+    app.on_key(KeyCode::Char('j')).expect("next line");
+    write_comment(&mut app, "second finding");
+
+    app.on_key(KeyCode::Tab).expect("comments tab");
+    app.on_key(KeyCode::Left).expect("focus the sidebar");
+    app.on_key(KeyCode::Down).expect("select the second");
+    app.on_key(KeyCode::Char('d')).expect("ask");
+    assert!(
+        matches!(app.mode(), Mode::ConfirmDelete { .. }),
+        "it deleted without asking: {:?}",
+        app.mode()
+    );
+    app.on_key(KeyCode::Char('y')).expect("confirm");
+
+    let left = workspace.store().comments().expect("read");
+    assert_eq!(left.len(), 1, "{left:?}");
+    assert_eq!(left[0].body, "first finding", "the browsed comment went");
+    assert_eq!(
+        app.browsed_comment().expect("a row").body,
+        "first finding",
+        "the browser's cursor was left past the end of the list"
+    );
+}
+
+/// ...and `n` still cancels, from here as from anywhere.
+#[test]
+fn d_from_the_comment_browser_can_be_declined() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    write_comment(&mut app, "needs a doc");
+
+    app.on_key(KeyCode::Tab).expect("comments tab");
+    app.on_key(KeyCode::Left).expect("focus the sidebar");
+    app.on_key(KeyCode::Char('d')).expect("ask");
+    app.on_key(KeyCode::Char('n')).expect("decline");
+
+    assert_eq!(app.mode(), Mode::Browse);
+    assert_eq!(workspace.store().comments().expect("read").len(), 1);
+}
+
+/// The Files tab stays inert: it selects files, and a destructive key aimed
+/// into it would be aimed at a comment the reviewer cannot see.
+#[test]
+fn d_from_the_files_tab_still_deletes_nothing() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    write_comment(&mut app, "needs a doc");
+
+    app.on_key(KeyCode::Left).expect("focus the file list");
+    assert_eq!(app.sidebar_tab(), SidebarTab::Files);
+    app.on_key(KeyCode::Char('d')).expect("d");
+
+    assert_eq!(app.mode(), Mode::Browse);
+    assert!(app.status().contains("not comments"), "{:?}", app.status());
+    assert_eq!(workspace.store().comments().expect("read").len(), 1);
+}
+
+/// `d` with an empty browser asks nothing and says why.
+#[test]
+fn d_from_an_empty_comment_browser_says_so() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+
+    app.on_key(KeyCode::Tab).expect("comments tab");
+    app.on_key(KeyCode::Left).expect("focus the sidebar");
+    app.on_key(KeyCode::Char('d')).expect("d");
+
+    assert_eq!(app.mode(), Mode::Browse);
+    assert!(app.status().contains("no comments"), "{:?}", app.status());
+}
+
+#[test]
+fn the_comment_browser_renders_path_line_and_state() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    write_comment(&mut app, "needs a doc");
+    app.on_key(KeyCode::Tab).expect("comments tab");
+
+    let buffer = frame_at(&app, 100, 24);
+    let text = buffer_text(&buffer);
+
+    assert!(
+        text.contains("Comments (1)"),
+        "the tab is unmistakable:\n{text}"
+    );
+    assert!(
+        text.contains("a.rs:1"),
+        "the file and line are named:\n{text}"
+    );
+    assert!(
+        text.contains("needs a doc"),
+        "the body is previewed:\n{text}"
+    );
+    assert!(text.contains("open"), "the state is shown:\n{text}");
+    assert!(
+        !text.contains("Files ("),
+        "the file list is still on screen beside it:\n{text}"
+    );
+}
+
+#[test]
+fn an_empty_comment_browser_says_so() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    app.on_key(KeyCode::Tab).expect("comments tab");
+
+    let text = buffer_text(&frame_at(&app, 100, 24));
+
+    assert!(
+        text.contains("no comments"),
+        "an empty review does not explain itself:\n{text}"
+    );
+}
+
+/// The browser's own selection is marked, and only while the sidebar has the
+/// focus — the same rule the file list follows.
+#[test]
+fn the_browsed_row_is_highlighted_when_the_sidebar_has_focus() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    write_comment(&mut app, "needs a doc");
+    app.on_key(KeyCode::Tab).expect("comments tab");
+
+    let reversed = |app: &App| {
+        let buffer = frame_at(app, 100, 24);
+        (0..24).any(|y| (0..30).any(|x| buffer[(x, y)].modifier.contains(Modifier::REVERSED)))
+    };
+
+    assert!(!reversed(&app), "the unfocused browser is reversed");
+    app.on_key(KeyCode::Left).expect("focus the sidebar");
+    assert!(reversed(&app), "the focused browser has no selection");
+}
+
+/// The status line is content too: a terminal too narrow for it says so rather
+/// than dropping the end of a sentence about a deletion.
+#[test]
+fn a_status_line_too_long_for_the_terminal_is_marked() {
+    let workspace = Fixture::new();
+    let app = workspace.app();
+
+    // The help text is 68 columns, which a 40-column terminal cannot show.
+    let narrow = rows_of(&frame_at(&app, 40, 24))[0].clone();
+    assert!(
+        narrow.ends_with('…'),
+        "the status line was cut silently: {narrow:?}"
+    );
+
+    let wide = rows_of(&frame_at(&app, 100, 24))[0].clone();
+    assert!(
+        !wide.contains('…') && wide.contains("q quit"),
+        "a status line with room to spare was marked anyway: {wide:?}"
     );
 }
