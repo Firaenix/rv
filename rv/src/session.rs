@@ -58,11 +58,84 @@ pub struct Review {
 ///
 /// Opening the [`Store`] creates `.review/` and appends it to
 /// `.git/info/exclude`, so that the notes a review produces never show up as a
-/// modification of the change being reviewed. The resolved session is then
-/// written to `session.toml`: every command records what it reviewed, so the
-/// file on disk always describes the range the comments beside it were made
-/// against.
+/// modification of the change being reviewed.
+///
+/// # A review begins here; a query does not
+///
+/// This writes `session.toml`, because opening a review is when the file should
+/// start describing what is being reviewed. [`read`] is the half a *query* wants:
+/// it resolves the same range and writes nothing.
+///
+/// Both used to be this function, and it made `rv status --json` — which reads
+/// like a pure query — rewrite the session record and its `started_at` on every
+/// run, moving the timestamp in the header of an existing export. Worse,
+/// `rv status --to other-branch` overwrote `session.toml` with a range the
+/// comments beside it were never made against, breaking the very invariant the
+/// old doc comment claimed: *the file on disk always describes the range the
+/// comments beside it were made against*.
+///
+/// # Why re-pointing is allowed, and only the accident is fixed
+///
+/// The finding that prompted this offered two remedies: read-only queries, or
+/// refusing to re-point a session that already holds comments. The refusal was
+/// written first and then taken back out, because it makes a legitimate act
+/// impossible — a reviewer opening a narrower range of the same stack is asking
+/// for exactly that, and three tests that do it failed, which is evidence the
+/// workflow is real rather than hypothetical.
+///
+/// What made re-pointing dangerous was that it happened *without being asked
+/// for*, by a command that reads like a question. That is gone. And a comment is
+/// self-describing — it carries its own change, commit and anchor — and the
+/// reviewer only ever sees the ones the open range can reach (see
+/// `App::in_range`), so a narrower range shows fewer comments rather than
+/// mislabelling any.
 pub fn build(repo_root: &Path, base: Option<&str>, head: Option<&str>) -> Result<Review> {
+    let review = resolve(repo_root, base, head)?;
+    // The moment the review began, kept across re-openings of the same range:
+    // `started_at` says when the reviewer started, and re-stamping it on every
+    // command would make it say when they last ran one.
+    let session = Session {
+        started_at: existing_start(&review).unwrap_or_else(started_at),
+        ..review.session.clone()
+    };
+    review
+        .store
+        .write_session(&session)
+        .context("could not write .review/session.toml")?;
+    Ok(Review { session, ..review })
+}
+
+/// The same range, resolved and **not** written down.
+///
+/// What `rv status` and `rv render` use: a query that rewrote the record it is
+/// querying would be reporting on itself.
+pub fn read(repo_root: &Path, base: Option<&str>, head: Option<&str>) -> Result<Review> {
+    let review = resolve(repo_root, base, head)?;
+    // The stored `started_at` where the range matches, so a rendered export is
+    // headed with when the review began rather than with now.
+    let session = Session {
+        started_at: existing_start(&review).unwrap_or_else(|| review.session.started_at.clone()),
+        ..review.session.clone()
+    };
+    Ok(Review { session, ..review })
+}
+
+/// `started_at` from the stored session, where it describes this same range.
+fn existing_start(review: &Review) -> Option<String> {
+    review
+        .store
+        .read_session()
+        .ok()
+        .filter(|stored| stored.revset == review.session.revset)
+        .map(|stored| stored.started_at)
+}
+
+/// Resolves `base..head` without writing `session.toml`.
+///
+/// Opening the store still creates `.review/` and the exclude entry: those are
+/// what keep review notes out of the change under review, and a query that left
+/// them undone would have the next write do it at a less predictable moment.
+fn resolve(repo_root: &Path, base: Option<&str>, head: Option<&str>) -> Result<Review> {
     // `vcs::Error` already names the path in every open failure, so wrapping
     // this one in more context would only repeat it.
     let repo = Repository::open(repo_root)?;
@@ -90,9 +163,6 @@ pub fn build(repo_root: &Path, base: Option<&str>, head: Option<&str>) -> Result
         changes,
         started_at: started_at(),
     };
-    store
-        .write_session(&session)
-        .context("could not write .review/session.toml")?;
 
     Ok(Review {
         repo,
@@ -116,6 +186,12 @@ pub fn write_markdown(review: &Review) -> Result<()> {
         .comments()
         .context("could not read the review's comments")?;
     fold_replies(review, &mut comments)?;
+    // Every load derives `outdated` — see [`crate::stale::mark_outdated`]. Doing
+    // it in `rv status` and not here had the two commands report different states
+    // for one review, which is worse than either being wrong: the export is what
+    // a model reads, and a stale comment presented as open is work asked for
+    // against code that has gone.
+    crate::stale::mark_outdated(review, &mut comments);
 
     let document = markdown::render(&review.session, &comments);
     review

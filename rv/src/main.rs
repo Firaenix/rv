@@ -101,14 +101,25 @@ fn run() -> Result<()> {
     // `--to` wins over the positional target; see the module docs.
     let head = cli.to.or(cli.target);
 
-    let review = session::build(&repo_root, cli.from.as_deref(), head.as_deref())?;
-
-    // A bare `rv` is the reviewer; the subcommands are the same review with no
-    // terminal in the way.
+    // A bare `rv` is the reviewer, which is where a review *begins* and so the
+    // one command that writes the session record. The subcommands are queries
+    // over the same range: `status` reports it and `render` writes only the
+    // export, and neither re-points `session.toml`.
     match cli.command {
-        None => App::run(review),
-        Some(Command::Render) => render(&review),
-        Some(Command::Status { json }) => status(&review, json),
+        None => App::run(session::build(
+            &repo_root,
+            cli.from.as_deref(),
+            head.as_deref(),
+        )?),
+        Some(Command::Render) => render(&session::read(
+            &repo_root,
+            cli.from.as_deref(),
+            head.as_deref(),
+        )?),
+        Some(Command::Status { json }) => status(
+            &session::read(&repo_root, cli.from.as_deref(), head.as_deref())?,
+            json,
+        ),
     }
 }
 
