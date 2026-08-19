@@ -14,7 +14,6 @@ use rv_core::store::Comment;
 use rv_core::store::CommentState;
 
 use super::Review;
-use super::write_markdown_if_current;
 
 /// The change a comment on `path` belongs to: the newest change in the range
 /// whose own diff touches it.
@@ -51,10 +50,11 @@ pub fn owning_change<'a>(review: &'a Review, path: &str) -> Result<&'a ChangeRef
 ///
 /// The one construction path: the TUI resolves its location from the selected
 /// diff line and the CLI from its arguments, and everything after that — the
-/// blob read, the anchor, the id seed, the assembly, the save, the export
-/// refresh — happens here once. The project has already shipped one bug from
-/// two places deciding the same fact, and a second copy of this policy would be
-/// a two-file migration lying in wait.
+/// blob read, the anchor, the id seed, the assembly, the save — happens here
+/// once. The project has already shipped one bug from two places deciding the
+/// same fact, and a second copy of this policy would be a two-file migration
+/// lying in wait. Saving does **not** refresh the export: the markdown is a
+/// view rendered on request, and nothing reads it back.
 pub fn save_comment(
     review: &Review,
     path: &str,
@@ -91,8 +91,37 @@ pub fn save_comment(
         .store
         .append_comment(&comment)
         .context("could not save the comment")?;
-    write_markdown_if_current(review)?;
     Ok(comment)
+}
+
+/// `rv reply`: stores an answer on the comment itself — the reply channel,
+/// now that the markdown is a view nothing reads back.
+///
+/// An unknown id is an **error**, unlike settling, which is idempotent by
+/// design: a reply is content, and silently dropping content because of a
+/// typoed id is the markdown failure mode this channel exists to delete. A
+/// second reply replaces the first. Replying changes no state: a comment with
+/// a reply is an open comment with a reply, and resolving remains its own,
+/// separate, deliberate act.
+pub fn reply(review: &Review, id: &str, body: &str) -> Result<Comment> {
+    let body = body.trim();
+    if body.is_empty() {
+        anyhow::bail!("an empty reply says nothing — nothing saved");
+    }
+    let mut comments = review
+        .store
+        .comments()
+        .context("could not read the review's comments")?;
+    let comment = comments
+        .iter_mut()
+        .find(|comment| comment.id == id)
+        .with_context(|| format!("no comment {id} in this review — ids are in `rv comments`"))?;
+    comment.reply = Some(body.to_owned());
+    review
+        .store
+        .append_comment(comment)
+        .with_context(|| format!("could not store the reply to comment {id}"))?;
+    Ok(comment.clone())
 }
 
 /// `rv comment`: resolves the CLI's arguments to a side-specific location and

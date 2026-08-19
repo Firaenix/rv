@@ -5,131 +5,77 @@ description: Watch an rv review for open comments, fix the code they point at, r
 
 # Working through rv comments
 
-You are the **worker**. While you build features on this branch, a reviewer
-(human in the rv TUI, or an agent with the `rv-reviewer` skill) leaves anchored
-comments in `.review/`. Your loop: notice new comments, fix what they point at,
-reply saying what you did, and tick them off. A human verifies your resolutions
-in the TUI afterwards — everything you settle is labelled as agent-settled, so
-never try to hide an unfixed thing as resolved.
+You are the **worker**. A reviewer — human, in rv's TUI, or an agent with the
+`rv-reviewer` skill — leaves anchored comments on the branch you are building.
+You fix what they point at, answer through `rv reply`, and tick them off with
+`rv resolve`.
 
-## How the review reaches you
+**The whole loop is the `rv` CLI.** You never read or write `.review/` files by
+hand, and you never touch `REVIEW-FEEDBACK.md` — it is a rendered view for
+humans, and nothing reads it back. A command either succeeds or exits 1 with a
+reason on stderr.
 
-| File | Your use of it |
-|---|---|
-| `.review/comments.json` | Poll its mtime to notice changes. **Read-only, never edit** |
-| `.review/REVIEW-FEEDBACK.md` | What you actually read, and the one file you may append to |
-| `.review/session.toml` | The range the comments were made against. Read-only |
-
-## The loop
-
-### 1. Notice work
+## The working loop
 
 ```sh
-rv status --json    # .comments.open > 0 means there is work
+rv status --check                    # is there work? exit 1 = open comments
+rv comments --json --state open      # what exactly?
+# …fix the code…
+rv reply <id> -m "Widened to 8 hex; prop_store pins the width."
+rv resolve <id>
+rv status --json                     # open down, resolved up
 ```
 
-Poll this between your own tasks, or watch `.review/comments.json`'s mtime and
-run it when the file changes. Queries never modify the review, so polling is
-free.
+Poll with `rv status --check` between your own tasks — it is one exit code,
+prints nothing, and costs almost nothing. `--check --json` prints the report
+*and* sets the code, for when you want both.
 
-### 2. Read the open comments
+## Reading a comment
 
-```sh
-rv render           # refreshes .review/REVIEW-FEEDBACK.md
-```
+`rv comments --json` gives you everything per comment:
 
-Then read `REVIEW-FEEDBACK.md`. Its `## Open (n)` section holds one entry per
-comment:
+- `id` — what `reply`, `resolve` and `abandon` take.
+- `state` and `settled_by` — only `open` ones are yours to work.
+- `outdated: true` — the anchored code is gone or changed; the comment may
+  already be answered by the code as it now stands. Say so in a reply and
+  resolve it, or fix what clearly remains.
+- `body` — the finding. `reply` — any existing answer (a second reply
+  replaces it).
+- `anchor` — `file`, `side`, `line`, plus `context` (an excerpt) and
+  `context_start` (which file line the excerpt begins at), so you can see the
+  code the reviewer saw even after the file moved on.
 
-```markdown
-### 3. `rv-core/src/store.rs:238`
-<!-- rv:anchor id=6ce52206 change=… commit=… side=right line=238 hash=… -->
+## Fixing and answering
 
-  Lines 233–243; the comment is on line 238 — row 6 of 11 below.
+1. Fix the code the comment points at — the anchor names the file and line;
+   `rv diff <file> --json` shows the change in the same coordinates.
+2. **Reply before you resolve**, saying what you did and where:
 
-  ```rust
-  …excerpt of the code as the reviewer saw it…
-  ```
+   ```sh
+   rv reply <id> -m "Hashed the trimmed line; anchor_survives_reindent pins it."
+   ```
 
-**Comment:** 4-hex ids collide at review scale.
-```
+   Multi-line or shell-hostile replies go via stdin: `rv reply <id> -m -`.
+3. `rv resolve <id>` — records `settled_by: agent`, visibly. Resolving your
+   own work is allowed *because* it is recorded; the human verifies in the TUI.
+4. A comment you decide not to act on: reply with why, then `rv abandon <id>`.
+   Abandoned is a distinct state from resolved — *dropped unfixed* and *fixed*
+   must not be confused — and the reply is the record of the decision.
 
-- The **id** in the marker is what you resolve by.
-- The **caption** says which excerpt row is the commented line — do not assume
-  it is the middle one.
-- `side=left` means the comment is about a **removed** line: the line number
-  refers to the base version, and the ask is usually about what replaced it.
-- The excerpt is the code **as the reviewer saw it** — if the file has moved
-  on since, trust the live file and use the excerpt to find the place.
+An unknown id is an error, not a no-op: if `rv reply` exits 1, you have the
+wrong id — re-run `rv comments --json`, never retry blind.
 
-### 3. Fix the code
+## After a rebase, push or bookmark move
 
-Ordinary work: edit, build, test. Commit with jj as you normally would.
+The review range is a revset (`trunk()..@` by default), so `rv status`,
+`rv comments` and `rv diff` always resolve against the repository as it now
+stands. Re-run `rv comments --json` after history changes — anchors re-resolve
+and some comments may have become `outdated`.
 
-### 4. Reply — in the export, at column 0
+## What you never do
 
-Append a reply line directly beneath the entry's `**Comment:**` block:
-
-```markdown
-**Reply:** Widened the id to 8 hex; `prop_store.rs` now pins the width.
-```
-
-Hard rules, because a parser reads this file:
-
-- `**Reply:**` starts **at column 0** — never indented, never inside a list —
-  or it is not read at all.
-- **Never** edit `<!-- rv: -->` markers, headings, or section order.
-- **Never** write a state into the document — resolving happens via the CLI,
-  and the next render would overwrite anything you wrote here anyway.
-- One reply per comment; a second reply replaces the first.
-
-Then run `rv render` again: it **ingests replies before re-exporting**, which
-is what moves your reply from the document into the store. A reply you never
-render in is a reply the next export erases.
-
-### 5. Tick it off
-
-```sh
-rv resolve <id>     # it was addressed; records settled_by=agent
-rv abandon <id>     # dropped without being addressed — say why in the reply first
-```
-
-- Resolved and abandoned are **different conclusions**: fixed, versus decided
-  against. Do not abandon something you failed to fix — reply with what
-  blocked you and leave it open instead.
-- Re-applying the same command **reopens** the comment (it is its own undo).
-- Both refresh the export, so the reviewer's next poll sees the new state.
-- Deleting is not yours: only the TUI's `d` deletes, behind a human
-  confirmation.
-
-### 6. Verify the loop closed
-
-```sh
-rv status --json    # open should have gone down; resolved up
-```
-
-## States you will see
-
-| State | Meaning | Yours to set? |
-|---|---|---|
-| `open` | Waiting on you | — |
-| `resolved` | Addressed (records who) | yes, after fixing |
-| `abandoned` | Dropped unfixed (records who) | yes, with justification |
-| `outdated` | The anchored code no longer exists — **derived, never stored** | no — it clears itself if the code returns |
-
-A comment often goes `outdated` *because you fixed its line* — the anchor no
-longer resolves against the new code. That is expected: reply and resolve it
-anyway; settled states are facts about what happened and do not revert to
-outdated.
-
-## Pitfalls
-
-- Run commands from the repo root, or pass `--repo <path>`.
-- `session.toml` records the range as last opened; the human's TUI is a
-  snapshot of it. Your comments, resolutions and new commits reach them when
-  they press `R`, which re-resolves their original `--from`/`--to` in place —
-  the store and the export are already correct in the meantime.
-- If `rv status --json` reports `degraded_base: true`, the range is the whole
-  history, not a branch — flag it rather than "fixing" 200 files.
-- Your resolutions render distinctly (`resolved by agent`) in the TUI. That is
-  by design; the human's verification pass depends on it.
+- Never edit `.review/` files or `REVIEW-FEEDBACK.md` by hand.
+- Never resolve without replying — an unexplained tick-off is work the human
+  cannot verify.
+- Never batch-settle ids you have not individually addressed.
+- Never delete comments — deletion is behind the TUI's human confirmation.

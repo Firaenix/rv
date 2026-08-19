@@ -1102,14 +1102,14 @@ proptest! {
             .count();
         prop_assert_eq!(run, protocol_lines(), "the protocol block must be contiguous");
         prop_assert!(
-            lines[first_quote].contains("**For LLMs:**"),
-            "the protocol block must address the model"
+            lines[first_quote].contains("rendered view"),
+            "the note must say the document is a view"
         );
         prop_assert!(
             lines[first_quote..first_quote + run]
                 .iter()
-                .any(|line| line.contains("do not")),
-            "the protocol block must state what the model may not do"
+                .any(|line| line.contains("rv comments --json")),
+            "the note must name the CLI that replaced the round trip"
         );
     }
 }

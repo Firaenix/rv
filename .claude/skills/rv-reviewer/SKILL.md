@@ -10,105 +10,95 @@ repository's `.review/` directory. A separate worker agent (see the `rv-worker`
 skill) watches those comments, fixes the code, replies, and ticks them off. A
 human verifies everything in rv's TUI afterwards.
 
+**The whole loop is the `rv` CLI.** You never read or write `.review/` files by
+hand, and you never touch `REVIEW-FEEDBACK.md` — it is a rendered view for
+humans, and nothing reads it back. Every fact comes out of a command and every
+act goes in through one; a command either succeeds or exits 1 with a reason on
+stderr you can act on.
+
 ## How rv stores a review
 
-`rv` is a jj-native branch reviewer. Everything lives in `.review/` at the repo
-root (git-excluded automatically):
-
-| File | What it is | Who writes it |
-|---|---|---|
-| `comments.json` | **The authority.** Every comment, with its anchor | rv only — never by hand |
-| `session.toml` | The range under review (revset, base/head commits) | rv only |
-| `REVIEW-FEEDBACK.md` | An **export** of the comments, for reading and for replies | `rv render`, and rv after every save |
+Everything lives in `.review/` at the repo root (git-excluded automatically):
+`comments.json` is the authority, `session.toml` records the range,
+`REVIEW-FEEDBACK.md` is a disposable rendered view. rv is the only writer of
+all three.
 
 A comment is **anchored**: it records the file, side, line, a content hash of
 that line, and an excerpt of surrounding code. If the code later moves, rv
 re-locates it; if the code is gone, the comment reads `outdated` instead of
 lying. You never compute any of this — `rv comment` does.
 
-**Never edit `.review/` files by hand.** The ids are content-hashed, the anchors
-carry blake3 digests, and a malformed entry is a comment that silently fails to
-resolve. The CLI is the interface.
+## The reviewing loop
 
-## The workflow
+1. **Scope** — what is under review:
 
-### 1. See what is under review
+   ```sh
+   rv status --json          # revset, changes, files, comment counts
+   ```
 
-```sh
-rv status --json
-```
+2. **Read the changes in rv's own coordinates:**
 
-Key fields: `revset`, `base`/`head` (commit ids), `changes` (the stack, newest
-first), `files` (every changed path with its kind: added/modified/removed/
-renamed), `comments` (counts by state), `degraded_base` (see Pitfalls).
+   ```sh
+   rv diff --json            # every file; or: rv diff <file> --json
+   ```
 
-The default range is `trunk()..@`. Review a different range with
-`rv --from <rev> --to <rev> status` — these are queries and never modify the
-session record.
+   Each line carries `kind` (`added`/`removed`/`context`), `left` (base-side
+   number), `right` (head-side number) and `text`. **The numbers you comment
+   with are numbers rv itself printed** — never translate from `jj diff` or a
+   unified hunk; that coordinate-system leak is exactly what `rv diff` exists
+   to delete. Read the head-side files themselves whenever you need more
+   context than the diff shows.
 
-### 2. Read the changes
+3. **Comment** on a specific line:
 
-Read the changed files at head with your normal file tools. For what *changed*,
-use jj: `jj diff --from <base> --to <head>` or per-file `jj diff -r <change>`.
-The `files` list from step 1 tells you which paths are worth opening.
+   ```sh
+   rv comment <file> --line <n> [--side left|right] -m "<finding>"
+   ```
 
-### 3. Leave comments
+   - `--line` takes the number from `rv diff`'s side: `right` (the default)
+     for added/context lines by their `right` number, `--side left` for a
+     removed line by its `left` number.
+   - For a body with backticks, quotes, `$` or newlines, pass `-m -` and pipe
+     the body on stdin (the `git commit -F -` convention):
 
-```sh
-rv comment <file> --line <n> -m "<one finding, stated precisely>"
-```
+     ```sh
+     rv comment src/store.rs --line 238 -m - <<'EOF'
+     `content_hash` is computed from the untrimmed line, so re-indenting
+     breaks every anchor — hash the trimmed text.
+     EOF
+     ```
 
-- `<file>` is the path exactly as `rv status` lists it (the head-side path).
-- `--line` is the 1-based line number **in the file on that side**, not a diff
-  hunk offset.
-- `--side right` (default): the code as it exists at head — use this for
-  almost everything.
-- `--side left`: a line that was **removed** — the line number then refers to
-  the base version of the file. For a renamed file, rv maps to the old path
-  itself.
+   - rv validates the line exists on that side and refuses with a reason
+     (exit 1) otherwise. A refusal means your coordinates are wrong — re-run
+     `rv diff <file> --json` rather than guessing.
 
-On success it prints `saved <id> at <file>:<line> (right)`. The id is the
-comment's permanent name. The export is refreshed in the same step, so the
-worker sees the comment immediately.
+4. **Check what you left**:
 
-Refusals are exit-code-1 errors that name the problem: a path outside the
-range, a line past the end of the file, an empty body. Fix your input and
-retry.
+   ```sh
+   rv comments --json --state open
+   ```
 
-### 4. Verify, then stop
+## What makes a good rv comment
 
-```sh
-rv status --json   # comments.open should equal what you left
-```
+- **One finding per comment**, on the line that best represents it.
+- Say what is wrong **and what right looks like** — the worker acts on your
+  words alone.
+- Comment on the side the problem lives on: a bug in new code goes on the
+  `right`; "why was this deleted?" goes on the removed line's `left`.
+- Don't comment on code the range doesn't touch — `rv comment` refuses files
+  outside the review, by design.
 
-Do **not** resolve or abandon your own comments — settling is the worker's and
-the human's act. Do not reply to your own comments either; replies are the
-worker's channel back.
+## Verifying a claim before you make it
 
-## Writing comments that a worker can act on
+You have the repository. Before filing "this does not compile" or "this test
+fails", check — `cargo check`, run the test, read the callers. A wrong claim
+costs the worker a round trip and the review its credibility. If you cannot
+verify, say so in the comment ("unverified: …").
 
-- **One finding per comment.** The worker replies and resolves per comment; a
-  comment holding three problems can only be ticked off as one.
-- **Anchor on the most specific line** — the defective line itself, not the
-  function's opening brace.
-- State what is wrong, why it matters, and (if you have one) the fix you'd
-  accept: `"content_hash is computed from the untrimmed line, so re-indenting
-  breaks every anchor — hash the trimmed text"` beats `"hashing seems fragile"`.
-- Re-running `rv comment` with the same file, line, side and body **usually
-  updates** the existing comment rather than duplicating it — the id is seeded
-  from those four things plus the owning change, so if the stack was rewritten
-  in between you may get a second comment instead. A different body on the same
-  line is always a second comment.
+## What you never do
 
-## Pitfalls
-
-- **`degraded_base: true`** in status means `trunk()` resolved to the
-  repository root (no origin/upstream main/master/trunk bookmark), so the
-  "review" is the whole history and every file reads as added. Say so rather
-  than reviewing it as a branch, or ask for an explicit `--from`.
-- A comment on a file **outside the current range** is refused. If you must
-  comment on it, the range is wrong — re-run with `--from`/`--to`.
-- `rv comment` runs from the repo root by default; from elsewhere pass
-  `--repo <path>`.
-- The subcommand name collides with a bookmark literally named `comment` only
-  if you pass it positionally; you never do — the file is the positional.
+- Never edit `.review/` files or `REVIEW-FEEDBACK.md` by hand.
+- Never `rv resolve` or `rv abandon` a comment you filed as a *reviewer* —
+  settling is the worker's (or human's) half. Exception: retracting your own
+  mistaken finding, with `rv reply <id> -m "<why>"` first, then `rv abandon`.
+- Never delete comments — deletion is behind the TUI's human confirmation.

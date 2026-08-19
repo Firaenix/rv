@@ -79,6 +79,26 @@ impl Fixture {
             .output()
             .expect("run rv")
     }
+
+    /// The same, with `stdin` piped in — how `-m -` arrives.
+    fn rv_with_stdin(&self, args: &[&str], stdin: &str) -> Output {
+        use std::io::Write as _;
+        let mut child = Command::new(env!("CARGO_BIN_EXE_rv"))
+            .args(args)
+            .current_dir(self.root())
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("spawn rv");
+        child
+            .stdin
+            .take()
+            .expect("a piped stdin")
+            .write_all(stdin.as_bytes())
+            .expect("write the body");
+        child.wait_with_output().expect("run rv")
+    }
 }
 
 /// Renders `output`'s streams for an assertion message.
@@ -92,24 +112,35 @@ fn streams(output: &Output) -> String {
 }
 
 #[test]
-fn render_writes_markdown_and_excludes() {
+fn render_prints_the_view_and_out_writes_it() {
     let workspace = Fixture::new();
     workspace.write("a.rs", "fn a() {}\n");
     workspace.commit("first change");
 
+    // The default is stdout: the markdown is a projection for reading, and
+    // nothing reads it back, so where it lands is the caller's business.
     let output = workspace.rv(&["render"]);
     assert!(output.status.success(), "{}", streams(&output));
-
-    let markdown = fs::read_to_string(workspace.root().join(".review/REVIEW-FEEDBACK.md"))
-        .expect("read rendered markdown");
+    let markdown = String::from_utf8_lossy(&output.stdout);
     assert!(
         markdown.starts_with("<!-- rv:v1 -->"),
-        "markdown does not open with the version marker:\n{markdown}"
+        "the view does not open with the version marker:\n{markdown}"
     );
     assert!(
-        markdown.contains("**For LLMs:**"),
-        "markdown is missing the LLM protocol block:\n{markdown}"
+        markdown.contains("rendered view") && markdown.contains("rv comments --json"),
+        "the view does not name the CLI as the real interface:\n{markdown}"
     );
+    assert!(
+        !workspace.root().join(".review/REVIEW-FEEDBACK.md").exists(),
+        "a bare render wrote a file nobody asked for"
+    );
+
+    // `--out` is the artefact-on-request form.
+    let output = workspace.rv(&["render", "--out", ".review/REVIEW-FEEDBACK.md"]);
+    assert!(output.status.success(), "{}", streams(&output));
+    let written = fs::read_to_string(workspace.root().join(".review/REVIEW-FEEDBACK.md"))
+        .expect("read rendered markdown");
+    assert!(written.starts_with("<!-- rv:v1 -->"), "{written}");
 
     let exclude = fs::read_to_string(workspace.root().join(".git/info/exclude"))
         .expect("read .git/info/exclude");
@@ -392,12 +423,11 @@ fn a_degraded_trunk_is_named_rather_than_implied() {
         streams(&json)
     );
 
-    workspace.rv(&["render"]);
-    let document = std::fs::read_to_string(workspace.root().join(".review/REVIEW-FEEDBACK.md"))
-        .expect("read the export");
+    let rendered = workspace.rv(&["render"]);
+    let document = String::from_utf8_lossy(&rendered.stdout);
     assert!(
         document.contains("resolved to the repository root"),
-        "the export does not name the degradation:\n{document}"
+        "the view does not name the degradation:\n{document}"
     );
 }
 
@@ -425,14 +455,14 @@ fn the_fallback_engine_is_a_documented_flag() {
     assert!(output.status.success(), "{}", streams(&output));
 }
 
-/// `rv comment` is the reviewer agent's entry point: the anchor, the id and the
-/// export are all handled, so nothing writes `.review/` files by hand.
+/// `rv comment` is the reviewer agent's entry point: the anchor and the id are
+/// handled, so nothing writes `.review/` files by hand.
 ///
 /// It goes through the same functions the TUI's `c` does — the project has
 /// already shipped one bug from two places deciding which side a thing is on —
 /// so a comment added here is indistinguishable from one typed in the pane.
 #[test]
-fn rv_comment_saves_an_anchored_comment_and_refreshes_the_export() {
+fn rv_comment_saves_an_anchored_comment_without_touching_the_export() {
     let workspace = Fixture::new();
     workspace.write("a.rs", "fn a() {\n    let x = 1;\n}\n");
     workspace.commit("first change");
@@ -467,24 +497,17 @@ fn rv_comment_saves_an_anchored_comment_and_refreshes_the_export() {
         "the anchor quotes nothing: {comment}"
     );
 
-    // And the export already carries it, so a worker agent polling the document
-    // sees it without a separate render step.
-    let document = std::fs::read_to_string(workspace.root().join(".review/REVIEW-FEEDBACK.md"))
-        .expect("read the export");
+    // The markdown is a view rendered on request: saving writes no export, and
+    // a polling worker reads `rv status` / `rv comments` instead.
     assert!(
-        document.contains("this line needs a name"),
-        "the export was not refreshed:\n{document}"
+        !workspace.root().join(".review/REVIEW-FEEDBACK.md").exists(),
+        "saving refreshed the export, which nothing reads back"
     );
 
-    // The round trip: a reply appended to the document reaches the store on the
-    // next render, which is the worker agent's half of the loop.
-    let replied = document.replace(
-        "**Comment:** this line needs a name",
-        "**Comment:** this line needs a name\n**Reply:** renamed it to `total`",
-    );
-    std::fs::write(workspace.root().join(".review/REVIEW-FEEDBACK.md"), replied)
-        .expect("write the reply");
-    workspace.rv(&["render"]);
+    // The worker's answer goes through the CLI, not through the document.
+    let id = comment["id"].as_str().expect("an id").to_owned();
+    let replied = workspace.rv(&["reply", &id, "-m", "renamed it to `total`"]);
+    assert!(replied.status.success(), "{}", streams(&replied));
     let stored = std::fs::read_to_string(workspace.root().join(".review/comments.json"))
         .expect("read comments.json");
     assert!(
@@ -553,14 +576,12 @@ fn rv_resolve_settles_a_comment_and_records_the_agent() {
         "who settled it went unrecorded — which is the one thing that must not"
     );
 
-    // The export moved it out of Open, so a polling worker stops seeing it as
-    // work.
-    let document = std::fs::read_to_string(workspace.root().join(".review/REVIEW-FEEDBACK.md"))
-        .expect("read the export");
-    assert!(
-        document.contains("## Open (0)") && document.contains("## Resolved (1)"),
-        "the export still lists it as open:\n{document}"
-    );
+    // The worker's poll stops seeing it as work.
+    let status = workspace.rv(&["status", "--json"]);
+    let report: serde_json::Value =
+        serde_json::from_slice(&status.stdout).expect("status --json is valid json");
+    assert_eq!(report["comments"]["open"], 0, "{}", streams(&status));
+    assert_eq!(report["comments"]["resolved"], 1, "{}", streams(&status));
 
     // And re-applying is the undo.
     let again = workspace.rv(&["resolve", &id]);
@@ -600,5 +621,271 @@ fn rv_abandon_is_a_distinct_state() {
         String::from_utf8_lossy(&unknown.stderr).contains("no comment ffffffff"),
         "{}",
         streams(&unknown)
+    );
+}
+
+/// `rv comments --json` is the read channel: everything the store and a load
+/// can say, on the same in-range view the TUI and `rv status` read — one
+/// review, three readers, one answer.
+#[test]
+fn rv_comments_json_is_the_read_channel() {
+    let workspace = Fixture::new();
+    workspace.write("a.rs", "fn a() {\n    let x = 1;\n}\n");
+    workspace.commit("first change");
+    let saved = workspace.rv(&["comment", "a.rs", "--line", "2", "-m", "needs a name"]);
+    let id = String::from_utf8_lossy(&saved.stdout)
+        .split_whitespace()
+        .nth(1)
+        .expect("an id")
+        .to_owned();
+    workspace.rv(&["comment", "a.rs", "--line", "1", "-m", "and this one settles"]);
+
+    let listed = workspace.rv(&["comments", "--json"]);
+    assert!(listed.status.success(), "{}", streams(&listed));
+    let comments: serde_json::Value =
+        serde_json::from_slice(&listed.stdout).expect("comments --json is valid json");
+    let all = comments.as_array().expect("an array");
+    assert_eq!(all.len(), 2, "{comments}");
+    let first = all
+        .iter()
+        .find(|comment| comment["id"] == id.as_str())
+        .expect("the saved comment is listed");
+    assert_eq!(first["state"], "open");
+    assert_eq!(first["outdated"], false);
+    assert_eq!(first["body"], "needs a name");
+    assert_eq!(first["reply"], serde_json::Value::Null);
+    assert_eq!(first["anchor"]["file"], "a.rs");
+    assert_eq!(first["anchor"]["side"], "right");
+    assert_eq!(first["anchor"]["line"], 2);
+    assert!(
+        first["anchor"]["context_start"].is_number(),
+        "the excerpt does not say where it starts: {first}"
+    );
+    assert!(
+        first["anchor"]["context"]
+            .as_array()
+            .is_some_and(|context| !context.is_empty()),
+        "the anchor quotes nothing: {first}"
+    );
+
+    // `--state open` is the worker's first question, without `jq`.
+    let other = all
+        .iter()
+        .find(|comment| comment["id"] != id.as_str())
+        .expect("two comments")["id"]
+        .as_str()
+        .expect("an id")
+        .to_owned();
+    workspace.rv(&["resolve", &other]);
+    let open = workspace.rv(&["comments", "--json", "--state", "open"]);
+    let open: serde_json::Value =
+        serde_json::from_slice(&open.stdout).expect("filtered json");
+    let open = open.as_array().expect("an array");
+    assert_eq!(open.len(), 1, "{open:?}");
+    assert_eq!(open[0]["id"], id.as_str());
+}
+
+/// `rv reply` is the answer channel: unknown ids are errors, a second reply
+/// replaces the first, and resolving afterwards keeps the reply intact.
+#[test]
+fn rv_reply_stores_replaces_and_survives_settling() {
+    let workspace = Fixture::new();
+    workspace.write("a.rs", "fn a() {\n    let x = 1;\n}\n");
+    workspace.commit("first change");
+    let saved = workspace.rv(&["comment", "a.rs", "--line", "2", "-m", "needs a name"]);
+    let id = String::from_utf8_lossy(&saved.stdout)
+        .split_whitespace()
+        .nth(1)
+        .expect("an id")
+        .to_owned();
+
+    // A typoed id is an error, not a silently dropped answer — which is the
+    // markdown failure mode this command exists to delete.
+    let unknown = workspace.rv(&["reply", "ffffffff", "-m", "lost work"]);
+    assert!(!unknown.status.success(), "{}", streams(&unknown));
+    assert!(
+        String::from_utf8_lossy(&unknown.stderr).contains("ffffffff"),
+        "{}",
+        streams(&unknown)
+    );
+    let stored = std::fs::read_to_string(workspace.root().join(".review/comments.json"))
+        .expect("read comments.json");
+    assert!(!stored.contains("lost work"), "the failed reply stored something");
+
+    workspace.rv(&["reply", &id, "-m", "first answer"]);
+    workspace.rv(&["reply", &id, "-m", "better answer"]);
+    workspace.rv(&["resolve", &id]);
+
+    let listed = workspace.rv(&["comments", "--json"]);
+    let comments: serde_json::Value =
+        serde_json::from_slice(&listed.stdout).expect("valid json");
+    assert_eq!(comments[0]["reply"], "better answer", "{comments}");
+    assert_eq!(comments[0]["state"], "resolved");
+    assert_eq!(comments[0]["settled_by"], "agent");
+}
+
+/// Saving, settling and replying leave the export's bytes untouched: the file
+/// is a view produced on request, and a file nothing reads back cannot be
+/// dangerously stale.
+#[test]
+fn saving_settling_and_replying_leave_the_export_untouched() {
+    let workspace = Fixture::new();
+    workspace.write("a.rs", "fn a() {\n    let x = 1;\n}\n");
+    workspace.commit("first change");
+    workspace.rv(&["render", "--out", ".review/REVIEW-FEEDBACK.md"]);
+    let before = std::fs::read(workspace.root().join(".review/REVIEW-FEEDBACK.md"))
+        .expect("read the export");
+
+    let saved = workspace.rv(&["comment", "a.rs", "--line", "2", "-m", "needs a name"]);
+    let id = String::from_utf8_lossy(&saved.stdout)
+        .split_whitespace()
+        .nth(1)
+        .expect("an id")
+        .to_owned();
+    workspace.rv(&["reply", &id, "-m", "done"]);
+    workspace.rv(&["resolve", &id]);
+
+    let after = std::fs::read(workspace.root().join(".review/REVIEW-FEEDBACK.md"))
+        .expect("read the export again");
+    assert_eq!(before, after, "a side effect rewrote the export");
+
+    // An explicit render carries the current review.
+    let rendered = workspace.rv(&["render"]);
+    let document = String::from_utf8_lossy(&rendered.stdout);
+    assert!(
+        document.contains("needs a name") && document.contains("done"),
+        "the view is not the current review:\n{document}"
+    );
+}
+
+/// `-m -` reads the body from stdin, so backticks, quotes, `$` and newlines
+/// arrive byte-exact instead of one shell-quoting mistake from mangled.
+#[test]
+fn a_body_from_stdin_round_trips_byte_identically() {
+    let workspace = Fixture::new();
+    workspace.write("a.rs", "fn a() {\n    let x = 1;\n}\n");
+    workspace.commit("first change");
+
+    let body = "`content_hash` is computed from the $untrimmed line — \"so\"\nre-indenting breaks 'every' anchor.";
+    let saved = workspace.rv_with_stdin(&["comment", "a.rs", "--line", "2", "-m", "-"], body);
+    assert!(saved.status.success(), "{}", streams(&saved));
+
+    let listed = workspace.rv(&["comments", "--json"]);
+    let comments: serde_json::Value =
+        serde_json::from_slice(&listed.stdout).expect("valid json");
+    assert_eq!(comments[0]["body"], body, "{comments}");
+
+    // An empty stdin body is refused exactly as an empty `-m` argument is.
+    let empty = workspace.rv_with_stdin(&["comment", "a.rs", "--line", "1", "-m", "-"], "  \n");
+    assert!(!empty.status.success(), "{}", streams(&empty));
+}
+
+/// `rv status --check` is the worker's poll and a CI gate: exit 1 while any
+/// comment is open, 0 once none is, nothing printed — unless `--json` asks for
+/// the report too.
+#[test]
+fn rv_status_check_answers_in_the_exit_code() {
+    let workspace = Fixture::new();
+    workspace.write("a.rs", "fn a() {\n    let x = 1;\n}\n");
+    workspace.commit("first change");
+
+    let clean = workspace.rv(&["status", "--check"]);
+    assert!(clean.status.success(), "{}", streams(&clean));
+    assert!(clean.stdout.is_empty(), "{}", streams(&clean));
+
+    let saved = workspace.rv(&["comment", "a.rs", "--line", "2", "-m", "work"]);
+    let id = String::from_utf8_lossy(&saved.stdout)
+        .split_whitespace()
+        .nth(1)
+        .expect("an id")
+        .to_owned();
+
+    let open = workspace.rv(&["status", "--check"]);
+    assert_eq!(open.status.code(), Some(1), "{}", streams(&open));
+    assert!(open.stdout.is_empty(), "{}", streams(&open));
+
+    // `--check --json` prints the report *and* sets the code.
+    let both = workspace.rv(&["status", "--check", "--json"]);
+    assert_eq!(both.status.code(), Some(1), "{}", streams(&both));
+    assert!(!both.stdout.is_empty(), "{}", streams(&both));
+
+    workspace.rv(&["resolve", &id]);
+    let settled = workspace.rv(&["status", "--check"]);
+    assert!(settled.status.success(), "{}", streams(&settled));
+}
+
+/// `rv diff --json` issues coordinates in rv's own vocabulary, and a line it
+/// reports as `right: n` is a line `rv comment --line n` accepts — the tool
+/// that validates the anchor is the tool that issued the numbers.
+#[test]
+fn rv_diff_json_issues_the_coordinates_comment_accepts() {
+    let workspace = Fixture::new();
+    workspace.write("a.rs", "fn a() {\n    let x = 1;\n}\n");
+    workspace.commit("first change");
+
+    let output = workspace.rv(&["diff", "--json"]);
+    assert!(output.status.success(), "{}", streams(&output));
+    let files: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("diff --json is valid json");
+    let file = &files.as_array().expect("an array")[0];
+    assert_eq!(file["file"], "a.rs");
+    assert!(
+        file["engine"] == "difftastic" || file["engine"] == "fallback",
+        "the engine is stated: {file}"
+    );
+    assert_eq!(file["binary"], false);
+
+    let line = file["lines"]
+        .as_array()
+        .expect("lines")
+        .iter()
+        .find(|line| line["kind"] == "added" && line["right"].is_number())
+        .expect("an added line with a head-side number")
+        .clone();
+    let number = line["right"].as_u64().expect("a number").to_string();
+
+    let saved = workspace.rv(&["comment", "a.rs", "--line", &number, "-m", "on rv's own number"]);
+    assert!(
+        saved.status.success(),
+        "rv refused a coordinate it issued itself: {}",
+        streams(&saved)
+    );
+
+    // One file by name, and a file outside the range is an error.
+    let one = workspace.rv(&["diff", "a.rs", "--json"]);
+    assert!(one.status.success(), "{}", streams(&one));
+    let missing = workspace.rv(&["diff", "nope.rs", "--json"]);
+    assert!(!missing.status.success(), "{}", streams(&missing));
+}
+
+/// The worker's whole loop, CLI only, with no read of the markdown anywhere:
+/// check → comments → reply → resolve → check.
+#[test]
+fn the_worker_loop_runs_without_the_markdown() {
+    let workspace = Fixture::new();
+    workspace.write("a.rs", "fn a() {\n    let x = 1;\n}\n");
+    workspace.commit("first change");
+    workspace.rv(&["comment", "a.rs", "--line", "2", "-m", "needs a name"]);
+
+    assert_eq!(
+        workspace.rv(&["status", "--check"]).status.code(),
+        Some(1),
+        "there is work"
+    );
+    let listed = workspace.rv(&["comments", "--json", "--state", "open"]);
+    let open: serde_json::Value = serde_json::from_slice(&listed.stdout).expect("valid json");
+    let id = open[0]["id"].as_str().expect("an id").to_owned();
+
+    // …fix the code…
+    workspace.rv(&["reply", &id, "-m", "renamed; the tests pin it"]);
+    workspace.rv(&["resolve", &id]);
+
+    assert!(
+        workspace.rv(&["status", "--check"]).status.success(),
+        "the loop did not converge"
+    );
+    assert!(
+        !workspace.root().join(".review/REVIEW-FEEDBACK.md").exists(),
+        "something in the loop touched the markdown"
     );
 }

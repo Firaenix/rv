@@ -1,9 +1,12 @@
-//! `.review/REVIEW-FEEDBACK.md`: the round-trip surface between a human
-//! reviewer and an LLM.
+//! `.review/REVIEW-FEEDBACK.md`: the review rendered as a page.
 //!
 //! Pure string work — no filesystem, no jj-lib, no terminal. [`render`] turns a
-//! [`Session`] and its [`Comment`]s into the document; [`parse_replies`] reads
-//! back the one thing an LLM may add to it, `**Reply:**` blocks.
+//! [`Session`] and its [`Comment`]s into the document. The document is a
+//! **one-way view** (CLI-loop spec, 2026-08-19): agents read the review with
+//! `rv comments --json` and answer with `rv reply`, so nothing reads this file
+//! back any more. [`parse_replies`] survives for exactly one release as the
+//! migration that rescues a reply an agent wrote into a pre-amendment export;
+//! its hardening — and the tests defending it — go when it goes.
 //!
 //! Three constraints hold this module together. The reasoning behind each is in
 //! `docs/superpowers/specs/2026-08-17-rv-storage-model-design.md` §10, which is
@@ -52,28 +55,18 @@ const REPLY_MARKER: &str = "**Reply:**";
 /// list content — never as an indented code block, which needs four.
 const BODY_INDENT: &str = "  ";
 
-/// The protocol block, addressed to the LLM that reads this file: the one edit
-/// it may make, and the one it may not.
+/// The one line addressed to a program that finds this file: the document is a
+/// **view**, and the CLI is where the review is read and answered.
 ///
-/// **Replies are appended; structure is `rv`'s.** Markers, headings and section
-/// order are what make the file machine-readable, and a reply is the only thing
-/// the parser goes looking for.
-///
-/// It no longer forbids resolving. It used to, on the grounds that an agent
-/// grading its own homework is how bad fixes land — but the ban only pushed the
-/// act into prose nobody reads. The storage model now records **who** settled a
-/// comment and shows it, so an agent may resolve its own finding and the file
-/// and the screen both say it was the agent (storage spec §3). That is the safe
-/// half of the original rule kept and the unenforceable half dropped: the danger
-/// was never the resolving, it was the resolving going unnoticed. Editing the
-/// state *here* is still out — `session.toml` is the authority, and a state
-/// written into the export would be overwritten by the next render.
-const PROTOCOL: &str = "> **For LLMs:** fix each open comment, then append a `**Reply:**` block directly\n\
-     > beneath it, with the `**Reply:**` marker at the start of the line — never\n\
-     > indented, never inside a list item, or the reply is not read.\n\
-     > Do not edit `<!-- rv: -->` markers, headings, or section order, and do not\n\
-     > write a state into this file — `rv` resolves and abandons, and records who\n\
-     > did.\n";
+/// It replaces the old `For LLMs:` protocol block whole. That block taught the
+/// column-0 `**Reply:**` convention, because appending to this file used to be
+/// the reply channel; the CLI-loop amendment made `rv reply` the channel and
+/// this file write-only, so the only useful thing to tell a reader is where
+/// the real interface lives. The `<!-- rv:anchor -->` markers stay as
+/// provenance for the ids they name.
+const PROTOCOL: &str = "> This file is a rendered view — nothing reads it back. Read the review with\n\
+     > `rv comments --json`, answer with `rv reply <id> -m`, settle with\n\
+     > `rv resolve <id>` / `rv abandon <id>`.\n";
 
 /// How many characters of a comment body are quoted in a collapsed entry's
 /// `<summary>` before it is elided, so a collapsed entry is identifiable

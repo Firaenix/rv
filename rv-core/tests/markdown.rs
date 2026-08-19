@@ -126,42 +126,18 @@ fn open_renders_expanded_with_anchor_and_protocol() {
         "missing session start:\n{document}"
     );
 
-    // The protocol block: what the LLM may do, and what only the human may do.
+    // The one line addressed to a program that finds this file: the document
+    // is a view, and the CLI is the real interface.
     assert!(
-        document.contains("**For LLMs:** fix each open comment"),
-        "missing protocol block:\n{document}"
+        document.contains("rendered view") && document.contains("nothing reads it back"),
+        "the view must say it is one:\n{document}"
     );
     assert!(
-        document.contains("append a `**Reply:**` block directly"),
-        "protocol must ask for appended replies:\n{document}"
+        document.contains("rv comments --json")
+            && document.contains("rv reply")
+            && document.contains("rv resolve"),
+        "the view must name the CLI that replaced the round trip:\n{document}"
     );
-    // The parser only reads a marker at column 0, so the party expected to
-    // honor that has to be told (an indented reply is silently lost).
-    assert!(
-        document.contains("with the `**Reply:**` marker at the start of the line"),
-        "protocol must require the marker at column 0:\n{document}"
-    );
-    assert!(
-        document.contains("never\n> indented, never inside a list item"),
-        "protocol must spell out what breaks it:\n{document}"
-    );
-    assert!(
-        document.contains("Do not edit `<!-- rv: -->` markers, headings, or section order"),
-        "protocol must forbid editing markers/headings/order:\n{document}"
-    );
-    // The prohibition is on writing a *state* into the export, not on resolving:
-    // `session.toml` is the authority, and rv records who settled a comment. It
-    // used to forbid resolving outright, which only moved the act somewhere
-    // nobody could see it.
-    assert!(
-        document.contains("do not\n> write a state into this file"),
-        "protocol must keep the export out of the lifecycle:\n{document}"
-    );
-    assert!(
-        document.contains("records who\n> did"),
-        "protocol must say the actor is recorded:\n{document}"
-    );
-
     // All four sections always appear, in order, each with its count.
     assert!(document.contains("## Open (1)"), "{document}");
     assert!(

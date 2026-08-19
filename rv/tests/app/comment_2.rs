@@ -45,8 +45,9 @@ fn a_comment_stored_under_a_foreign_id_keeps_working() {
     fs::create_dir_all(&snapshots).expect("create the legacy dir");
     fs::write(snapshots.join(LEGACY), "legacy context").expect("file the legacy snapshot");
 
-    // The export is a projection of the store, so it now carries the legacy
-    // marker — and a reply written under it binds to the stored comment.
+    // The export is a projection of the store, so it carries the legacy
+    // marker — and a pre-amendment reply written under it binds to the stored
+    // comment on the next load, through the §5 rescue.
     let review = session::build(workspace.root(), None, None).expect("build the review");
     session::write_markdown(&review).expect("rewrite the export");
     assert!(
@@ -61,8 +62,10 @@ fn a_comment_stored_under_a_foreign_id_keeps_working() {
     )
     .expect("write the replied-to markdown");
 
-    // A second comment rewrites the whole document from `comments.json`, with
-    // this build's id scheme, beside the legacy entry.
+    // Reopened: the load rescues the reply into the store, and a second
+    // comment saves beside the legacy entry with this build's id scheme.
+    drop(app);
+    let mut app = workspace.app();
     app.on_key(KeyCode::Char('j')).expect("move down a line");
     write_comment(&mut app, "written by this build");
 
@@ -82,11 +85,14 @@ fn a_comment_stored_under_a_foreign_id_keeps_working() {
             .exists(),
         "the legacy snapshot was dropped"
     );
+    // An explicit render — the only writer left — carries the rescued reply.
+    session::write_markdown(&session::read(workspace.root(), None, None).expect("read"))
+        .expect("render the export");
     assert!(
         workspace
             .markdown()
             .contains("**Reply:** still addressable"),
-        "the rewritten export dropped the reply to the legacy comment:\n{}",
+        "the render dropped the reply to the legacy comment:\n{}",
         workspace.markdown()
     );
 }

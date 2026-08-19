@@ -15,6 +15,7 @@ fn e_refreshes_an_export_a_delete_left_stale() {
     let mut app = workspace.app();
     write_comment(&mut app, "worth exporting");
     write_comment(&mut app, "and then withdrawn");
+    app.on_key(KeyCode::Char('e')).expect("export both");
 
     app.on_key(KeyCode::Char('d')).expect("ask to delete");
     app.on_key(KeyCode::Char('y')).expect("confirm");
@@ -54,11 +55,11 @@ fn the_status_line_names_the_file() {
     );
 }
 
-/// `e` ingests before it writes. A reply a model appended to the document is
-/// folded back into the store first, so exporting cannot delete an answer that
-/// was never saved — which is the failure the whole ingest step exists to stop.
+/// `e` renders the store and only the store: the document is a view, so an
+/// edit made to the file is overwritten, not ingested — the reply channel is
+/// `rv reply`, and a pre-amendment reply is rescued at *load*, not at export.
 #[test]
-fn exporting_keeps_a_reply_the_document_carried() {
+fn exporting_overwrites_the_document_without_reading_it_back() {
     let workspace = Fixture::new();
     let mut app = workspace.app();
     write_comment(&mut app, "please explain");
@@ -74,15 +75,15 @@ fn exporting_keeps_a_reply_the_document_carried() {
     app.on_key(KeyCode::Char('e')).expect("second export");
 
     assert!(
-        workspace.markdown().contains("because of the deadline"),
-        "the second export dropped the reply:\n{}",
+        !workspace.markdown().contains("because of the deadline"),
+        "the export read the document back, which is the round trip this \
+         amendment deleted:\n{}",
         workspace.markdown()
     );
     let stored = workspace.store().comments().expect("read the comments");
     assert_eq!(
-        stored[0].reply.as_deref(),
-        Some("because of the deadline"),
-        "the reply reached the document but never reached the store"
+        stored[0].reply, None,
+        "the export wrote into the store, which only `rv reply` may do"
     );
 }
 

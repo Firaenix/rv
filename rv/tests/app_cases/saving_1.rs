@@ -134,14 +134,17 @@ fn a_typed_comment_reaches_the_store_byte_identically() {
             "a snapshot directory appeared beside comments.json"
         );
 
-        // The export is rewritten with the comment in it, on one line: the
-        // body cannot have been split, escaped or re-indented.
-        let document = fixture.markdown();
+        // The view, rendered on request, carries the comment on one line: the
+        // body cannot have been split, escaped or re-indented. (Saving itself
+        // writes no export any more — the markdown is a view.)
+        let review =
+            rv::session::read(fixture.root(), None, None).expect("read the review back");
+        let document = rv::session::render_markdown(&review).expect("render the view");
         prop_assert!(
             document
                 .lines()
                 .any(|line| line == format!("**Comment:** {expected}")),
-            "the export does not carry {:?} verbatim:\n{}",
+            "the view does not carry {:?} verbatim:\n{}",
             expected,
             document
         );

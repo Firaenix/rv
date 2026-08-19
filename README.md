@@ -3,10 +3,10 @@
 A terminal code reviewer for [Jujutsu](https://jj-vcs.github.io/jj/) stacks.
 
 `rv` reads a range of jj changes out of your local repository, shows you the
-diff, and lets you attach comments to individual lines. Those comments are
-written to `.review/REVIEW-FEEDBACK.md`, a plain markdown file designed to be
-handed to a coding agent: the agent fixes the code, appends a `**Reply:**` under
-each comment, and `rv` folds the replies back in without losing them.
+diff, and lets you attach comments to individual lines. Those comments live in
+`.review/`, and the same CLI is a coding agent's whole interface to them: the
+agent reads the review with `rv comments --json`, fixes the code, answers with
+`rv reply`, and ticks work off with `rv resolve` — no file parsing anywhere.
 
 It is a review tool for the work sitting on your disk right now — before it
 becomes a pull request, or instead of ever becoming one.
@@ -80,11 +80,15 @@ Run `rv` from the **workspace root** — the directory holding `.jj/`. See
 | `rv` | `trunk()..@` — everything on your stack that trunk does not have |
 | `rv <bookmark>` | `trunk()..<bookmark>`. The target may be a bookmark, a change id or a commit id |
 | `rv --from <rev> --to <rev>` | An explicit range, e.g. `rv --from main --to my-feature` |
-| `rv comment <file> --line <n> [--side left] -m <text>` | Adds a comment exactly as the TUI would — anchor, id and export all handled. The agent's way in |
+| `rv comment <file> --line <n> [--side left] -m <text>` | Adds a comment exactly as the TUI would — anchor and id handled. `-m -` reads the body from stdin. The reviewer agent's way in |
+| `rv comments [--json] [--state open]` | Lists the comments — id, state, body, reply, anchor and excerpt. The agent's read channel |
+| `rv reply <id> -m <text>` | Stores an answer on the comment (`-m -` for stdin). A second reply replaces the first; state is untouched |
 | `rv resolve <id>` / `rv abandon <id>` | Settles a comment, recording who (`--by agent` is the default; the TUI's `r`/`a` record `user`). Re-applying reopens it |
-| `rv render` | Writes `.review/REVIEW-FEEDBACK.md` for that range and exits — no terminal needed |
+| `rv diff [<file>] --json` | The changes in rv's own side-aware coordinates — the numbers `rv comment --line` accepts |
+| `rv render [--out <path>]` | Prints the review as markdown, a view nothing reads back; `--out` writes it to a file |
 | `rv status` | Prints the range, its changes, its changed files and its comment counts |
 | `rv status --json` | The same report as JSON, for scripting |
+| `rv status --check` | Exit 1 while any comment is open, 0 otherwise, nothing printed — the worker's poll and a CI gate |
 | `rv --repo <path> …` | Reviews the workspace at `<path>` instead of the current directory |
 | `rv --no-difft …` | Diffs with the in-process engine instead of difftastic: line-based rather than structural, with context lines. What a reviewer with no `difft` on `PATH` sees |
 
@@ -256,9 +260,9 @@ deletes nothing and says so, while `s` still folds the line the diff is on.
 | `Enter` | Save; the status line reports `path:line` |
 | `Esc` | Discard |
 
-Comments are single-line for now. Saving one writes it through to disk
-immediately — `comments.json` and a rewritten `REVIEW-FEEDBACK.md` — so a
-comment survives the process being killed the instant after `Enter`.
+Comments are single-line for now. Saving one writes it through to
+`comments.json` immediately, so a comment survives the process being killed
+the instant after `Enter`.
 
 A comment anchors to the side of the diff its line belongs to: a removed line
 anchors to the base revision, added and context lines to the head. The line
@@ -282,9 +286,8 @@ the selected one — so `c` there comments on the code the box is about.
 back out. The selected box is drawn brighter and bold, so `d` and `s` visibly
 have a target.
 
-A reply — the block a coding agent appends to `REVIEW-FEEDBACK.md`, folded back
-in on the next write — renders **inside the same box**, beneath the comment
-body, prefixed `reply:` and dimmed. It is part of the same conversation, and
+A reply — stored by a coding agent with `rv reply` — renders **inside the same
+box**, beneath the comment body, prefixed `reply:` and dimmed. It is part of the same conversation, and
 dimming it is what tells your own words from the answer to them at a glance.
 
 `s` folds a box down to a single row and unfolds it again. **Folding is a view
@@ -299,11 +302,9 @@ answer.
 through; every other key keeps the comment. What `y` removes is the comment's
 entry in `comments.json`, with nothing that undoes it.
 
-`REVIEW-FEEDBACK.md` is an **export**, not a document kept continuously in step
-with the store. `rv render` writes it, and so does every comment you save in the
-TUI; nothing else does — delete a comment and the document still carries its
-entry until the next write. `comments.json` is what says which comments exist
-right now.
+`REVIEW-FEEDBACK.md` is a **view**, produced only on request — the TUI's `e`
+or `rv render --out` — and read back by nothing. Saving, settling and replying
+never touch it; `comments.json` is what says which comments exist right now.
 
 ## The `.review/` directory
 
@@ -312,11 +313,11 @@ right now.
 ├── session.toml          the range under review and every change in it
 ├── comments.json         the authority on which comments exist — each entry
 │                         carries the lines around its comment, as they were
-└── REVIEW-FEEDBACK.md    the human- and LLM-readable projection of the above
+└── REVIEW-FEEDBACK.md    a rendered view of the above, only ever written on request
 ```
 
-`REVIEW-FEEDBACK.md` is a *projection*: it is rebuilt from `comments.json` on
-every write. `comments.json` is the file that decides what exists.
+`REVIEW-FEEDBACK.md` is a *view*: rebuilt from `comments.json` when you ask for
+it, never read back. `comments.json` is the file that decides what exists.
 
 **`.review/` is kept out of version control automatically.** On its first run in
 a repository, `rv` appends `/.review/` to `.git/info/exclude` — never to
@@ -333,50 +334,42 @@ less, but worth knowing if something else on your machine reads that file.
 Deleting `.review/` throws away your comments and nothing else; the next `rv`
 run recreates it.
 
-## The LLM loop
+## The agent loop
 
-This is what the tool is for.
+This is what the tool is for, and it is CLI end to end.
 
-1. You review in the TUI and leave comments. `rv` writes
-   `.review/REVIEW-FEEDBACK.md`.
-2. You point a coding agent at that file. The document opens with a `For LLMs:`
-   block stating the protocol, so the file explains itself.
-3. The agent fixes the code and appends a `**Reply:**` block under each comment
-   it addressed.
-4. The next time `rv` writes the document — `rv render`, or the next comment you
-   save in the TUI — it reads the existing file first and folds those replies
-   back into `comments.json`. Rewriting the document cannot destroy them.
+The worker's loop:
 
-An entry looks like this:
+```sh
+rv status --check                    # is there work? (exit 1 = open comments)
+rv comments --json --state open      # what exactly?
+# …fix the code…
+rv reply 6ce52206 -m "Widened to 8 hex; prop_store pins the width."
+rv resolve 6ce52206
+rv status --json                     # open down, resolved up
+```
 
-````markdown
-## Open (1)
+The reviewer's loop:
 
-### 1. `rv-core/src/anchor.rs:48`
-<!-- rv:anchor id=8d985355 change=uspywkpv… commit=5deca3b3… side=right line=48 hash=35f7a6da… -->
+```sh
+rv status --json                     # scope: changes, files
+rv diff --json                       # what changed, in rv's own coordinates
+# …read the head files as needed…
+rv comment rv-core/src/store.rs --line 238 -m - <<'EOF'
+`content_hash` is computed from the untrimmed line, so re-indenting breaks
+every anchor — hash the trimmed text.
+EOF
+```
 
-  ```rust
-      let end = (index + 5).min(lines.len() - 1);
-  ```
+Every command either succeeds or exits 1 with a reason on stderr; nothing in
+the loop parses a document. The `-m -` form reads the body from stdin — the
+`git commit -F -` convention — so a finding full of backticks and quotes never
+meets the shell. Two skills in this repository teach the loop to agents:
+`rv-reviewer` and `rv-worker` under `.claude/skills/`.
 
-**Comment:** lines.len() - 1 underflows when lines is empty.
-
-**Reply:** Fixed by using unwrap_or(0).
-````
-
-Two rules the parser depends on, both stated in the document itself:
-
-- **Put the reply inside the entry it answers** — after that entry's
-  `<!-- rv:anchor … -->` marker and before the next `###` or `##` heading. A
-  `**Reply:**` that lands outside every entry (appended to the end of the file,
-  for instance) has no comment to bind to and is dropped, and the next rewrite of
-  the document removes it. Binding it to some other comment would put words in a
-  comment nobody looked at, so `rv` drops it instead.
-- **Keep the `**Reply:**` marker at the start of the line.** Not indented, not
-  inside a list item. Indented text is quoted content, not structure.
-
-Do not edit the `<!-- rv: -->` markers, the headings or the section order. Do not
-move comments between sections — see the limits below.
+`rv render` still produces the markdown for human reading, and a reply an agent
+wrote into a pre-CLI export is rescued into the store once, the first time this
+version loads the review.
 
 ## `RV_NO_DIFFT`
 

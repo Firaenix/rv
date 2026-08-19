@@ -1,7 +1,5 @@
 //! Drawing a comment box, and which pane has the focus.
 
-use std::fs;
-
 use crossterm::event::KeyCode;
 use ratatui::style::Color;
 use ratatui::style::Modifier;
@@ -118,23 +116,16 @@ fn the_box_body_keeps_the_default_foreground() {
     );
 }
 
-/// Writes `reply` under every entry of the export and folds it back into the
-/// store, which is the two halves of the LLM loop: the agent appends to the
-/// document, and the next rewrite of it moves what the agent wrote into
-/// `comments.json`.
-///
-/// Through the document rather than by editing the store, because that is the
-/// only way a reply is ever created — there is no key for one — and a fixture
-/// that invented one would be testing a state the product cannot reach.
-fn reply_through_the_document(workspace: &Fixture, reply: &str) {
-    let replied = insert_reply(&workspace.markdown(), reply);
-    fs::write(
-        workspace.root().join(".review/REVIEW-FEEDBACK.md"),
-        &replied,
-    )
-    .expect("write the replied-to markdown");
-    let review = session::build(workspace.root(), None, None).expect("build the review");
-    session::write_markdown(&review).expect("fold the reply back into the store");
+/// Stores `reply` on the first comment through `session::reply` — the same
+/// function `rv reply` calls — because the CLI is the only way a reply is ever
+/// created now that the markdown is a view, and a fixture that edited the
+/// store by hand would be testing a state the product cannot reach.
+fn reply_through_the_cli(workspace: &Fixture, reply: &str) {
+    let review = session::read(workspace.root(), None, None).expect("read the review");
+    let id = workspace.store().comments().expect("read comments.json")[0]
+        .id
+        .clone();
+    session::reply(&review, &id, reply).expect("store the reply");
 }
 
 /// A reply is drawn inside the comment's own box, dimmed: it is part of that
@@ -151,7 +142,7 @@ fn a_reply_renders_dimmed_inside_the_same_box() {
     let workspace = Fixture::new();
     let mut app = workspace.app();
     write_comment(&mut app, "needs a doc");
-    reply_through_the_document(&workspace, "added one");
+    reply_through_the_cli(&workspace, "added one");
     drop(app);
 
     // Reopened, because the store is where the folded reply landed.

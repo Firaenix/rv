@@ -72,12 +72,10 @@ fn typing_a_comment_persists_against_selected_line() {
     assert_eq!(comment.anchor.side, Side::Right);
     assert_eq!(comment.anchor.line, 2);
 
-    // The markdown export is rewritten alongside the store, so the reviewer
-    // never has to run `rv render` to hand the file to an LLM.
+    // The markdown is a view rendered on request — saving must not write it.
     assert!(
-        workspace.markdown().contains("**Comment:** needs a doc"),
-        "the rewritten markdown is missing the comment:\n{}",
-        workspace.markdown()
+        !workspace.root().join(".review/REVIEW-FEEDBACK.md").exists(),
+        "saving a comment refreshed the export, which nothing reads back"
     );
 }
 
@@ -252,14 +250,16 @@ fn escape_abandons() {
 }
 
 #[test]
-fn a_reply_survives_the_rewrite_a_new_comment_triggers() {
+fn a_reply_left_in_an_old_export_is_rescued_on_load() {
     let workspace = Fixture::new();
     let mut app = workspace.app();
 
     write_comment(&mut app, "first");
+    app.on_key(KeyCode::Char('e')).expect("export");
 
-    // What an LLM does to the document: append a reply under the entry it
-    // just addressed, leaving every marker alone.
+    // What a pre-amendment agent did to the document: append a reply under the
+    // entry it just addressed, leaving every marker alone. The CLI is the
+    // reply channel now, so this is the migration case (CLI-loop spec §5).
     let replied = insert_reply(&workspace.markdown(), "fixed in the next change");
     fs::write(
         workspace.root().join(".review/REVIEW-FEEDBACK.md"),
@@ -267,26 +267,26 @@ fn a_reply_survives_the_rewrite_a_new_comment_triggers() {
     )
     .expect("write the replied-to markdown");
 
-    // A second comment rewrites the whole document from comments.json, which
-    // is exactly where the reply would be lost.
-    app.on_key(KeyCode::Char('j')).expect("move down a line");
-    write_comment(&mut app, "second");
-
+    // The next load rescues it, once: opening the review folds the reply into
+    // the store — and only into a comment that has no stored reply.
+    drop(app);
+    let app = workspace.app();
     let comments = workspace.store().comments().expect("read comments.json");
-    assert_eq!(comments.len(), 2, "{comments:?}");
     let first = comments
         .iter()
         .find(|comment| comment.body == "first")
         .expect("the first comment is still stored");
     assert_eq!(first.reply.as_deref(), Some("fixed in the next change"));
-    // A reply is not a state transition: that is Milestone 2's job.
+    // A reply is not a state transition.
     assert_eq!(first.state, CommentState::Open);
-
+    // The export itself is not modified by the rescue: it goes stale
+    // harmlessly until the next explicit render.
     assert!(
         workspace
             .markdown()
             .contains("**Reply:** fixed in the next change"),
-        "the rewritten markdown dropped the reply:\n{}",
+        "the rescue rewrote the export it was reading:\n{}",
         workspace.markdown()
     );
+    drop(app);
 }

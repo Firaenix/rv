@@ -8,10 +8,12 @@
 //! [`rv_core::store::Store::ensure_excluded`] then keeps out of the change under
 //! review), and records `session.toml`.
 //!
-//! [`write_markdown`] is the other shared entry point: every rewrite of
-//! `.review/REVIEW-FEEDBACK.md` — `rv render`'s and the TUI's alike — goes
-//! through it, so that [`fold_replies`] runs first and no rewrite can destroy
-//! a reply an LLM appended.
+//! [`render_markdown`] is the other shared entry point: the markdown is a
+//! **one-way view** of the store — rendered on request by `rv render` and the
+//! TUI's `e`, and never read back (CLI-loop spec §2). Agents read the review
+//! with `rv comments --json` and answer it with `rv reply`; the one remaining
+//! read of the document is [`rescue_replies`], the migration that folds a
+//! pre-amendment reply into the store once, on load.
 
 use std::fs;
 use std::io::ErrorKind;
@@ -31,6 +33,7 @@ mod comments;
 
 pub use comments::add_comment;
 pub use comments::owning_change;
+pub use comments::reply;
 pub use comments::save_comment;
 use rv_core::vcs::Repository;
 
@@ -162,6 +165,9 @@ fn resolve(repo_root: &Path, base: Option<&str>, head: Option<&str>) -> Result<R
     store
         .ensure_excluded()
         .context("could not add /.review/ to .git/info/exclude")?;
+    // The last rescue: a reply an agent wrote into a pre-amendment export is
+    // folded into the store here, once, before anything reads the comments.
+    rescue_replies(&store)?;
 
     let session = Session {
         revset: format!(
@@ -184,22 +190,18 @@ fn resolve(repo_root: &Path, base: Option<&str>, head: Option<&str>) -> Result<R
     })
 }
 
-/// Rewrites `.review/REVIEW-FEEDBACK.md` from the store's comments.
+/// The review as markdown: the in-range comments, `outdated` derived, rendered.
 ///
-/// The document is a *projection* of `comments.json`, so rendering it fresh
-/// would drop anything written into the document that the store does not know
-/// about — which is exactly what [`fold_replies`] rescues first. Both writers
-/// of the file (`rv render` and the TUI, after every saved comment) go through
-/// here for that reason; the write itself is atomic, so a program reading the
-/// document while `rv` runs never sees half of one.
-pub fn write_markdown(review: &Review) -> Result<()> {
-    let mut comments = review
+/// The document is a **view**, never read back: agents read the review with
+/// `rv comments --json` and reply with `rv reply`, so rendering carries no
+/// ingest step and no ordering rule. One function for `rv render` and the
+/// TUI's `e`, so the page a key produces and the page a command produces are
+/// the same page.
+pub fn render_markdown(review: &Review) -> Result<String> {
+    let comments = review
         .store
         .comments()
         .context("could not read the review's comments")?;
-    // Replies are folded from the *whole* document before anything is filtered:
-    // an answer to an out-of-range comment still reaches the store.
-    fold_replies(review, &mut comments)?;
     // The same view everywhere: the export lists what `rv status` counts and
     // the TUI shows. Rendering the whole store made the worker's gate
     // (`comments.open`) and its work list disagree — an out-of-range comment
@@ -208,57 +210,42 @@ pub fn write_markdown(review: &Review) -> Result<()> {
     let mut comments = in_range(review, comments);
     // Every load derives `outdated` — see [`crate::stale::mark_outdated`]. Doing
     // it in `rv status` and not here had the two commands report different states
-    // for one review, which is worse than either being wrong: the export is what
-    // a model reads, and a stale comment presented as open is work asked for
-    // against code that has gone.
+    // for one review, which is worse than either being wrong.
     crate::stale::mark_outdated(review, &mut comments);
+    Ok(markdown::render(&review.session, &comments))
+}
 
-    let document = markdown::render(&review.session, &comments);
+/// Renders and writes `.review/REVIEW-FEEDBACK.md`.
+///
+/// Only two callers remain — `rv render --out` and the TUI's `e` — because the
+/// file stopped being refreshed as a side effect of saving, settling or
+/// replying: nothing reads it back, so a file nothing reads cannot be
+/// dangerously stale. The write itself is atomic, so a program reading the
+/// document while `rv` runs never sees half of one.
+pub fn write_markdown(review: &Review) -> Result<()> {
+    let document = render_markdown(review)?;
     review
         .store
         .write_markdown(&document)
         .with_context(|| format!("could not write {}", review.store.markdown_path().display()))
 }
 
-/// [`write_markdown`], unless this `Review` describes a different range than
-/// the one the reviewer opened.
+/// The migration (CLI-loop spec §5): folds a `**Reply:**` block a pre-amendment
+/// agent wrote into `REVIEW-FEEDBACK.md` back into the stored comment, once.
 ///
-/// For the writers that refresh the export as a *side effect* — saving a
-/// comment, settling one. Those commands run with whatever `--from`/`--to` the
-/// invoker happened to pass, and rewriting the export against that range
-/// re-points its header and its in-range view away from the review the human
-/// is in. An explicit `rv render` still writes whatever range it was asked
-/// for, because being asked is the difference.
-pub fn write_markdown_if_current(review: &Review) -> Result<()> {
-    match review.store.read_session() {
-        Ok(stored) if stored.revset != review.session.revset => Ok(()),
-        _ => write_markdown(review),
-    }
-}
-
-/// Folds `**Reply:**` blocks found in the current `REVIEW-FEEDBACK.md` back
-/// into the stored comments, in `comments` and in `comments.json` alike.
+/// This is the parser's one remaining caller, kept for exactly one release so
+/// that a reply sitting in an old export when this version lands is rescued
+/// rather than orphaned. The rules are the old ingest's, narrowed:
 ///
-/// A reply is the one thing an LLM may add to the document, and the document
-/// is rebuilt from `comments.json` on every write — so without this step the
-/// next rewrite would delete work that was never stored. Reading the file back
-/// before rewriting it makes the round trip lossless.
+/// - Only a comment that has **no stored reply** takes one from the document —
+///   the store is the authority, and the CLI is its only writer now.
+/// - A reply whose id matches no stored comment is ignored.
+/// - No state transitions, and the export itself is not modified: it goes
+///   stale harmlessly until the next explicit `rv render` replaces it.
 ///
-/// The rules are deliberately narrow:
-///
-/// - A reply whose id matches no stored comment is ignored. `comments.json` is
-///   the authority on which comments exist, and the id in a marker may be one
-///   an editor mangled or a comment a later session removed.
-/// - Two replies under one id leave the last one written, which is the reading
-///   that treats the document as an append-only conversation.
-/// - **No state transitions.** A comment with a reply is still `Open`;
-///   `awaiting-verification` and verification itself are Milestone 2 (spec
-///   §14), and this function is where that work attaches.
-///
-/// A missing document is not an error: nothing has been rendered yet, so there
-/// is nothing to rescue.
-pub fn fold_replies(review: &Review, comments: &mut [Comment]) -> Result<()> {
-    let path = review.store.markdown_path();
+/// A missing document is not an error: there is nothing to rescue.
+fn rescue_replies(store: &Store) -> Result<()> {
+    let path = store.markdown_path();
     let document = match fs::read_to_string(&path) {
         Ok(document) => document,
         Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
@@ -267,18 +254,20 @@ pub fn fold_replies(review: &Review, comments: &mut [Comment]) -> Result<()> {
         }
     };
 
+    let mut comments = store
+        .comments()
+        .context("could not read the review's comments")?;
     for (id, reply) in markdown::parse_replies(&document) {
         let Some(comment) = comments.iter_mut().find(|comment| comment.id == id) else {
             continue;
         };
-        if comment.reply.as_deref() == Some(reply.as_str()) {
+        if comment.reply.is_some() {
             continue;
         }
         comment.reply = Some(reply);
-        review
-            .store
+        store
             .append_comment(comment)
-            .with_context(|| format!("could not store the reply to comment {id}"))?;
+            .with_context(|| format!("could not store the rescued reply to comment {id}"))?;
     }
     Ok(())
 }

@@ -152,9 +152,9 @@ fn the_readme_documents_no_binding_that_is_not_bound() {
 #[case::folding_is_a_session_preference("session")]
 #[case::deletion_is_permanent("permanent")]
 #[case::deletion_is_confirmed("`y`")]
-#[case::the_markdown_is_an_export("is an **export**")]
-#[case::the_export_is_not_kept_in_step("not a document kept continuously in step")]
-#[case::written_by_render("`rv render`")]
+#[case::the_markdown_is_a_view("is a **view**")]
+#[case::nothing_reads_it_back("read back by nothing")]
+#[case::written_on_request("`rv render --out`")]
 fn the_readme_explains_inline_comments(#[case] phrase: &str) {
     let section = readme_section("### Inline comments");
     assert!(

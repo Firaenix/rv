@@ -420,3 +420,17 @@ directory or change, making its contents the whole view under a `▴` row that
 names the place, and `Shift+←`/`Esc` backs out. Dogfooding found the readability
 holes the same hour they shipped: black-on-magenta mode text became coloured
 ink, and the tip stopped dimming momentarily-inapplicable keys.
+
+**The agent loop becomes the CLI** (CLI-loop spec, same day it was written) —
+the markdown demoted from writable database to one-way view. `rv comments
+--json` is the read channel, `rv reply` the answer channel, `rv diff --json`
+issues the side-aware coordinates `rv comment --line` accepts, `-m -` takes
+bodies on stdin, and `rv status --check` turns the worker's poll and a CI gate
+into one exit code. Saving, settling and replying no longer rewrite
+`REVIEW-FEEDBACK.md`; only `rv render` (stdout, `--out` for a file) and the
+TUI's `e` produce it, and nothing reads it back. The reply-ingest ordering
+rule, `write_markdown_if_current` and the TUI's ingest-on-export all went;
+`parse_replies` survives exactly one release as the §5 rescue that folds a
+pre-amendment reply into the store on load, and its hostile-input test corpus
+stays with it until both are deleted together. Both skills rewritten around
+the three-command loop; the reviewer's `jj diff` dependency is gone.
