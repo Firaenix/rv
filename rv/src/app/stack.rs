@@ -10,23 +10,32 @@ use super::SidebarTab;
 use super::status::NO_COMMENTS;
 
 impl App {
-    /// `Enter`: into the selected line's comment stack, or — from the comment
-    /// browser — to the code the browsed comment is about.
+    /// `Enter`: into the selected line's comment stack, from the comment
+    /// browser to the code the browsed comment is about, and in the file list
+    /// **into** the row under the cursor — a zoom, not a fold, which is
+    /// `Space`'s verb.
     pub(super) fn on_enter(&mut self) -> Result<()> {
         if self.focus == Focus::Sidebar {
             if self.sidebar_tab == SidebarTab::Comments {
                 return self.jump_to_comment(self.browser_index);
             }
-            // A row that holds things opens and closes; a row that is a file is
-            // already open, and `Enter` on it does nothing rather than
-            // pretending to.
-            if let Some(key) = self.sidebar_fold_key() {
-                self.toggle_dir_fold(key);
+            if self.zoom_under_cursor() {
                 return Ok(());
             }
         }
         self.enter_stack();
         Ok(())
+    }
+
+    /// `Space`: folds the row under the cursor where it holds things, and is
+    /// [`App::on_enter`] everywhere else — the two keys were one verb until the
+    /// zoom gave `Enter` a meaning of its own on a directory.
+    pub(super) fn fold_row(&mut self) -> Result<()> {
+        if let Some(key) = self.sidebar_fold_key() {
+            self.toggle_dir_fold(key);
+            return Ok(());
+        }
+        self.on_enter()
     }
 
     /// Steps the cursor into the selected line's comment stack.
@@ -50,12 +59,16 @@ impl App {
         self.comment_index = 0;
     }
 
-    /// `Esc` out of the stack, and a no-op anywhere else. Two ways out, on the
-    /// two keys a terminal user reaches for, is what keeps the stack from being
-    /// somewhere a reviewer can get stuck.
-    pub(super) fn leave_stack(&mut self) {
+    /// `Esc`: out of the stack, or one zoom level back out of the file list —
+    /// wherever the reviewer has stepped *into* something, this is the step
+    /// back, so nowhere is somewhere they can get stuck.
+    pub(super) fn escape(&mut self) {
         if self.focus == Focus::Stack {
             self.focus = Focus::Diff;
+            return;
+        }
+        if self.focus == Focus::Sidebar && self.zoomed() {
+            self.zoom_out();
         }
     }
 

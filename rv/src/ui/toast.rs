@@ -1,9 +1,11 @@
-//! The floating panel: what has gone wrong, in orange, over the panes.
+//! The floating panel: what has gone wrong, in the theme's yellow, over the
+//! panes.
 
 use std::time::Instant;
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
+use ratatui::style::Modifier;
 use ratatui::style::Style;
 use ratatui::text::Line;
 use ratatui::widgets::Block;
@@ -13,9 +15,8 @@ use ratatui::widgets::Paragraph;
 
 use super::BORDER_ROWS;
 use super::text::clip;
-use super::text::colour;
 use crate::app::Alert;
-use crate::gradient;
+use crate::theme;
 
 /// The mark an alert leads with, so the panel says what it is before it is
 /// read: a warning, not a status.
@@ -33,12 +34,10 @@ const ALERT_SEPARATOR: &str = " · ";
 /// purpose, because a toast that could be clicked would be a dialog, and a
 /// dialog is something a reviewer has to answer.
 ///
-/// The fade is an Oklab ramp in `Rgb`, like the rest of the chrome and unlike
-/// the *code*. Spec §9 asks for it to disappear without fading at sixteen
-/// colours; nothing in this codebase detects colour depth, so a probe written
-/// for the toast alone would be the only one there is — and a second opinion
-/// about the terminal is worse than a fade that degrades the way every other
-/// colour here already does.
+/// The fade is one step: the panel dims for the back half of its life, which is
+/// what a fade can be in an indexed colour — the yellow itself belongs to the
+/// theme, and spec §9's "disappear without fading" is now simply what every
+/// terminal gets.
 pub(super) fn draw_toast(frame: &mut Frame, alerts: &[&Alert], area: Rect, now: Instant) {
     if alerts.is_empty() {
         return;
@@ -50,11 +49,10 @@ pub(super) fn draw_toast(frame: &mut Frame, alerts: &[&Alert], area: Rect, now: 
         .iter()
         .map(|alert| alert.fade(now))
         .fold(1.0_f32, f32::min);
-    let style = Style::default().fg(colour(gradient::oklab_mix(
-        gradient::ALERT,
-        gradient::INK_DARK,
-        fade,
-    )));
+    let mut style = Style::default().fg(theme::ALERT);
+    if fade >= 0.5 {
+        style = style.add_modifier(Modifier::DIM);
+    }
 
     let width = usize::from(area.width.saturating_sub(BORDER_ROWS));
     let messages: Vec<&str> = alerts.iter().map(|alert| alert.message.as_str()).collect();

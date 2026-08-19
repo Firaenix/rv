@@ -7,6 +7,7 @@ use crossterm::event::KeyModifiers;
 
 use super::Action;
 use super::App;
+use super::HelpStage;
 use super::Mode;
 use super::bindings::BINDINGS;
 use super::bindings::Command;
@@ -16,6 +17,11 @@ use super::bindings::Command;
 /// Two rather than one: a resize the reviewer cannot see happen is a resize
 /// they will hold the key down for.
 const NUDGE: i16 = 2;
+
+/// How many columns one press of `H` or `L` scrolls the focused pane sideways.
+/// Eight: enough that a long line is crossed in a few presses, few enough that
+/// the text stays followable while it moves.
+const HSCROLL_STEP: isize = 8;
 
 impl App {
     /// Handles one key press, modifiers and all.
@@ -35,6 +41,34 @@ impl App {
         {
             return Ok(Action::Quit);
         }
+        // Shift+arrows are the plain arrows one layer deeper. In the sidebar
+        // they walk the *tree* — right into the folder or change under the
+        // cursor, left back out — and in the diff they scroll the text
+        // sideways, as `H` and `L` do. Answered here for the same reason
+        // Ctrl+C is: dropping the modifiers would turn Shift+Left into a
+        // plain Left and move the focus instead. Browse only — behind the
+        // keymap or in a mode that takes text, a shifted arrow must stay as
+        // inert as any other key there.
+        if event.modifiers.contains(KeyModifiers::SHIFT)
+            && self.mode == Mode::Browse
+            && self.help == HelpStage::Closed
+        {
+            let in_tree = self.focus == super::Focus::Sidebar
+                && self.sidebar_tab != super::SidebarTab::Comments;
+            match (event.code, in_tree) {
+                (KeyCode::Right, true) => {
+                    self.zoom_into_under_cursor();
+                    return Ok(Action::Continue);
+                }
+                (KeyCode::Left, true) => {
+                    self.zoom_out();
+                    return Ok(Action::Continue);
+                }
+                (KeyCode::Left, false) => return self.run_command(Command::ScrollLeft),
+                (KeyCode::Right, false) => return self.run_command(Command::ScrollRight),
+                _ => {}
+            }
+        }
         self.on_key(event.code)
     }
 
@@ -44,7 +78,7 @@ impl App {
     /// rather than a mode: it can only be raised from [`Mode::Browse`] and
     /// nothing behind it can change the mode.
     pub fn on_key(&mut self, key: KeyCode) -> Result<Action> {
-        if self.help_open {
+        if self.help != HelpStage::Closed {
             return Ok(self.on_key_help(key));
         }
 
@@ -60,12 +94,20 @@ impl App {
     /// is up, because a reviewer reading about `d` must not discover what it
     /// does by pressing it.
     ///
-    /// `q` **closes** rather than quits: the reviewer with the manual open is
-    /// the one least sure what the keys do, and ending their review is the most
-    /// expensive way to find out.
+    /// `?` walks the stages — the tip grows into the whole keymap, the keymap
+    /// closes — and `q` **closes** rather than quits: the reviewer with the
+    /// manual open is the one least sure what the keys do, and ending their
+    /// review is the most expensive way to find out.
     fn on_key_help(&mut self, key: KeyCode) -> Action {
         match key {
-            KeyCode::Char('?') | KeyCode::Char('q') | KeyCode::Esc => self.help_open = false,
+            KeyCode::Char('?') => {
+                self.help = match self.help {
+                    HelpStage::Closed | HelpStage::Tip => HelpStage::Full,
+                    HelpStage::Full => HelpStage::Closed,
+                };
+                self.help_scroll = 0;
+            }
+            KeyCode::Char('q') | KeyCode::Esc => self.help = HelpStage::Closed,
             KeyCode::Char('j') | KeyCode::Down => self.scroll_help(1),
             KeyCode::Char('k') | KeyCode::Up => self.scroll_help(-1),
             _ => {}
@@ -121,6 +163,8 @@ impl App {
             Command::PreviousFile => self.select_file(self.file_index.saturating_sub(1))?,
             Command::NextSymbol => self.next_symbol()?,
             Command::PreviousSymbol => self.previous_symbol()?,
+            Command::ScrollLeft => self.hscroll_focused(-HSCROLL_STEP),
+            Command::ScrollRight => self.hscroll_focused(HSCROLL_STEP),
             Command::Pick => self.begin_pick(),
             Command::Comment => self.begin_comment(),
             Command::Delete => self.begin_delete(),
@@ -131,16 +175,21 @@ impl App {
             // Focus-free, like `[` and `]`.
             Command::SwitchTab => self.switch_tab()?,
             Command::Enter => self.on_enter()?,
-            Command::Escape => self.leave_stack(),
+            Command::FoldRow => self.fold_row()?,
+            Command::Escape => self.escape(),
             Command::Narrower => self.split = self.split.nudged(-NUDGE),
             Command::Wider => self.split = self.split.nudged(NUDGE),
             Command::ToggleSidebar => self.toggle_sidebar(),
             Command::ToggleTree => self.toggle_tree(),
             Command::CycleSort => self.cycle_sort(),
+            Command::ToggleTint => self.toggle_tint(),
+            Command::ToggleCounts => self.toggle_counts(),
             Command::Info => self.toggle_info(),
             Command::Refresh => self.refresh()?,
             Command::Help => {
-                self.help_open = true;
+                // The tip first: what `?` answers is "what can I do here", and
+                // the whole manual is one more press away.
+                self.help = HelpStage::Tip;
                 // Opened at the top, always: the geometry it was last scrolled
                 // against may have changed since.
                 self.help_scroll = 0;

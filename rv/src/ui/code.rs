@@ -14,7 +14,9 @@ use rv_core::highlight::Capture;
 use rv_core::highlight::Highlights;
 use rv_core::model::Side;
 
+use super::text::CLIPPED;
 use super::text::clip_row;
+use super::text::shift_spans;
 use crate::app::App;
 use crate::app::anchored_side;
 use crate::gradient;
@@ -27,11 +29,6 @@ const WASH: f32 = 0.74;
 /// The same for the selected line — the same hue a step brighter, rather than
 /// `REVERSED`, which would put the syntax colours into the wash.
 const WASH_SELECTED: f32 = 0.50;
-
-/// The selected line's tint where the line is neither added nor removed. A
-/// context line carries no hue of its own, so the highlight is a neutral band
-/// rather than a colour that would claim one.
-const WASH_SELECTED_CONTEXT: f32 = 0.78;
 
 /// The two blobs' highlight spans for the file being drawn, one per side,
 /// fetched once per frame.
@@ -75,16 +72,19 @@ impl<'a> Highlighting<'a> {
 }
 
 /// One line of the diff, washed by what kind of line it is, syntax coloured on
-/// top, and clipped where there was more of it than the pane could show.
+/// top, scrolled `hscroll` columns leftwards, and clipped where there was more
+/// of it than the pane could show.
 ///
 /// The wash goes on every cell of the row, not only the ones with text on them,
-/// so an added line reads as a band rather than as a ragged edge.
+/// so an added line reads as a band rather than as a ragged edge. The gutter
+/// does not scroll: the line number is how a scrolled row is still addressable.
 pub(super) fn diff_row(
     highlighting: Highlighting<'_>,
     index: usize,
     line: &DiffLine,
     selected_line: usize,
     width: usize,
+    hscroll: usize,
 ) -> Line<'static> {
     let selected = index == selected_line;
     // The gutter keeps the kind's hue and takes the bright version of it on the
@@ -109,7 +109,13 @@ pub(super) fn diff_row(
         None => Style::default(),
     };
     let mut spans = vec![Span::styled(format!("{number} {sigil}"), ground.fg(colour))];
-    spans.extend(highlighted(&line.text, highlighting.spans(line), ground));
+    let text = highlighted(&line.text, highlighting.spans(line), ground);
+    if hscroll > 0 && line.text.chars().count() > hscroll {
+        spans.push(Span::styled(CLIPPED.to_string(), ground));
+        spans.extend(shift_spans(text, hscroll));
+    } else if hscroll == 0 {
+        spans.extend(text);
+    }
     clip_row(spans, width, ground)
 }
 
@@ -164,8 +170,10 @@ fn boundary(text: &str, at: usize) -> usize {
 /// Public because it is the one place the answer is decided: anything asking
 /// "which row is the selected one" reads from it rather than keeping a second
 /// copy of the palette. The hues are [`gradient::ADDED`] and
-/// [`gradient::REMOVED`] themselves, so the diff pane and the sidebar's change
-/// bar cannot end up with two greens and two reds that drift.
+/// [`gradient::REMOVED`] themselves, so the diff pane and the sidebar's
+/// gradient cannot end up with two greens and two reds that drift. A selected
+/// **context** line carries no hue of its own, so its band is the theme's own
+/// dark grey — index 8, the tone every scheme defines for exactly this.
 #[must_use]
 pub fn line_background(kind: rv_core::diff::LineKind, selected: bool) -> Option<Color> {
     use rv_core::diff::LineKind;
@@ -175,7 +183,7 @@ pub fn line_background(kind: rv_core::diff::LineKind, selected: bool) -> Option<
         (LineKind::Removed, false) => (gradient::REMOVED, WASH),
         (LineKind::Removed, true) => (gradient::REMOVED, WASH_SELECTED),
         (LineKind::Context, false) => return None,
-        (LineKind::Context, true) => (gradient::INK_LIGHT, WASH_SELECTED_CONTEXT),
+        (LineKind::Context, true) => return Some(Color::DarkGray),
     };
     let gradient::Rgb(red, green, blue) = gradient::oklab_mix(hue, gradient::INK_DARK, wash);
     Some(Color::Rgb(red, green, blue))

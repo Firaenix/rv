@@ -402,3 +402,21 @@ in the review, with `Enter` jumping to the code it annotates.
 the whole-bookmark view and a per-commit view; a tree-sitter symbol index feeds a
 fuzzy picker and `n`/`N` stepping that crosses file boundaries; scope follows the
 view, so a jump on a commit stays inside that commit.
+
+**The context wave** — the interface learned where the reviewer is. A `Context`
+derived from mode, focus and tab names the bar's mode segment (`FILES`,
+`COMMITS`, `DIFF`, `STACK`…) in that context's own hue as bold ink on the bar's
+ground; the first `?` is now a contextual tip in the corner above the `? help`
+hint, listing only this context's keys, with the whole keymap one more press
+away. The chrome's colours became ANSI palette indices (`rv::theme`), so the
+terminal's own theme decides them, live — only additions and removals keep RGB,
+because a proportion is a blend and an index cannot blend. The sidebar's cell
+bar died in favour of that blend on the row's own text — the name runs green
+through a wide smooth seam to red where the change is split — with `g` and `#`
+toggling the tint and the counts. `H`/`L`, the wheel's other axis and (in the
+diff) `Shift+←/→` scroll both panes sideways with a leading `…`; in the sidebar
+the shifted arrows walk the tree instead — `Shift+→`/`Enter` zooms into a
+directory or change, making its contents the whole view under a `▴` row that
+names the place, and `Shift+←`/`Esc` backs out. Dogfooding found the readability
+holes the same hour they shipped: black-on-magenta mode text became coloured
+ink, and the tip stopped dimming momentarily-inapplicable keys.

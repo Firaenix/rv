@@ -9,6 +9,7 @@ use rv::app::Action;
 use rv::app::BINDINGS;
 use rv::app::SidebarTab;
 use rv::layout::Chrome;
+use rv::layout::HelpChrome;
 use rv::layout::Split;
 use rv::layout::layout;
 
@@ -56,29 +57,81 @@ fn question_mark_opens_the_help_and_esc_closes_it() {
 
     app.on_key(KeyCode::Char('?')).expect("?");
     assert!(app.help_open());
+    assert!(!app.help_full(), "the first press is the contextual tip");
     let frame = buffer_text(&frame_at(&app, 100, 24));
     assert!(
         frame.contains("comment"),
-        "the popup lists what the keys do:\n{frame}"
+        "the tip lists what the keys do here:\n{frame}"
     );
 
     app.on_key(KeyCode::Esc).expect("esc");
     assert!(!app.help_open());
     assert!(
-        !buffer_text(&frame_at(&app, 100, 24)).contains("narrower sidebar"),
-        "the popup is still on screen once it is closed"
+        !buffer_text(&frame_at(&app, 100, 24)).contains("? all keys"),
+        "the tip is still on screen once it is closed"
     );
 }
 
-/// `?` is a toggle as well as an opener: the key that raised the manual is the
-/// first one a reviewer presses again to get rid of it.
+/// The first `?` answers "what can I do here" with a tip in the corner; the
+/// second unrolls the whole keymap; the third puts it away.
 #[test]
-fn question_mark_closes_the_help_it_opened() {
+fn question_mark_walks_tip_then_keymap_then_closed() {
     let workspace = Fixture::new();
     let mut app = workspace.app();
     app.on_key(KeyCode::Char('?')).expect("?");
+    assert!(app.help_open() && !app.help_full(), "first: the tip");
     app.on_key(KeyCode::Char('?')).expect("? again");
-    assert!(!app.help_open());
+    assert!(app.help_full(), "second: the whole keymap");
+    app.on_key(KeyCode::Char('?')).expect("? once more");
+    assert!(!app.help_open(), "third: closed");
+}
+
+/// The tip is contextual: it says where the reviewer is, in the corner above
+/// the bar's own `? help` hint, and lists this context's keys rather than all
+/// of them.
+#[test]
+fn the_tip_is_contextual_and_sits_in_the_corner() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    app.on_key(KeyCode::Char('?')).expect("?");
+
+    let frame = frame_at(&app, 100, 24);
+    let text = buffer_text(&frame);
+    assert!(
+        text.contains("DIFF"),
+        "the tip names the context the cursor is in:\n{text}"
+    );
+    assert!(
+        text.contains("write a comment"),
+        "and lists the keys for here:\n{text}"
+    );
+    assert!(
+        !text.contains("narrower sidebar"),
+        "without unrolling the whole manual:\n{text}"
+    );
+
+    // In the corner: the tip's frame touches the right-hand edge, on the row
+    // above the bar.
+    let rows = rows_of(&frame);
+    let above_bar = &rows[rows.len() - 2];
+    assert!(
+        above_bar.trim_end().ends_with('╯'),
+        "the tip's corner is not above the hint:\n{text}"
+    );
+
+    // And it moves with the context: the sidebar's tip is the file list's.
+    app.on_key(KeyCode::Esc).expect("close");
+    app.on_key(KeyCode::Left).expect("focus the sidebar");
+    app.on_key(KeyCode::Char('?')).expect("?");
+    let text = buffer_text(&frame_at(&app, 100, 24));
+    assert!(
+        text.contains("FILES"),
+        "the tip did not follow the focus:\n{text}"
+    );
+    assert!(
+        text.contains("list / tree"),
+        "the file list's tip teaches its own keys:\n{text}"
+    );
 }
 
 #[test]
@@ -160,6 +213,7 @@ fn every_binding_the_handler_dispatches_appears_in_the_popup() {
     let workspace = Fixture::new();
     let mut app = workspace.app();
     app.on_key(KeyCode::Char('?')).expect("?");
+    app.on_key(KeyCode::Char('?')).expect("? again, for the whole keymap");
     let frame = buffer_text(&frame_at(&app, 120, 40));
 
     assert!(!BINDINGS.is_empty(), "the binding table is empty");
@@ -186,6 +240,7 @@ fn the_whole_keymap_fits_at_80x24_without_scrolling() {
     let workspace = Fixture::new();
     let mut app = workspace.app();
     app.on_key(KeyCode::Char('?')).expect("?");
+    app.on_key(KeyCode::Char('?')).expect("? again, for the whole keymap");
     let frame = buffer_text(&frame_at(&app, 80, 24));
 
     for binding in BINDINGS {
@@ -219,15 +274,16 @@ fn a_binding_that_does_nothing_here_is_dimmed_rather_than_hidden() {
     app.on_key(KeyCode::Left).expect("focus the sidebar");
     assert_eq!(app.sidebar_tab(), SidebarTab::Files);
     app.on_key(KeyCode::Char('?')).expect("?");
+    app.on_key(KeyCode::Char('?')).expect("? again, for the whole keymap");
 
     let frame = frame_at(&app, 100, 30);
     assert!(
-        buffer_text(&frame).contains("delete a comment"),
+        buffer_text(&frame).contains("delete comment"),
         "the binding was hidden rather than dimmed:\n{}",
         buffer_text(&frame)
     );
     assert!(
-        is_dim(&frame, cell_of_binding(&frame, "d", "delete a comment")),
+        is_dim(&frame, cell_of_binding(&frame, "d", "delete comment")),
         "`d` is not shown as inactive in the file list:\n{}",
         buffer_text(&frame)
     );
@@ -246,10 +302,11 @@ fn the_same_binding_is_live_where_it_acts_on_something() {
     let mut app = workspace.app();
     write_comment(&mut app, "a finding");
     app.on_key(KeyCode::Char('?')).expect("?");
+    app.on_key(KeyCode::Char('?')).expect("? again, for the whole keymap");
 
     let frame = frame_at(&app, 100, 30);
     assert!(
-        !is_dim(&frame, cell_of_binding(&frame, "d", "delete a comment")),
+        !is_dim(&frame, cell_of_binding(&frame, "d", "delete comment")),
         "`d` is dimmed on a line that has a comment to delete:\n{}",
         buffer_text(&frame)
     );
@@ -267,6 +324,7 @@ fn the_help_renders_in_a_pane_too_small_for_it(#[case] width: u16, #[case] heigh
     let mut app = workspace.app();
     write_comment(&mut app, "a finding");
     app.on_key(KeyCode::Char('?')).expect("?");
+    app.on_key(KeyCode::Char('?')).expect("? again, for the whole keymap");
 
     let _ = frame_at(&app, width, height);
     // ...and scrolling a popup that cannot show its whole keymap is still just
@@ -293,7 +351,7 @@ fn the_popup_covers_what_is_beneath_it() {
         Split::default(),
         Chrome {
             bar_rows: 1,
-            help_open: true,
+            help: HelpChrome::Full,
             tooltip: None,
             toast: false,
             sidebar_hidden: false,
@@ -303,6 +361,7 @@ fn the_popup_covers_what_is_beneath_it() {
     .expect("the popup has a rect at 100x24");
 
     app.on_key(KeyCode::Char('?')).expect("?");
+    app.on_key(KeyCode::Char('?')).expect("? again, for the whole keymap");
     let over = frame_at(&app, 100, 24);
 
     let changed = (popup.y..popup.bottom())

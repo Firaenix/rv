@@ -4,6 +4,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Color;
 use rv::layout::Chrome;
+use rv::layout::HelpChrome;
 use rv::layout::Split;
 use rv::layout::layout;
 
@@ -19,7 +20,7 @@ pub fn areas(width: u16, height: u16, split: Split) -> rv::layout::Layout {
         split,
         Chrome {
             bar_rows: 1,
-            help_open: false,
+            help: HelpChrome::Closed,
             tooltip: None,
             toast: false,
             sidebar_hidden: false,

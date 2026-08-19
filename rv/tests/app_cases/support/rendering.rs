@@ -13,6 +13,7 @@ use ratatui::style::Color;
 use rv::app::App;
 use rv::app::Mode;
 use rv::layout::Chrome;
+use rv::layout::HelpChrome;
 use rv::layout::Split;
 use rv::layout::layout;
 use rv::ui;
@@ -78,7 +79,7 @@ pub fn diff_area(width: u16, height: u16, mode: Mode) -> Rect {
         Split::default(),
         Chrome {
             bar_rows,
-            help_open: false,
+            help: HelpChrome::Closed,
             tooltip: None,
             toast: false,
             sidebar_hidden: false,

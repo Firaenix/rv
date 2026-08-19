@@ -91,6 +91,23 @@ impl App {
         Ok(())
     }
 
+    /// `H`/`L`: scrolls the focused pane's text sideways by `delta` columns.
+    ///
+    /// The stack scrolls the diff it is drawn inside. Unclamped on the right on
+    /// purpose — only the renderer knows how long the longest visible line is,
+    /// and a scroll past the end shows the marker column, which is its own
+    /// answer.
+    pub(super) fn hscroll_focused(&mut self, delta: isize) {
+        match self.focus {
+            Focus::Sidebar => {
+                self.sidebar_hscroll = self.sidebar_hscroll.saturating_add_signed(delta);
+            }
+            Focus::Diff | Focus::Stack => {
+                self.diff_hscroll = self.diff_hscroll.saturating_add_signed(delta);
+            }
+        }
+    }
+
     /// Moves the cursor to row `row` of the selected file's plan, clamped to
     /// that plan's last row.
     ///
@@ -141,6 +158,8 @@ impl App {
             return Ok(());
         }
         self.file_index = index;
+        // A scroll chosen for one file's long lines is noise on the next one's.
+        self.diff_hscroll = 0;
         self.load_selected()?;
         self.set_cursor_row(self.cursor_row());
         // `[` and `]` consult no focus, so a file can be selected from anywhere;

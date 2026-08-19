@@ -1,13 +1,17 @@
-//! The `?` keymap, drawn over the panes.
+//! The `?` keymap: a contextual tip in the corner, or the whole table over the
+//! panes.
 //!
-//! Drawn from [`BINDINGS`] rather than from a list of its own, which is what
-//! makes "a binding that exists cannot be undocumented" true rather than
-//! aspirational: there is no second table to forget to update.
+//! Both are drawn from [`BINDINGS`] rather than from lists of their own, which
+//! is what makes "a binding that exists cannot be undocumented" true rather
+//! than aspirational: there is no second table to forget to update. The tip is
+//! the rows whose [`Binding::contexts`] name the context the cursor is in; the
+//! full popup is every row, grouped.
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Modifier;
 use ratatui::style::Style;
+use ratatui::text::Line;
 use ratatui::text::Span;
 use ratatui::text::Text;
 use ratatui::widgets::Block;
@@ -33,6 +37,87 @@ enum HelpRow {
         binding: &'static Binding,
         enabled: bool,
     },
+}
+
+/// The bindings the current context's tip lists, in table order.
+fn tip_bindings(app: &App) -> Vec<&'static Binding> {
+    let context = app.context();
+    BINDINGS
+        .iter()
+        .filter(|binding| binding.contexts.contains(&context))
+        .collect()
+}
+
+/// How big the tip wants to be, borders included: one row per binding, wide
+/// enough for its longest row and its own title.
+///
+/// Asked by [`crate::ui`] before the layout is computed, because only this
+/// module knows what the tip says; where the box goes is [`crate::layout`]'s.
+#[must_use]
+pub fn tip_size(app: &App) -> (u16, u16) {
+    let bindings = tip_bindings(app);
+    let keys = column_width(&bindings, |binding| binding.keys);
+    let what = column_width(&bindings, |binding| binding.what);
+    let title = tip_title(app).chars().count();
+    let inner = (keys + HELP_GAP + what).max(title);
+    (
+        u16::try_from(bindings.len()).unwrap_or(u16::MAX).saturating_add(BORDER_ROWS),
+        u16::try_from(inner).unwrap_or(u16::MAX).saturating_add(BORDER_ROWS + 2),
+    )
+}
+
+/// What the tip calls itself: the context, and the way to the whole keymap.
+fn tip_title(app: &App) -> String {
+    format!("▸ {} — ? all keys", app.context().name())
+}
+
+/// The contextual tip: what the keys do *here*, one per row, above the bar's
+/// `? help` hint.
+///
+/// Nothing in it is dimmed. The full popup dims a key that is in the wrong
+/// *place* — `d` from the file list — but every key in a tip is already the
+/// right place's, and dimming the momentarily inapplicable ones (`H` before
+/// anything has scrolled, `j` on the last row) read as "these keys are broken"
+/// rather than as information.
+pub(super) fn draw_tip(frame: &mut Frame, app: &App, area: Rect) {
+    let bindings = tip_bindings(app);
+    let keys = column_width(&bindings, |binding| binding.keys);
+    let width = usize::from(area.width.saturating_sub(BORDER_ROWS)).saturating_sub(1);
+    let lines: Vec<Line<'static>> = bindings
+        .iter()
+        .map(|binding| {
+            clip_spans(
+                vec![
+                    Span::raw(" "),
+                    Span::styled(
+                        format!("{:<keys$}", binding.keys),
+                        Style::default().add_modifier(Modifier::BOLD),
+                    ),
+                    Span::raw(" ".repeat(HELP_GAP)),
+                    Span::raw(binding.what.to_owned()),
+                ],
+                width,
+            )
+        })
+        .collect();
+    frame.render_widget(Clear, area);
+    frame.render_widget(
+        Paragraph::new(lines).block(
+            Block::bordered()
+                .border_type(BorderType::Rounded)
+                .title(tip_title(app)),
+        ),
+        area,
+    );
+}
+
+/// The widest `field` of the given bindings, in columns.
+fn column_width(bindings: &[&Binding], field: impl Fn(&Binding) -> &'static str) -> usize {
+    bindings
+        .iter()
+        .map(|binding| field(binding).chars().count())
+        .max()
+        .unwrap_or(0)
 }
 
 pub(super) fn draw_help(frame: &mut Frame, app: &App, area: Rect) {

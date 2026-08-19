@@ -55,7 +55,7 @@ impl App {
     /// It returns an [`Action`] for symmetry with [`App::on_key`] and always
     /// returns [`Action::Continue`]: no gesture ends a review.
     pub fn on_mouse(&mut self, event: MouseEvent) -> Result<Action> {
-        if self.help_open {
+        if self.help_open() {
             match event.kind {
                 MouseEventKind::ScrollDown => self.scroll_help(1),
                 MouseEventKind::ScrollUp => self.scroll_help(-1),
@@ -76,6 +76,12 @@ impl App {
             MouseEventKind::Up(MouseButton::Left) => self.dragging = false,
             MouseEventKind::ScrollDown => self.wheel(&painted, event.column, event.row, WHEEL),
             MouseEventKind::ScrollUp => self.wheel(&painted, event.column, event.row, -WHEEL),
+            MouseEventKind::ScrollRight => {
+                self.wheel_sideways(&painted, event.column, event.row, WHEEL);
+            }
+            MouseEventKind::ScrollLeft => {
+                self.wheel_sideways(&painted, event.column, event.row, -WHEEL);
+            }
             // Every other button, and the pointer merely moving: `rv` binds
             // nothing to them, and a right-click menu is a second keymap.
             _ => {}
@@ -121,15 +127,17 @@ impl App {
                 self.sidebar_row = index;
                 // `get` rather than `[index]`: a panic in a mouse handler is a
                 // review lost to a mis-click.
-                let file = match self.nodes().get(index).map(|node| &node.kind) {
-                    Some(NodeKind::File { index }) => Some(*index),
+                match self.nodes().get(index).map(|node| &node.kind) {
+                    Some(NodeKind::File { index }) => {
+                        let index = *index;
+                        self.select_file(index)?;
+                    }
                     // The same verb `s` has on the same row.
-                    Some(NodeKind::Dir { .. } | NodeKind::Commit { .. }) => None,
+                    Some(NodeKind::Dir { .. } | NodeKind::Commit { .. }) => self.toggle_collapse(),
+                    // The row that leads out of a zoom does the one thing it is
+                    // for, by pointer as by key.
+                    Some(NodeKind::Up) => self.zoom_out(),
                     None => return Ok(()),
-                };
-                match file {
-                    Some(index) => self.select_file(index)?,
-                    None => self.toggle_collapse(),
                 }
             }
         }
@@ -188,6 +196,20 @@ impl App {
             }
             Some(Target::DiffRow(_)) => {
                 self.diff_scroll = Some(ui::diff_scrolled(self, painted.diff, delta));
+            }
+            _ => {}
+        }
+    }
+
+    /// The wheel's other axis — a trackpad's sideways flick — scrolling the
+    /// pane under the pointer the way `H` and `L` scroll the focused one.
+    fn wheel_sideways(&mut self, painted: &Layout, column: u16, row: u16, delta: isize) {
+        match hit(painted, column, row) {
+            Some(Target::SidebarRow(_)) => {
+                self.sidebar_hscroll = self.sidebar_hscroll.saturating_add_signed(delta);
+            }
+            Some(Target::DiffRow(_)) => {
+                self.diff_hscroll = self.diff_hscroll.saturating_add_signed(delta);
             }
             _ => {}
         }

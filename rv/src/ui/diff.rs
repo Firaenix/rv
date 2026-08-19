@@ -244,7 +244,16 @@ fn draw_row(
     width: usize,
 ) -> Line<'static> {
     match row {
-        Row::Diff { index, line } => diff_row(highlighting, *index, line, selected, width),
+        // Comment boxes are wrapped to the pane and never overflow it, so the
+        // sideways scroll moves the code and leaves them anchored.
+        Row::Diff { index, line } => diff_row(
+            highlighting,
+            *index,
+            line,
+            selected,
+            width,
+            app.diff_hscroll(),
+        ),
         Row::BoxTop { comment, .. } => comment_box::box_top(app, comment, width),
         Row::BoxBody {
             comment,

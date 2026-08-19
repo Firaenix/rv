@@ -15,12 +15,15 @@ use ratatui::widgets::BorderType;
 use ratatui::widgets::Clear;
 use ratatui::widgets::Paragraph;
 
+use ratatui::style::Color;
+
 use super::BORDER_ROWS;
 use super::text::clip;
 use super::text::colour;
 use crate::app::App;
 use crate::app::ChangeInfo;
 use crate::gradient;
+use crate::theme;
 
 pub(super) fn draw_info(frame: &mut Frame, app: &App, area: Rect) {
     let Some(info) = app.change_info() else {
@@ -42,8 +45,8 @@ pub(super) fn draw_info(frame: &mut Frame, app: &App, area: Rect) {
 
 fn lines(info: &ChangeInfo, width: usize, scroll: usize, rows: usize) -> Vec<Line<'static>> {
     let mut out = vec![
-        labelled("change", &info.change_id, gradient::FOCUS, width),
-        labelled("commit", &info.commit_id, gradient::HASH, width),
+        labelled("change", &info.change_id, theme::FOCUS, width),
+        labelled("commit", &info.commit_id, theme::HASH, width),
         Line::raw(""),
     ];
 
@@ -95,7 +98,7 @@ fn lines(info: &ChangeInfo, width: usize, scroll: usize, rows: usize) -> Vec<Lin
 
 /// A `label  value` row, with the prefix that selects the value picked out in the
 /// same colour the sidebar row uses for it.
-fn labelled(label: &str, value: &str, ink: gradient::Rgb, width: usize) -> Line<'static> {
+fn labelled(label: &str, value: &str, ink: Color, width: usize) -> Line<'static> {
     let short: String = value.chars().take(8).collect();
     let rest: String = value.chars().skip(8).collect();
     Line::from(vec![
@@ -103,12 +106,7 @@ fn labelled(label: &str, value: &str, ink: gradient::Rgb, width: usize) -> Line<
             format!("{label:<7}"),
             Style::default().add_modifier(Modifier::DIM),
         ),
-        Span::styled(
-            short,
-            Style::default()
-                .fg(colour(ink))
-                .add_modifier(Modifier::BOLD),
-        ),
+        Span::styled(short, Style::default().fg(ink).add_modifier(Modifier::BOLD)),
         Span::styled(
             clip(&rest, width.saturating_sub(15)),
             Style::default().add_modifier(Modifier::DIM),

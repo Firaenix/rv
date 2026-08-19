@@ -109,6 +109,48 @@ pub(super) fn clip_row(spans: Vec<Span<'static>>, width: usize, ground: Style) -
     Line::from(kept)
 }
 
+/// `text` with its first `columns` characters scrolled off to the left,
+/// leading with [`CLIPPED`] so a row that starts mid-word says so.
+///
+/// The marker appears even when nothing of the text survives: a blank row and
+/// a row whose content is entirely off-screen are different facts, and `H` is
+/// how the reviewer gets back to it.
+pub(super) fn shift(text: &str, columns: usize) -> String {
+    if columns == 0 {
+        return text.to_owned();
+    }
+    if text.is_empty() {
+        return String::new();
+    }
+    let tail: String = text.chars().skip(columns).collect();
+    format!("{CLIPPED}{tail}")
+}
+
+/// Styled spans with their first `columns` characters removed, styles kept.
+///
+/// The diff pane's version of [`shift`]: a syntax-coloured line is many spans,
+/// and scrolling it must cut through them without disturbing what each
+/// surviving character was painted with.
+pub(super) fn shift_spans(spans: Vec<Span<'static>>, columns: usize) -> Vec<Span<'static>> {
+    let mut remaining = columns;
+    let mut kept = Vec::with_capacity(spans.len());
+    for span in spans {
+        if remaining == 0 {
+            kept.push(span);
+            continue;
+        }
+        let length = span.content.chars().count();
+        if length <= remaining {
+            remaining -= length;
+            continue;
+        }
+        let tail: String = span.content.chars().skip(remaining).collect();
+        remaining = 0;
+        kept.push(Span::styled(tail, span.style));
+    }
+    kept
+}
+
 /// The last `width` characters of `text`.
 ///
 /// The comment bar follows what is being typed rather than showing where the

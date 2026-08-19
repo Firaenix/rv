@@ -12,32 +12,38 @@ use ratatui::text::Span;
 use super::super::text::clip;
 use super::super::text::colour;
 use super::MIN_PATH_COLUMNS;
-use super::counts::change_bar;
 use super::counts::counts_columns;
 use crate::gradient;
+use crate::gradient::Stat;
+use crate::theme;
 use crate::tree::Node;
 use crate::tree::NodeKind;
 
-/// One row: its name on the left, and — right-aligned in a column shared by the
-/// whole list — its change bar and its counts.
+/// One row: its name on the left — tinted by its change's proportion where
+/// `tint` asks for it — and its counts right-aligned in a column shared by the
+/// whole list.
 ///
-/// `bar` is `0` where the list gave the bar up, and the counts go with it when
-/// even they would leave the name less than [`MIN_PATH_COLUMNS`].
+/// The counts go when even they would leave the name less than
+/// [`MIN_PATH_COLUMNS`]: the path is the row's identity and the numbers are
+/// context.
 pub(super) fn file_row(
     node: &Node,
     head: &str,
     lead: usize,
     counts: &(String, String),
     counts_width: usize,
-    bar: usize,
     width: usize,
+    tint: bool,
 ) -> Line<'static> {
-    let tail = if bar > 0 { bar + 1 } else { 0 } + counts_width;
     // One column of gap at least, always: a name clipped right up against its
     // own numbers reads as one word.
-    let names = width.saturating_sub(tail + 1);
-    if counts_width == 0 || names < MIN_PATH_COLUMNS {
-        return Line::from(clip(head, width));
+    let names = if counts_width == 0 {
+        width
+    } else {
+        width.saturating_sub(counts_width + 1)
+    };
+    if counts_width > 0 && names < MIN_PATH_COLUMNS {
+        return Line::from(name_spans(node, &clip(head, width), lead, tint));
     }
 
     // A commit row gives up its subject before it gives up an id, and gives up
@@ -45,22 +51,18 @@ pub(super) fn file_row(
     // printing five characters of one is worse than printing none.
     let fitted = fit_commit(node, head, lead, names);
     let name = clip(fitted.as_deref().unwrap_or(head), names);
-    let mut spans = name_spans(node, &name, lead);
-    spans.push(Span::raw(" ".repeat(names + 1 - name.chars().count())));
+    let mut spans = name_spans(node, &name, lead, tint);
 
     let (added, removed) = counts;
-    if added.is_empty() {
-        // Nothing changed here, so the row says nothing rather than `+0 -0` and
-        // draws no bar: zero is not a measurement, and a gradient over zero
-        // lines would be inventing a ratio. It keeps the columns, so the rows
-        // that do have numbers stay lined up.
-        spans.push(Span::raw(" ".repeat(tail)));
+    if counts_width == 0 || added.is_empty() {
+        // Nothing changed here, so the row says nothing rather than `+0 -0`:
+        // zero is not a measurement, and a gradient over zero lines would be
+        // inventing a ratio.
         return Line::from(spans);
     }
-    if bar > 0 {
-        spans.extend(change_bar(node.stat, bar));
-        spans.push(Span::raw(" "));
-    }
+    spans.push(Span::raw(
+        " ".repeat(names.saturating_sub(name.chars().count()) + 1),
+    ));
     spans.push(Span::raw(" ".repeat(counts_width - counts_columns(counts))));
     spans.push(Span::styled(
         added.clone(),
@@ -91,6 +93,8 @@ fn structure_style(node: &Node) -> Style {
         // would compete with the counts, which are the only thing in this pane
         // that means green and red.
         NodeKind::Dir { .. } => Style::default().add_modifier(Modifier::DIM),
+        // Bold: the Up row is where the reviewer *is*, and the one way back.
+        NodeKind::Up => Style::default().add_modifier(Modifier::BOLD),
         NodeKind::File { .. } | NodeKind::Commit { .. } => Style::default(),
     }
 }
@@ -133,7 +137,8 @@ fn fit_commit(node: &Node, head: &str, lead: usize, names: usize) -> Option<Stri
     Some(format!("{prefix}{text}"))
 }
 
-/// A row's name, as one span for a file or a directory and several for a change.
+/// A row's name: tinted by its change for a file or a directory, and split
+/// into ids and subject for a change.
 ///
 /// A change row prints two ids and a subject, and the leading characters of each
 /// id are the ones you can type to select it — so those characters are bright and
@@ -147,7 +152,7 @@ fn fit_commit(node: &Node, head: &str, lead: usize, names: usize) -> Option<Stri
 /// clipped row is shorter than the text it was made from, so subtracting the
 /// parts from the whole put the ids three columns off on every row that did not
 /// fit.
-fn name_spans(node: &Node, name: &str, lead: usize) -> Vec<Span<'static>> {
+fn name_spans(node: &Node, name: &str, lead: usize, tint: bool) -> Vec<Span<'static>> {
     let NodeKind::Commit {
         short_change,
         short_commit,
@@ -155,6 +160,9 @@ fn name_spans(node: &Node, name: &str, lead: usize) -> Vec<Span<'static>> {
         ..
     } = &node.kind
     else {
+        if tint {
+            return tinted(name, lead, node.stat, structure_style(node));
+        }
         return vec![Span::styled(name.to_owned(), structure_style(node))];
     };
 
@@ -162,10 +170,7 @@ fn name_spans(node: &Node, name: &str, lead: usize) -> Vec<Span<'static>> {
     // first, and `head` built the row as `<indent><mark><change> <commit> <subject>`.
     let mut spans = vec![Span::raw(name.chars().take(lead).collect::<String>())];
     let mut at = lead;
-    for (id, ink) in [
-        (short_change, gradient::FOCUS),
-        (short_commit, gradient::HASH),
-    ] {
+    for (id, ink) in [(short_change, theme::FOCUS), (short_commit, theme::HASH)] {
         if at >= name.chars().count() {
             break;
         }
@@ -173,9 +178,7 @@ fn name_spans(node: &Node, name: &str, lead: usize) -> Vec<Span<'static>> {
         if !bright.is_empty() {
             spans.push(Span::styled(
                 bright,
-                Style::default()
-                    .fg(colour(ink))
-                    .add_modifier(Modifier::BOLD),
+                Style::default().fg(ink).add_modifier(Modifier::BOLD),
             ));
         }
         if !dim.is_empty() {
@@ -196,6 +199,48 @@ fn name_spans(node: &Node, name: &str, lead: usize) -> Vec<Span<'static>> {
         name.chars().skip(at).collect::<String>(),
         Style::default().add_modifier(Modifier::DIM),
     ));
+    spans
+}
+
+/// The name run green through the seam to red, split where its change is
+/// split: the gradient is on the **text**, not on cells of its own, so it
+/// costs the row no columns and survives any width the pane has.
+///
+/// The lead — the indent and the fold or change mark — keeps the row's base
+/// style: the structure is what the eye walks, and a `▸` that changed hue with
+/// the numbers would read as a fourth kind of mark. A row whose change moved
+/// no lines keeps the base style throughout, because a gradient over zero
+/// lines would be inventing a ratio.
+///
+/// Consecutive characters of one colour share a span, so a fully green name is
+/// one span rather than one per letter.
+fn tinted(name: &str, lead: usize, stat: Stat, base: Style) -> Vec<Span<'static>> {
+    let Some(ratio) = stat.added_ratio() else {
+        return vec![Span::styled(name.to_owned(), base)];
+    };
+    let mut spans = vec![Span::styled(
+        name.chars().take(lead).collect::<String>(),
+        base,
+    )];
+    let label: Vec<char> = name.chars().skip(lead).collect();
+    let width = u16::try_from(label.len()).unwrap_or(u16::MAX);
+    let mut run = String::new();
+    let mut ink: Option<gradient::Rgb> = None;
+    for (column, glyph) in label.iter().enumerate() {
+        let at = gradient::column_colour(ratio, u16::try_from(column).unwrap_or(u16::MAX), width);
+        if ink != Some(at) && !run.is_empty() {
+            let previous = ink.expect("a non-empty run has an ink");
+            spans.push(Span::styled(
+                std::mem::take(&mut run),
+                base.fg(colour(previous)),
+            ));
+        }
+        ink = Some(at);
+        run.push(*glyph);
+    }
+    if let Some(previous) = ink {
+        spans.push(Span::styled(run, base.fg(colour(previous))));
+    }
     spans
 }
 

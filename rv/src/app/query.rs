@@ -16,6 +16,7 @@ use rv_core::store::Comment;
 use rv_core::store::Session;
 
 use super::App;
+use super::Context;
 use super::Focus;
 use super::Mode;
 use super::SidebarTab;
@@ -91,6 +92,16 @@ impl App {
         self.sort
     }
 
+    /// Whether a sidebar row's name is tinted by its change. Session-only.
+    pub fn tint(&self) -> bool {
+        self.tint
+    }
+
+    /// Whether the sidebar shows its `+n -n` column. Session-only.
+    pub fn counts_shown(&self) -> bool {
+        self.counts
+    }
+
     /// Which row of the file list the cursor is on — see the field.
     /// The changes the review covers, oldest first.
     #[must_use]
@@ -145,13 +156,13 @@ impl App {
             .iter()
             .map(|file| file.path.as_str())
             .collect();
-        tree::build(
+        self.zoom_view(tree::build(
             &paths,
             &self.collapsed_dirs,
             self.tree,
             self.sort,
             &|index| self.stat(index),
-        )
+        ))
     }
 
     /// Which **row** of the selected file's plan the cursor is on.
@@ -216,6 +227,25 @@ impl App {
     /// a reviewer came to read.
     pub fn focus(&self) -> Focus {
         self.focus
+    }
+
+    /// Where the reviewer is working, as the bar names it and the `?` tooltip
+    /// filters by it. Derived, never stored — see [`Context`].
+    pub fn context(&self) -> Context {
+        match &self.mode {
+            Mode::Comment => Context::Writing,
+            Mode::ConfirmDelete { .. } => Context::Confirming,
+            Mode::Pick => Context::Finding,
+            Mode::Browse => match self.focus {
+                Focus::Diff => Context::Diff,
+                Focus::Stack => Context::Stack,
+                Focus::Sidebar => match self.sidebar_tab {
+                    SidebarTab::Files => Context::Files,
+                    SidebarTab::Commits => Context::Commits,
+                    SidebarTab::Comments => Context::Comments,
+                },
+            },
+        }
     }
 
     /// What the left column is listing. Files, on launch.
@@ -312,9 +342,14 @@ impl App {
         self.split
     }
 
-    /// Whether the `?` keymap is up.
+    /// Whether the `?` keymap is up, at either size.
     pub fn help_open(&self) -> bool {
-        self.help_open
+        self.help != super::HelpStage::Closed
+    }
+
+    /// Whether it is up at full size rather than as the corner tip.
+    pub fn help_full(&self) -> bool {
+        self.help == super::HelpStage::Full
     }
 
     /// How far the keymap has been scrolled, in rows. Clamped by the renderer
@@ -366,5 +401,15 @@ impl App {
     /// The same for the sidebar's list.
     pub fn sidebar_scroll(&self) -> Option<usize> {
         self.sidebar_scroll
+    }
+
+    /// How many columns of each diff line are scrolled off the pane's left edge.
+    pub fn diff_hscroll(&self) -> usize {
+        self.diff_hscroll
+    }
+
+    /// The same for the sidebar's rows.
+    pub fn sidebar_hscroll(&self) -> usize {
+        self.sidebar_hscroll
     }
 }

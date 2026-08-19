@@ -21,6 +21,7 @@ use super::list::list_state;
 use super::pane::pane;
 use super::pane::selection_style;
 use super::text::clip;
+use super::text::shift;
 use crate::app::App;
 use crate::app::Focus;
 use crate::app::SidebarTab;
@@ -57,7 +58,7 @@ fn draw_comment_browser(frame: &mut Frame, app: &App, area: Rect, focused: bool)
         .iter()
         .map(|comment| {
             ListItem::new(Line::styled(
-                clip(&summary(comment), width),
+                clip(&shift(&summary(comment), app.sidebar_hscroll()), width),
                 comment_style(comment),
             ))
         })

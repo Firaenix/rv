@@ -81,12 +81,13 @@ use ratatui::text::Span;
 use crate::app::Alert;
 use crate::app::App;
 use crate::app::Mode;
-use crate::gradient;
 use crate::layout::Chrome;
+use crate::layout::HelpChrome;
 use crate::layout::Layout;
 use crate::layout::Split;
 use crate::layout::layout;
 use crate::statusbar;
+use crate::theme;
 
 /// Rows the symbol picker takes along the bottom: its two borders, the query
 /// being typed, and the matches under it.
@@ -144,7 +145,11 @@ pub fn draw(frame: &mut Frame, app: &App, now: Instant) {
         info::draw_info(frame, app, area);
     }
     if let Some(area) = rects.popup {
-        help::draw_help(frame, app, area);
+        if app.help_full() {
+            help::draw_help(frame, app, area);
+        } else {
+            help::draw_tip(frame, app, area);
+        }
     }
 }
 
@@ -172,11 +177,9 @@ fn draw_chevron(frame: &mut Frame, area: Rect, showing: bool) {
     frame.render_widget(
         Span::styled(
             mark,
-            Style::default()
-                .fg(text::colour(gradient::FOCUS))
-                // The bar's own ground: a cell of the bar with no background is
-                // a hole in the row.
-                .bg(text::colour(statusbar::fill())),
+            // On the bar's own ground, which since the bar went indexed is the
+            // terminal's: the control reads as part of the row either way.
+            Style::default().fg(theme::FOCUS).bg(statusbar::fill()),
         ),
         area,
     );
@@ -197,7 +200,14 @@ fn chrome(app: &App, toast: bool) -> Chrome {
             Mode::Pick => PICKER_ROWS,
             Mode::Comment => COMMENT_ROWS,
         },
-        help_open: app.help_open(),
+        help: if !app.help_open() {
+            HelpChrome::Closed
+        } else if app.help_full() {
+            HelpChrome::Full
+        } else {
+            let (rows, columns) = help::tip_size(app);
+            HelpChrome::Tip { rows, columns }
+        },
         tooltip: app.tooltip(),
         toast,
         sidebar_hidden: app.sidebar_hidden(),
@@ -218,7 +228,7 @@ pub fn default_layout() -> Layout {
         Split::default(),
         Chrome {
             bar_rows: 1,
-            help_open: false,
+            help: HelpChrome::Closed,
             tooltip: None,
             toast: false,
             sidebar_hidden: false,

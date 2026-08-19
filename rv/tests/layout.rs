@@ -24,6 +24,7 @@ use proptest::prelude::*;
 use ratatui::layout::Rect;
 use rstest::rstest;
 use rv::layout::Chrome;
+use rv::layout::HelpChrome;
 use rv::layout::Split;
 use rv::layout::Target;
 use rv::layout::hit;
@@ -33,7 +34,7 @@ use rv::layout::layout;
 fn browsing() -> Chrome {
     Chrome {
         bar_rows: 1,
-        help_open: false,
+        help: HelpChrome::Closed,
         tooltip: None,
         toast: false,
         sidebar_hidden: false,
@@ -354,7 +355,7 @@ fn the_popup_takes_priority_over_whatever_is_beneath_it() {
         Rect::new(0, 0, 100, 24),
         Split::new(30),
         Chrome {
-            help_open: true,
+            help: HelpChrome::Full,
             tooltip: None,
             ..browsing()
         },
@@ -379,7 +380,7 @@ fn the_popup_is_centred_inside_the_area() {
         area,
         Split::new(30),
         Chrome {
-            help_open: true,
+            help: HelpChrome::Full,
             tooltip: None,
             ..browsing()
         },

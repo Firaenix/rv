@@ -1,16 +1,17 @@
-//! The palette and the change gradient.
+//! The two RGB colours — an addition's green, a removal's red — and the
+//! gradient between them.
 //!
 //! The gradient is a *diverging* scale: green on the left, red on the right,
-//! meeting at a tight light seam. Everything here is terminal-free arithmetic,
-//! so it can be pinned exactly rather than eyeballed through a pty.
+//! blending through a light seam across half the row, centred where the
+//! proportion is split. Everything here is terminal-free arithmetic, so it can
+//! be pinned exactly rather than eyeballed through a pty.
 
 use std::collections::HashSet;
 
 use proptest::prelude::*;
 use rstest::rstest;
 use rv::gradient::{
-    ADDED, ALERT, COMMENT, FOCUS, INK_DARK, INK_LIGHT, REMOVED, Rgb, Stat, column_colour,
-    oklab_mix, pivot, readable_on,
+    ADDED, INK_DARK, INK_LIGHT, REMOVED, Rgb, Stat, column_colour, oklab_mix, pivot, readable_on,
 };
 
 /// Rec. 709 luma over the encoded channels — the same rough brightness the eye
@@ -109,19 +110,18 @@ fn no_cell_is_ever_a_mixture_of_the_two_hues() {
 }
 
 #[test]
-fn the_seam_is_tight_enough_to_still_read_as_a_proportion() {
-    // A wide blend destroys the thing the bar is drawing: you can no longer see
-    // where two thirds ends and one third begins.
+fn the_proportion_still_reads_through_the_wide_seam() {
+    // The seam is half the row, but it is *centred on the split*: a two-thirds
+    // change still opens flat green, still ends flat red, and still spends
+    // more of itself on the bigger hand.
     let flat_green = (0..40)
         .filter(|c| column_colour(0.66, *c, 40) == ADDED)
         .count();
     let flat_red = (0..40)
         .filter(|c| column_colour(0.66, *c, 40) == REMOVED)
         .count();
-    assert!(
-        flat_green + flat_red >= 34,
-        "at most a few columns are in the seam"
-    );
+    assert!(flat_green >= 10, "the row opens flat green: {flat_green}");
+    assert!(flat_red >= 2, "and ends flat red: {flat_red}");
     assert!(
         flat_green > flat_red,
         "and two thirds still reads as two thirds"
@@ -145,10 +145,11 @@ fn an_even_split_really_is_even() {
 }
 
 #[test]
-fn a_narrow_row_gets_a_narrower_seam() {
-    // The seam is `min(4, width / 4)` columns: on a twelve-column sidebar a
-    // four-column blend would be a third of the whole bar.
-    for (width, most) in [(4u16, 1usize), (8, 2), (12, 3), (40, 4)] {
+fn the_seam_scales_with_the_row() {
+    // Half the row goes to the blend, whatever the row's width: the gradient
+    // runs across the row's own text now, and a seam that stayed four columns
+    // would be a hard edge on a wide pane and the whole of a narrow one.
+    for width in [4u16, 8, 12, 40, 120] {
         let seam = (0..width)
             .filter(|c| {
                 let x = column_colour(0.5, *c, width);
@@ -156,8 +157,12 @@ fn a_narrow_row_gets_a_narrower_seam() {
             })
             .count();
         assert!(
-            seam <= most,
+            seam <= usize::from(width / 2 + 1),
             "width {width} spends {seam} columns on the seam"
+        );
+        assert!(
+            seam >= usize::from(width / 4),
+            "width {width} blends only {seam} columns"
         );
     }
 }
@@ -228,7 +233,7 @@ fn the_pivot_carries_no_hue_of_its_own() {
 
 #[test]
 fn mixing_lands_on_its_own_endpoints() {
-    for (a, b) in [(ADDED, REMOVED), (COMMENT, ALERT), (pivot(), FOCUS)] {
+    for (a, b) in [(ADDED, REMOVED), (pivot(), ADDED), (Rgb(10, 20, 30), Rgb(200, 100, 50))] {
         let start = oklab_mix(a, b, 0.0);
         let end = oklab_mix(a, b, 1.0);
         assert_eq!(start, a, "t = 0 is the first colour");
@@ -296,58 +301,29 @@ fn mixing_outside_the_unit_interval_does_not_extrapolate(#[case] t: f32, #[case]
 type HueCheck = (&'static str, Rgb, fn([u8; 3]) -> bool);
 
 #[test]
-fn every_colour_in_the_palette_means_exactly_one_thing() {
-    let named = [
-        ("added", ADDED),
-        ("removed", REMOVED),
-        ("comment", COMMENT),
-        ("alert", ALERT),
-        ("focus", FOCUS),
-        ("pivot", pivot()),
-    ];
-    for (i, (a, ca)) in named.iter().enumerate() {
-        for (b, cb) in named.iter().skip(i + 1) {
-            assert_ne!(ca, cb, "{a} and {b} are the same colour");
-        }
-    }
-
-    // And each one still is the hue its meaning is named after: nothing green
-    // may come to mean anything but an addition.
+fn the_two_hues_mean_what_they_are_named_after() {
+    // Everything else the chrome draws is an ANSI index from `rv::theme`; these
+    // two are the only RGB values left, and each must still *be* its meaning.
     let channels = |c: Rgb| [c.0, c.1, c.2];
-    let hues: [HueCheck; 5] = [
+    let hues: [HueCheck; 2] = [
         ("added is green", ADDED, |c| {
             c[1] > c[0] + 60 && c[1] > c[2] + 60
         }),
         ("removed is red", REMOVED, |c| {
             c[0] > c[1] + 60 && c[0] > c[2] + 60
         }),
-        ("comment is blue", COMMENT, |c| {
-            c[2] > c[0] + 60 && c[2] > c[1] + 60
-        }),
-        ("alert is orange", ALERT, |c| {
-            c[0] > c[1] && c[1] > c[2] + 60
-        }),
-        ("focus is magenta", FOCUS, |c| {
-            c[0] > c[1] + 60 && c[2] > c[1] + 60
-        }),
     ];
     for (meaning, colour, holds) in hues {
         assert!(holds(channels(colour)), "{meaning}, but it is {colour:?}");
     }
-
-    let green_in = |c: Rgb| i16::from(c.1);
-    assert!(
-        green_in(ALERT) - green_in(REMOVED) > 50,
-        "the alert orange must not read as a second red"
-    );
+    assert_ne!(ADDED, REMOVED);
+    assert_ne!(pivot(), ADDED);
+    assert_ne!(pivot(), REMOVED);
 }
 
 #[rstest]
 #[case(ADDED)]
 #[case(REMOVED)]
-#[case(COMMENT)]
-#[case(ALERT)]
-#[case(FOCUS)]
 fn the_ink_over_a_palette_colour_clears_wcag_aa(#[case] background: Rgb) {
     let ink = readable_on(background);
     assert!(
@@ -478,13 +454,14 @@ proptest! {
     #[test]
     fn the_ends_stay_flat_wherever_there_is_room_for_them(
         ratio in 0.0f32..=1.0,
-        width in 1u16..200,
+        width in 10u16..200,
     ) {
-        let w = f32::from(width);
-        if ratio * w >= 3.0 {
+        // The seam takes at most a quarter-width to each side of the split, so
+        // a split clear of the edges leaves both ends on their flat colour.
+        if ratio >= 0.3 {
             prop_assert_eq!(column_colour(ratio, 0, width), ADDED);
         }
-        if (1.0 - ratio) * w >= 3.0 {
+        if ratio <= 0.7 {
             prop_assert_eq!(column_colour(ratio, width - 1, width), REMOVED);
         }
     }
@@ -519,7 +496,7 @@ proptest! {
     }
 
     #[test]
-    fn the_seam_never_swallows_more_than_four_columns(
+    fn the_seam_never_swallows_more_than_half_the_row(
         ratio in 0.0f32..=1.0,
         width in 1u16..200,
     ) {
@@ -529,6 +506,6 @@ proptest! {
                 x != ADDED && x != REMOVED
             })
             .count();
-        prop_assert!(seam <= 4, "{} columns are in the seam", seam);
+        prop_assert!(seam <= usize::from(width / 2 + 1), "{} columns are in the seam", seam);
     }
 }

@@ -142,6 +142,7 @@ fn sketch(nodes: &[Node]) -> String {
                     }
                 }
                 NodeKind::File { .. } => "  ",
+                NodeKind::Up => "^ ",
             };
             format!("{}{marker}{}", "  ".repeat(node.depth), node.label)
         })
@@ -164,6 +165,7 @@ fn bag(nodes: &[Node]) -> Vec<String> {
                 } => format!("commit {change_id} {collapsed}"),
                 NodeKind::Dir { key, collapsed } => format!("dir {key} {collapsed}"),
                 NodeKind::File { index } => format!("file {index}"),
+                NodeKind::Up => "up".to_owned(),
             };
             format!(
                 "{} {} {kind} +{} -{}",

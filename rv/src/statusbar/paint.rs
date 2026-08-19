@@ -8,31 +8,27 @@
 use std::cmp::Reverse;
 use std::ffi::OsStr;
 
+use ratatui::style::Color;
 use ratatui::style::Style;
 use ratatui::text::Line;
 use ratatui::text::Span;
-
-use crate::gradient;
-use crate::gradient::Rgb;
 
 use super::ARROW;
 use super::ARROW_LEFT;
 use super::PIPE;
 use super::RV_ASCII;
 use super::Segment;
-use super::colour;
 use super::columns;
-use super::neutral;
 use super::printable;
 
 /// The bar, exactly `width` columns wide.
 ///
-/// Segments keep their given order; [`Role::Hint`] is drawn at the right-hand
-/// end and everything else in a run from the left, with the space between them
-/// filled. When the segments do not fit, the least important is dropped —
-/// whole, never truncated — and the question asked again, until what is left
-/// fits or nothing is left. See [`Role::rank`] for the order, and the module
-/// docs for why the hint outlives the mode.
+/// Segments keep their given order; [`Role::Hint`](super::Role) is drawn at the
+/// right-hand end and everything else in a run from the left, with the space
+/// between them filled. When the segments do not fit, the least important is
+/// dropped — whole, never truncated — and the question asked again, until what
+/// is left fits or nothing is left. See [`Role::rank`](super::Role) for the
+/// order, and the module docs for why the hint outlives the mode.
 ///
 /// `ascii` turns the powerline glyphs off; see [`ascii_from_env`].
 #[must_use]
@@ -66,41 +62,39 @@ pub fn render(segments: &[Segment], width: u16, ascii: bool) -> Line<'static> {
         spans.push(block(segment));
         let next = leading
             .get(position + 1)
-            .map_or_else(fill, |index| segments[*index].role.background());
+            .map_or_else(fill, |index| segments[*index].background);
         match (ascii, position + 1 == leading.len()) {
             // The run ends: in powerline the chevron is what carries the colour
             // across into the fill, and with the glyphs off the fill's own
             // ground is the boundary.
-            (false, _) => spans.push(separator(ARROW, segment.role.background(), next)),
-            (true, false) => spans.push(separator(PIPE, gradient::readable_on(next), next)),
+            (false, _) => spans.push(separator(ARROW, segment.background, next)),
+            (true, false) => spans.push(separator(
+                PIPE,
+                leading
+                    .get(position + 1)
+                    .map_or(Color::Reset, |index| segments[*index].ink),
+                next,
+            )),
             (true, true) => {}
         }
     }
 
     let padding = width.saturating_sub(measure(segments, &kept, ascii));
     if padding > 0 {
-        spans.push(Span::styled(
-            " ".repeat(padding),
-            Style::new().bg(colour(fill())),
-        ));
+        spans.push(Span::styled(" ".repeat(padding), Style::new().bg(fill())));
     }
 
     for (position, index) in trailing.iter().enumerate() {
         let segment = &segments[*index];
         let previous = position
             .checked_sub(1)
-            .map_or_else(fill, |before| segments[trailing[before]].role.background());
-        let background = segment.role.background();
+            .map_or_else(fill, |before| segments[trailing[before]].background);
         if ascii {
             if position > 0 {
-                spans.push(separator(
-                    PIPE,
-                    gradient::readable_on(background),
-                    background,
-                ));
+                spans.push(separator(PIPE, segment.ink, segment.background));
             }
         } else {
-            spans.push(separator(ARROW_LEFT, background, previous));
+            spans.push(separator(ARROW_LEFT, segment.background, previous));
         }
         spans.push(block(segment));
     }
@@ -161,12 +155,11 @@ fn measure(segments: &[Segment], kept: &[usize], ascii: bool) -> usize {
 /// One segment, padded with a space on each side so the chevrons do not sit
 /// against the text.
 fn block(segment: &Segment) -> Span<'static> {
-    let background = segment.role.background();
     Span::styled(
         format!(" {} ", printable(&segment.text)),
         Style::new()
-            .fg(colour(gradient::readable_on(background)))
-            .bg(colour(background))
+            .fg(segment.ink)
+            .bg(segment.background)
             .add_modifier(segment.role.modifier()),
     )
 }
@@ -177,15 +170,15 @@ fn block(segment: &Segment) -> Span<'static> {
 /// A powerline chevron is the *previous* block's colour drawn on the next
 /// one's, which is what makes the boundary read as one block overlapping the
 /// other rather than as two blocks with a glyph between them. A pipe is
-/// ordinary text and takes the ink of the ground it sits on.
-fn separator(glyph: &'static str, ink: Rgb, ground: Rgb) -> Span<'static> {
-    Span::styled(glyph, Style::new().fg(colour(ink)).bg(colour(ground)))
+/// ordinary text and takes the ink of the block it sits on.
+fn separator(glyph: &'static str, ink: Color, ground: Color) -> Span<'static> {
+    Span::styled(glyph, Style::new().fg(ink).bg(ground))
 }
 
-/// The ground the bar's empty middle is painted on: dark enough to read as the
-/// bar's own background rather than as another segment, and painted rather than
-/// left bare so the row is one bar instead of two blocks with the pane showing
-/// through between them.
-pub fn fill() -> Rgb {
-    neutral(0.86)
+/// The ground the bar's empty middle is painted on: the theme's own black —
+/// dark enough to read as the bar's background rather than as another segment,
+/// and painted rather than left bare so the row is one bar instead of two
+/// blocks with the pane showing through between them.
+pub fn fill() -> Color {
+    Color::Black
 }

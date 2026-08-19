@@ -59,7 +59,8 @@ pub use paint::render;
 use ratatui::style::{Color, Modifier};
 use ratatui::text::Span;
 
-use crate::gradient::{self, Rgb, Stat};
+use crate::gradient::Stat;
+use crate::theme;
 
 /// The environment variable that turns the powerline glyphs off.
 pub const RV_ASCII: &str = "RV_ASCII";
@@ -130,24 +131,22 @@ impl Role {
 
     /// The colour the segment is drawn on.
     ///
-    /// Neutrals, in a ramp bright enough for consecutive segments to read as
-    /// separate blocks, with exactly one hue: the comment count is
-    /// [`gradient::COMMENT`], because blue already means a comment everywhere
-    /// else in this interface. Nothing here claims green, red, orange or
-    /// magenta — those mean an addition, a removal, an alert and the focused
-    /// pane, and a status bar that borrowed one would be saying something it
-    /// does not mean. Colouring the mode *per context* is what the spec asks
-    /// for in the end; it waits for `Context` to exist, and until then the mode
-    /// is the brightest block rather than an arbitrary hue.
-    fn background(self) -> Rgb {
+    /// The two indexed greys, alternated so consecutive segments read as
+    /// separate blocks, with exactly one hue among them: the comment count is
+    /// [`theme::COMMENT`], because blue already means a comment everywhere else
+    /// in this interface. The mode's colour is not decided here at all — it
+    /// names the *context* the cursor is in and takes that context's hue, which
+    /// [`segments`] reads off the [`View`].
+    fn background(self) -> Color {
         match self {
-            Role::Mode => neutral(0.22),
-            Role::Position | Role::Hint => neutral(0.56),
+            // The bar's own ground: the mode is coloured by its ink, not its
+            // block — see [`segments`].
+            Role::Mode => Color::Black,
+            Role::Position | Role::Scope | Role::Hint => Color::DarkGray,
             // Between the position and the scope, because that is what it is
             // between: narrower than the review, wider than one file.
-            Role::Change => neutral(0.63),
-            Role::Scope | Role::Status => neutral(0.70),
-            Role::Comments => gradient::oklab_mix(gradient::COMMENT, gradient::INK_DARK, 0.30),
+            Role::Change | Role::Status => Color::Gray,
+            Role::Comments => theme::COMMENT,
         }
     }
 
@@ -161,11 +160,44 @@ impl Role {
     }
 }
 
-/// One block of the bar.
+/// The ink text takes on `background`.
+///
+/// Decided by the index rather than computed: an indexed colour's real value is
+/// the theme's business, so this is a convention — black on the bright blocks,
+/// white on the dark grey — not a contrast measurement.
+fn ink_on(background: Color) -> Color {
+    match background {
+        Color::DarkGray | Color::Black => Color::White,
+        _ => Color::Black,
+    }
+}
+
+/// One block of the bar, carrying its own colours so the painter needs no view.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Segment {
     pub text: String,
     pub role: Role,
+    /// The colour the block is drawn on.
+    pub background: Color,
+    /// The colour its text is drawn in.
+    pub ink: Color,
+}
+
+impl Segment {
+    /// A segment on its role's own colours.
+    #[must_use]
+    pub fn new(text: String, role: Role) -> Self {
+        Self::coloured(text, role, role.background())
+    }
+
+    fn coloured(text: String, role: Role, background: Color) -> Self {
+        Self {
+            text,
+            role,
+            background,
+            ink: ink_on(background),
+        }
+    }
 }
 
 /// Everything the bar needs to know about the session, as plain data.
@@ -174,14 +206,16 @@ pub struct Segment {
 /// workspace, a store or a terminal, and [`crate::ui`] does the one thing it is
 /// for — reading the app and handing over what it found.
 ///
-/// `mode` is a name rather than a [`crate::app::Mode`] because the spec has the
-/// segment naming the *context* the cursor is in (`FILES`, `DIFF`, `COMMENT`,
-/// `CONFIRM`, …), which is a richer thing than the typing mode and does not
-/// exist yet. A `&str` is what both can produce.
+/// `mode` is a name rather than a [`crate::app::Mode`] because the segment
+/// names the *context* the cursor is in (`FILES`, `DIFF`, `STACK`, …), which is
+/// a richer thing than the typing mode. A `&str` and a [`Color`] are what any
+/// context can produce, and they keep this module free of [`crate::app`].
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct View<'a> {
     /// What the next keystroke does, already spelled the way the bar shows it.
     pub mode: &'a str,
+    /// The hue of the context the mode names, [`None`] for the default.
+    pub mode_colour: Option<Color>,
     pub file: Option<&'a str>,
     /// Its zero-based position in the file list; shown one-based.
     pub file_index: usize,
@@ -208,13 +242,24 @@ pub struct View<'a> {
 #[must_use]
 pub fn segments(view: &View<'_>) -> Vec<Segment> {
     let mut bar = Vec::with_capacity(6);
+    if !view.mode.is_empty() {
+        // The context's hue as the *ink*, on the bar's own dark ground. A
+        // coloured block put the theme's magenta behind black text, and on a
+        // theme whose magenta is dark the one segment a reviewer looks at
+        // most was the one they could not read. A theme's hues are designed
+        // to be read as text on its background; used that way they stay
+        // readable whatever the theme does.
+        let mut mode = Segment::coloured(view.mode.to_owned(), Role::Mode, Color::Black);
+        if let Some(colour) = view.mode_colour {
+            mode.ink = colour;
+        }
+        bar.push(mode);
+    }
     let mut push = |role: Role, text: String| {
         if !text.is_empty() {
-            bar.push(Segment { text, role });
+            bar.push(Segment::new(text, role));
         }
     };
-
-    push(Role::Mode, view.mode.to_owned());
     if let Some(file) = view.file {
         // "how far through the list" needs a list, and the shape of the change
         // needs a change: a review with neither says the file's name and stops
@@ -239,15 +284,6 @@ pub fn segments(view: &View<'_>) -> Vec<Segment> {
     push(Role::Status, view.status.to_owned());
     push(Role::Hint, HINT.to_owned());
     bar
-}
-
-/// A neutral `wash` of the way from white to black.
-fn neutral(wash: f32) -> Rgb {
-    gradient::oklab_mix(gradient::INK_LIGHT, gradient::INK_DARK, wash)
-}
-
-fn colour(Rgb(red, green, blue): Rgb) -> Color {
-    Color::Rgb(red, green, blue)
 }
 
 /// The width of some text in terminal columns, asked of ratatui rather than

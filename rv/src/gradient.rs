@@ -1,9 +1,11 @@
-//! The palette, and the change gradient the sidebar tints its rows with.
+//! The two RGB colours in this interface — an addition's green and a removal's
+//! red — and the arithmetic between them.
 //!
-//! Colour maths lives here rather than in [`crate::ui`] so it can be tested
-//! without a terminal, and so the whole palette is declared in one place —
-//! green means an addition, red a removal, blue a comment, orange an alert and
-//! magenta the focused pane, and nothing may quietly claim a second meaning.
+//! Everything else the chrome draws is an ANSI index from [`crate::theme`],
+//! resolved by the terminal's own theme. These two are RGB because they carry a
+//! *proportion*: the gradient across a sidebar row and the wash under a diff
+//! line are blends, and an index cannot be blended. Colour maths lives here
+//! rather than in [`crate::ui`] so it can be tested without a terminal.
 //!
 //! The gradient is *diverging*. A row that is two thirds additions is green for
 //! two thirds of its width and red for the rest, and the two hands meet at a
@@ -31,23 +33,6 @@ pub struct Rgb(pub u8, pub u8, pub u8);
 pub const ADDED: Rgb = Rgb(46, 160, 67);
 /// A removal. The only thing in this interface that is red.
 pub const REMOVED: Rgb = Rgb(218, 54, 51);
-/// A comment. The only thing in this interface that is blue.
-pub const COMMENT: Rgb = Rgb(56, 139, 253);
-/// Something that wants attention — a stale anchor, a failed write. The only
-/// thing in this interface that is orange, and deliberately far enough from
-/// [`REMOVED`] in both hue and lightness not to read as a second red.
-pub const ALERT: Rgb = Rgb(224, 132, 44);
-/// The focused pane. The only thing in this interface that is magenta.
-pub const FOCUS: Rgb = Rgb(209, 96, 196);
-
-/// The prefix of a **commit hash** you can select it by.
-///
-/// A second hue because the two ids on a commit row are two different things — a
-/// change follows its rewrites, a hash names one snapshot — and one colour for
-/// both made the row read as a single long id. Teal because green, red and blue
-/// are already spoken for in this pane, and [`FOCUS`]'s magenta belongs to the
-/// change id beside it.
-pub const HASH: Rgb = Rgb(64, 178, 181);
 
 /// Ink for text over a light tint, and its opposite. Pure black and pure white
 /// rather than something softer: over a background that swings from a dark
@@ -61,9 +46,11 @@ pub const INK_LIGHT: Rgb = Rgb(255, 255, 255);
 const PIVOT_STEP: f32 = 0.30;
 /// The seam never climbs past this `L`, which is short of white (`L` = 1.0).
 const PIVOT_CEILING: f32 = 0.94;
-/// The widest the seam is ever allowed to get, in columns. Narrow on purpose:
-/// past this the bar stops reading as a proportion.
-const SEAM_COLUMNS: u16 = 4;
+/// What share of the row the seam blends across: half, centred on the
+/// proportion. Wide on purpose — the gradient runs across a row's own *text*
+/// now, and a text gradient is read as a wash of colour rather than as a bar,
+/// so a tight seam would just look like two inks meeting at a typo.
+const SEAM_SHARE: f32 = 0.5;
 
 /// The seam the two halves meet at: a step brighter than the lighter endpoint
 /// in Oklab `L`, capped short of white, with its chroma taken away entirely.
@@ -84,10 +71,10 @@ pub fn pivot() -> Rgb {
 
 /// The colour for column `column` of a `width`-wide row at the given ratio.
 ///
-/// Green on the left, red on the right, meeting at a tight [`pivot`] seam: each
-/// half only ever desaturates toward the pivot, so no cell is a mixture of the
-/// two hues. Outside the seam the flat end colours are returned unchanged,
-/// which is what keeps the proportion legible.
+/// Green on the left, red on the right, blending through the [`pivot`] across
+/// a [`SEAM_SHARE`] of the row centred on the proportion: each half only ever
+/// desaturates toward the pivot, so no cell is a mixture of the two hues, and
+/// outside the seam the flat end colours are returned unchanged.
 ///
 /// A ratio of 1.0 is green edge to edge and 0.0 is red edge to edge — the seam
 /// shrinks as it approaches an end rather than hanging off it. A degenerate
@@ -104,8 +91,7 @@ pub fn column_colour(ratio: f32, column: u16, width: u16) -> Rgb {
 
     // Half the seam's width, shrunk so it can never hang off either end: at a
     // ratio of 1.0 there is no seam at all, only green.
-    let half = f32::from(SEAM_COLUMNS.min(width / 4)) / 2.0;
-    let half = half.min(boundary).min(span - boundary);
+    let half = (span * SEAM_SHARE / 2.0).min(boundary).min(span - boundary);
 
     // Where this cell's centre falls relative to the boundary.
     let offset = f32::from(column) + 0.5 - boundary;

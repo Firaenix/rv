@@ -29,6 +29,7 @@ mod comment;
 mod commits;
 mod delete;
 mod diffs;
+mod enabled;
 mod export;
 mod fold;
 mod keys;
@@ -45,6 +46,7 @@ mod sidebar;
 mod stack;
 mod status;
 mod symbols;
+mod zoom;
 
 pub use alerts::Alert;
 pub use changes::ChangeInfo;
@@ -55,7 +57,10 @@ pub use bindings::BINDINGS;
 pub use bindings::Binding;
 pub use bindings::Group;
 pub use mode::Action;
+pub use mode::Context;
+pub use mode::DiffEngine;
 pub use mode::Focus;
+pub use mode::HelpStage;
 pub use mode::Mode;
 pub use mode::SidebarTab;
 
@@ -133,6 +138,13 @@ pub struct App {
     tree: bool,
     /// The order the file list's rows are in.
     sort: Sort,
+    /// Whether a sidebar row's name is tinted by its change's proportion —
+    /// green through the seam to red, across the text itself.
+    tint: bool,
+    /// Where the sidebar is zoomed into, innermost last — see [`zoom`].
+    zoom: Vec<zoom::Zoom>,
+    /// Whether the sidebar shows the `+n -n` column at all.
+    counts: bool,
     /// Which **row of the file list** the cursor is on.
     ///
     /// A row rather than a file, because a tree has rows that are not files and
@@ -153,10 +165,10 @@ pub struct App {
     ascii: bool,
     /// How the width is divided between the two panes.
     split: Split,
-    /// Whether the `?` keymap is up. While it is, every key but the five it
-    /// answers is inert: a reviewer reading about `d` must not discover what it
-    /// does by pressing it.
-    help_open: bool,
+    /// Whether the `?` keymap is up, and at which size. While it is, every key
+    /// but the five it answers is inert: a reviewer reading about `d` must not
+    /// discover what it does by pressing it.
+    help: HelpStage,
     /// How far the keymap has been scrolled, in rows. Held unclamped, because
     /// only the renderer knows how tall the popup got.
     help_scroll: usize,
@@ -192,6 +204,14 @@ pub struct App {
     diff_scroll: Option<usize>,
     /// The same for the sidebar's list.
     sidebar_scroll: Option<usize>,
+    /// How many columns of each diff line are scrolled off the pane's left
+    /// edge — `H`/`L`, and the horizontal wheel. Reset when another file is
+    /// selected: a scroll chosen for one file's long lines is noise on the
+    /// next file's short ones.
+    diff_hscroll: usize,
+    /// The same for the sidebar's rows, surviving tab and file changes: the
+    /// names' length is a fact about the review, not about one file.
+    sidebar_hscroll: usize,
     /// What has gone wrong lately, newest last, and none of it on disk: an
     /// alert is a fact about *this* run, and a failure another reviewer
     /// inherited would be a claim about the present that was never true for
@@ -240,36 +260,6 @@ pub struct App {
     /// enumerating a stack's changes is a cost to pay once rather than a
     /// decision to make.
     commits: commits::Commits,
-}
-
-/// Which engine a review's diffs come from.
-///
-/// A parameter rather than two constructors, one of them named after a fallback.
-/// It is *configuration*: it is consulted on every `load_selected`, not per call
-/// the way `diff::compute_with`'s flag is, and a value stored on the app and read
-/// later is a setting whatever it is called.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub enum DiffEngine {
-    /// The in-process diff at once, difftastic's behind it, and a swap when it
-    /// lands — see [`diffs`]. What a reviewer gets, because it is the only one of
-    /// the three where a keystroke never waits for a process to spawn.
-    #[default]
-    Auto,
-    /// difftastic, computed before the call returns.
-    ///
-    /// No swap, so the lines on screen are the final ones from the first frame.
-    /// This is what a test asserting about difftastic's output wants: the async
-    /// path is worth exercising deliberately, and not worth racing accidentally in
-    /// every other test in the suite.
-    Structural,
-    /// The `similar` fallback, always.
-    ///
-    /// This is the diff a user with no `difft` gets, and it is a distinct set of
-    /// branches rather than a degraded copy: only it carries
-    /// [`LineKind::Context`] lines and a [`rv_core::diff::DiffSource::Similar`]
-    /// label. `rv --no-difft` selects it, so it is a capability a reviewer has
-    /// rather than a hook the tests reach through.
-    Fallback,
 }
 
 impl App {
@@ -330,11 +320,14 @@ impl App {
             collapsed_dirs: HashSet::new(),
             tree: false,
             sort: Sort::default(),
+            tint: true,
+            counts: true,
+            zoom: Vec::new(),
             sidebar_row: 0,
             stats,
             ascii: statusbar::ascii_from_env(),
             split: Split::default(),
-            help_open: false,
+            help: HelpStage::Closed,
             help_scroll: 0,
             body_width: Cell::new(ui::default_body_width()),
             highlights: HashMap::new(),
@@ -342,6 +335,8 @@ impl App {
             dragging: false,
             diff_scroll: None,
             sidebar_scroll: None,
+            diff_hscroll: 0,
+            sidebar_hscroll: 0,
             alerts: Vec::new(),
             mode: Mode::Browse,
             buffer: String::new(),

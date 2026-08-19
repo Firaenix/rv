@@ -147,6 +147,14 @@ pub enum NodeKind {
         /// a different file than the one it names.
         index: usize,
     },
+    /// The way back out of a zoomed subtree: the first row of a zoomed view,
+    /// labelled with where the reviewer is.
+    ///
+    /// Never built here — [`build`] and [`build_grouped`] return whole views,
+    /// and the zoom that carves one down is the caller's state. It is a node
+    /// kind so the zoomed view stays one list with one cursor and one hit
+    /// test, rather than a header the mouse cannot land on.
+    Up,
 }
 
 /// One change and the files it touched, as the commits view is given them.

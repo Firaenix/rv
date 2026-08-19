@@ -13,5 +13,6 @@ pub mod rows;
 pub mod session;
 pub mod stale;
 pub mod statusbar;
+pub mod theme;
 pub mod tree;
 pub mod ui;

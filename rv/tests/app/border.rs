@@ -3,8 +3,8 @@
 use crossterm::event::KeyCode;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use rv::gradient;
 use rv::layout::Split;
+use rv::theme;
 
 use crate::support::*;
 
@@ -15,7 +15,7 @@ fn the_focused_pane_border_is_the_accent_and_the_other_is_not() {
     let mut app = workspace.app();
     let rects = areas(100, 24, Split::default());
     let corner = |frame: &Buffer, area: Rect| frame[(area.x, area.y)].style().fg;
-    let accent = Some(colour(gradient::FOCUS));
+    let accent = Some(theme::FOCUS);
 
     let frame = frame_at(&app, 100, 24);
     assert_eq!(
@@ -40,19 +40,26 @@ fn the_focused_pane_border_is_the_accent_and_the_other_is_not() {
 }
 
 /// The accent is none of the colours that already mean something.
+///
+/// The chrome's hues are ANSI indices now, so the claim is about the indices:
+/// nothing may share one, and none of them may claim the green and red that
+/// mean an addition and a removal in the diff.
 #[test]
 fn the_accent_is_none_of_the_colours_that_already_mean_something() {
-    for taken in [
-        gradient::ADDED,
-        gradient::REMOVED,
-        gradient::COMMENT,
-        gradient::ALERT,
-    ] {
-        assert_ne!(
-            gradient::FOCUS,
-            taken,
-            "the focus accent must be unambiguous"
-        );
+    use ratatui::style::Color;
+    let named = [
+        ("focus", theme::FOCUS),
+        ("comment", theme::COMMENT),
+        ("hash", theme::HASH),
+        ("alert", theme::ALERT),
+    ];
+    for (i, (a, ca)) in named.iter().enumerate() {
+        for (b, cb) in named.iter().skip(i + 1) {
+            assert_ne!(ca, cb, "{a} and {b} share an index");
+        }
+        for (meaning, taken) in [("an addition", Color::Green), ("a removal", Color::Red)] {
+            assert_ne!(*ca, taken, "{a} claims the index that means {meaning}");
+        }
     }
 }
 

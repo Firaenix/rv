@@ -57,6 +57,7 @@ const SEPARATORS: &[char] = &[ARROW, ARROW_LEFT, '|'];
 fn sample_view() -> View<'static> {
     View {
         mode: "BROWSE",
+        mode_colour: None,
         file: Some("src/app.rs"),
         file_index: 2,
         file_count: 29,
@@ -630,7 +631,7 @@ fn any_segment() -> impl Strategy<Value = Segment> {
         any_role(),
         "[ -~\\x{0}-\\x{1f}\\x{7f}-\\x{9f}\\x{4e00}-\\x{4e05}\\x{1f600}-\\x{1f602}]{0,24}",
     )
-        .prop_map(|(role, text)| Segment { text, role })
+        .prop_map(|(role, text)| Segment::new(text, role))
 }
 
 proptest! {

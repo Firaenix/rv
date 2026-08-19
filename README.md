@@ -210,10 +210,12 @@ everywhere.
 | `/` | Find a symbol by name: type, `Enter` jumps to the best match, `Esc` cancels |
 | `]` | Next file, from whichever pane the cursor is in |
 | `[` | Previous file, likewise |
+| `H` | Scroll the focused pane's text sideways, back toward the start of the line — in the diff, `Shift`+`←` does the same |
+| `L` | The other way, to read the tail of lines wider than the pane — in the diff, `Shift`+`→` and a trackpad's sideways flick do the same |
 | `Tab` | Cycle the sidebar through **Files**, **Commits** and **Comments**. A file row under a change shows *that change's* diff of it |
-| `Enter` | Fold a directory or change in the sidebar; from the diff, step into the selected line's comment stack — or, from the Comments tab, jump to the code that comment is about |
-| `Space` | Fold the directory or change under the cursor, same as `Enter` |
-| `Esc` | Leave the comment stack |
+| `Enter` | **Zoom into** the directory or change under the sidebar cursor — its contents become the whole view, under a `▴` row that names where you are and leads back out. In the sidebar `Shift`+`→` zooms in and `Shift`+`←` backs out, the plain arrows one layer deeper. From the diff, step into the selected line's comment stack — or, from the Comments tab, jump to the code that comment is about |
+| `Space` | Fold the directory or change under the cursor |
+| `Esc` | Leave the comment stack, or back out of a zoomed directory |
 | `c` | Comment on the highlighted line |
 | `d` | Delete a comment, after a `y`/`n` confirmation |
 | `r` | Resolve a comment — press it again to reopen |
@@ -225,9 +227,11 @@ everywhere.
 | `e` | Export the review to `.review/REVIEW-FEEDBACK.md`, same as `rv render` |
 | `t` | Switch the file list between a flat list and a tree |
 | `o` | Cycle the file list's order: by path, by additions, by deletions |
+| `g` | Tint the sidebar names by their change — each name runs green through a light seam to red, split where its additions end — or turn the tint off |
+| `#` | Show or hide the sidebar's `+n -n` counts |
 | `<` | Narrow the sidebar |
 | `>` | Widen it |
-| `?` | The whole keymap, in a popup — `?`, `Esc` or `q` closes it again |
+| `?` | What the keys do **here**: a contextual tip in the corner above the bar. `?` again unrolls the whole keymap; `Esc` or `q` closes either |
 | `q` | Quit |
 | `Ctrl+C` | Quit from anywhere, including out of a half-typed comment |
 

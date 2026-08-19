@@ -14,14 +14,32 @@ fn the_bar_is_drawn_from_the_status_bars_segments() {
 
     let bar = last_row(&frame_at(&app, 100, 24));
     assert!(
-        bar.contains("BROWSE"),
-        "the mode is not on the bar: {bar:?}"
+        bar.contains("DIFF"),
+        "the context is not on the bar — the diff has the focus at launch: {bar:?}"
     );
     assert!(bar.contains("a.rs"), "nor the selected file: {bar:?}");
     assert!(bar.contains("1/2"), "nor how far through the list: {bar:?}");
     assert!(bar.contains("trunk()"), "nor what is in scope: {bar:?}");
     assert!(bar.contains("0 open"), "nor the comment count: {bar:?}");
     assert!(bar.contains("? help"), "nor where the keymap is: {bar:?}");
+}
+
+/// The mode segment names the *context* the cursor is in, and follows it: the
+/// pane, the sidebar tab, the stack — not merely "browsing".
+#[test]
+fn the_mode_segment_follows_the_context() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    assert!(last_row(&frame_at(&app, 100, 24)).contains("DIFF"));
+
+    app.on_key(KeyCode::Left).expect("focus the sidebar");
+    assert!(last_row(&frame_at(&app, 100, 24)).contains("FILES"));
+
+    app.on_key(KeyCode::Tab).expect("the commits tab");
+    assert!(last_row(&frame_at(&app, 100, 24)).contains("COMMITS"));
+
+    app.on_key(KeyCode::Tab).expect("the comments tab");
+    assert!(last_row(&frame_at(&app, 100, 24)).contains("COMMENTS"));
 }
 
 /// The defect the `?` popup was a workaround for, pinned in the frame: a status
@@ -47,7 +65,7 @@ fn a_status_message_can_no_longer_evict_the_keymap_hint() {
         bar.contains("? help"),
         "the message took the hint's place: {bar:?}"
     );
-    assert!(bar.contains("BROWSE"), "...and the mode's with it: {bar:?}");
+    assert!(bar.contains("DIFF"), "...and the mode's with it: {bar:?}");
 }
 
 /// A confirmation keeps the whole row. It is a modal question whose answer

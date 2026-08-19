@@ -26,6 +26,9 @@ impl App {
             SidebarTab::Commits => SidebarTab::Comments,
             SidebarTab::Comments => SidebarTab::Files,
         };
+        // A zoom is an address in the tab it was made in; carried across it
+        // would go dormant here and ambush the reviewer on the way back.
+        self.zoom.clear();
         // An enumeration failure renders as a change with no files under it, so
         // it is also *said*: the alert dedupes, so revisiting the tab does not
         // stack toasts.
@@ -92,6 +95,34 @@ impl App {
         };
     }
 
+    /// `g`: tints the row names by their change's proportion, or stops.
+    pub(super) fn toggle_tint(&mut self) {
+        if self.sidebar_tab == SidebarTab::Comments {
+            self.status = VIEW_KEYS_ARE_FOR_THE_FILE_LIST.to_owned();
+            return;
+        }
+        self.tint = !self.tint;
+        self.status = if self.tint {
+            "names tinted by their change — g turns it off".to_owned()
+        } else {
+            "names untinted".to_owned()
+        };
+    }
+
+    /// `#`: shows the sidebar's `+n -n` column, or puts it away.
+    pub(super) fn toggle_counts(&mut self) {
+        if self.sidebar_tab == SidebarTab::Comments {
+            self.status = VIEW_KEYS_ARE_FOR_THE_FILE_LIST.to_owned();
+            return;
+        }
+        self.counts = !self.counts;
+        self.status = if self.counts {
+            "counts shown".to_owned()
+        } else {
+            "counts hidden — # brings them back".to_owned()
+        };
+    }
+
     /// `o`: cycles the file list's order. See [`crate::tree::Sort`], whose
     /// `next` is what "cycles" means, declared beside the orders themselves.
     pub(super) fn cycle_sort(&mut self) {
@@ -140,7 +171,7 @@ impl App {
         match &self.nodes().get(self.sidebar_row)?.kind {
             NodeKind::Dir { key, .. } => Some(key.clone()),
             NodeKind::Commit { change_id, .. } => Some(change_id.clone()),
-            NodeKind::File { .. } => None,
+            NodeKind::File { .. } | NodeKind::Up => None,
         }
     }
 

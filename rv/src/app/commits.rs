@@ -165,13 +165,13 @@ impl App {
             })
             .collect();
 
-        tree::build_grouped(
+        self.zoom_view(tree::build_grouped(
             &groups,
             &self.collapsed_dirs,
             self.tree,
             self.sort,
             &|file| index.stats.get(file).copied().unwrap_or_default(),
-        )
+        ))
     }
 
     /// The path the commits view's `file`th row names, if there is one.

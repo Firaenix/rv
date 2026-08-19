@@ -5,18 +5,17 @@
 //!
 //! The gradient does **not** wash the row. Spec §7 rules that out after two
 //! rounds of looking at the running tool: a full-row wash reads as a selection
-//! and competes with the real one, and even a text-width wash destroys what the
-//! pane exists to show, because in tree mode the structure *is* the indentation
-//! and the fold marks. So the colour lives in the **counts**, as a foreground
-//! on the terminal's own ground, and the proportion survives as [`change_bar`]
-//! — a mark on the row rather than the row itself.
+//! and competes with the real one. The proportion is carried by the row's own
+//! **text** instead — the name runs green through the seam to red, split where
+//! the change is split — as a foreground on the terminal's own ground. It
+//! replaced a column of bar cells that only appeared on wide panes and told
+//! the reviewer nothing the tinted name does not. `g` turns the tint off,
+//! `#` the counts, because both are decoration over the name's one job.
 //!
 //! # What goes when the pane is narrow
 //!
-//! The bar first, then the counts, then the path is clipped: each is more the
-//! row's identity than the last. The bar is decided for the **whole list** from
-//! its longest name, because a bar on the short rows and not the long ones
-//! would be a ragged column.
+//! The counts first, then the path is clipped: the path is the row's identity
+//! and the counts are context.
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -36,6 +35,7 @@ use super::BORDER_ROWS;
 use super::list::list_state;
 use super::pane::pane;
 use super::pane::selection_style;
+use super::text::shift;
 use crate::app::App;
 use crate::tree::Node;
 use crate::tree::NodeKind;
@@ -46,22 +46,14 @@ use crate::tree::NodeKind;
 /// `+40 -0` and nothing else names no file, while `added.…` still does.
 pub(super) const MIN_PATH_COLUMNS: usize = 8;
 
-/// How many columns the change bar takes on a row wide enough to carry one.
-///
-/// Six: enough to read a proportion at a glance, and few enough that a row only
-/// has to be eight columns wider than its own name to earn one.
-pub(super) const BAR_COLUMNS: usize = 6;
-
-/// The glyph the change bar is drawn with, as a **foreground** on the
-/// terminal's own ground.
-pub(super) const BAR: char = '█';
-
 /// The mark a row that holds others carries: pointing down when its contents
 /// are shown, right when they are folded away. Three columns wide, like the
 /// change marks beside it, so names line up down the column.
 const OPEN: &str = "▾  ";
 /// See [`OPEN`].
 const FOLDED: &str = "▸  ";
+/// The mark on the row that leads back out of a zoomed subtree.
+const UP: &str = "▴  ";
 
 /// # The shape and the order go on the bottom border
 ///
@@ -121,17 +113,19 @@ fn draw_nodes_titled(
     let heads: Vec<String> = nodes.iter().map(|node| head(app, node)).collect();
     // One counts column for the whole list, as wide as its widest entry, so the
     // names line up down the pane. Zero when nothing in the review changed a
-    // line, which is when there is no column to reserve.
-    let counted: Vec<(String, String)> = nodes.iter().map(|node| counts(node.stat)).collect();
-    let counts_width = counted.iter().map(counts_columns).max().unwrap_or(0);
-    let longest = heads
+    // line — or when the reviewer has put the column away with `#` — which is
+    // when there is no column to reserve.
+    let counted: Vec<(String, String)> = nodes
         .iter()
-        .map(|head| head.chars().count())
-        .max()
-        .unwrap_or(0);
-    let bar =
-        usize::from(counts_width > 0 && width >= longest + 1 + BAR_COLUMNS + 1 + counts_width)
-            * BAR_COLUMNS;
+        .map(|node| {
+            if app.counts_shown() {
+                counts(node.stat)
+            } else {
+                (String::new(), String::new())
+            }
+        })
+        .collect();
+    let counts_width = counted.iter().map(counts_columns).max().unwrap_or(0);
 
     let items: Vec<ListItem> = nodes
         .iter()
@@ -144,8 +138,8 @@ fn draw_nodes_titled(
                 lead_of(app, node),
                 counts,
                 counts_width,
-                bar,
                 width,
+                app.tint(),
             ))
         })
         .collect();
@@ -210,6 +204,7 @@ fn row_mark(app: &App, node: &Node) -> String {
         NodeKind::Dir { collapsed, .. } | NodeKind::Commit { collapsed, .. } => {
             if *collapsed { FOLDED } else { OPEN }.to_owned()
         }
+        NodeKind::Up => UP.to_owned(),
         NodeKind::File { index } => match app.files().get(*index) {
             Some(file) => format!("{:<2} ", marker(file.kind)),
             // A row addressing a file the review does not have cannot happen —
@@ -220,12 +215,19 @@ fn row_mark(app: &App, node: &Node) -> String {
     }
 }
 
-/// A row's name, indent and change mark included, before anything is clipped.
+/// A row's name, indent and change mark included, before anything is clipped —
+/// scrolled sideways where the reviewer has asked to see the tail of the names.
+///
+/// A commit row does not scroll: its ids are the part a reviewer acts on, and
+/// scrolling them off would leave a subject nobody can select anything by.
 fn head(app: &App, node: &Node) -> String {
-    format!(
-        "{}{}{}",
-        "  ".repeat(node.depth),
-        row_mark(app, node),
-        node.label
-    )
+    let label = match &node.kind {
+        // Neither scrolls: a commit's ids and the way out of a zoom are the
+        // parts a reviewer acts on.
+        NodeKind::Commit { .. } | NodeKind::Up => node.label.clone(),
+        NodeKind::Dir { .. } | NodeKind::File { .. } => {
+            shift(&node.label, app.sidebar_hscroll())
+        }
+    };
+    format!("{}{}{}", "  ".repeat(node.depth), row_mark(app, node), label)
 }

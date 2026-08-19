@@ -6,8 +6,8 @@ use std::time::Instant;
 use crossterm::event::KeyCode;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::Color;
 use rv::layout::Chrome;
+use rv::layout::HelpChrome;
 use rv::layout::Split;
 use rv::layout::layout;
 
@@ -21,7 +21,7 @@ fn toast_area(width: u16, height: u16) -> Rect {
         Split::default(),
         Chrome {
             bar_rows: 1,
-            help_open: false,
+            help: HelpChrome::Closed,
             tooltip: None,
             toast: true,
             sidebar_hidden: false,
@@ -32,22 +32,11 @@ fn toast_area(width: u16, height: u16) -> Rect {
 }
 
 /// The colour the toast's border is drawn in.
-fn toast_border_colour(buffer: &Buffer) -> Color {
+fn toast_border_is_dim(buffer: &Buffer) -> bool {
     let area = toast_area(buffer.area.width, buffer.area.height);
     buffer[(area.x, area.y)]
-        .style()
-        .fg
-        .expect("the toast's border carries a colour")
-}
-
-/// How light a colour is, for comparing one step of the fade against the next.
-fn luma(colour: Color) -> f32 {
-    match colour {
-        Color::Rgb(red, green, blue) => {
-            0.2126 * f32::from(red) + 0.7152 * f32::from(green) + 0.0722 * f32::from(blue)
-        }
-        other => panic!("{other:?} is not a colour with a lightness"),
-    }
+        .modifier
+        .contains(ratatui::style::Modifier::DIM)
 }
 
 /// An alert shows up, stays a few seconds, and leaves on its own.
@@ -101,18 +90,21 @@ fn the_border_dims_as_the_deadline_approaches() {
     let t0 = Instant::now();
     app.alert("careful", t0);
 
-    let bright = toast_border_colour(&frame_at_time(&app, 100, 24, t0));
-    let faded = toast_border_colour(&frame_at_time(
-        &app,
-        100,
-        24,
-        t0 + Duration::from_millis(4600),
-    ));
-
-    assert_ne!(bright, faded, "the toast vanishes rather than fading");
+    // The fade is one step now that the toast is an indexed colour: the theme
+    // owns what yellow looks like, so "dimmer" is the DIM modifier rather than
+    // arithmetic on channels rv no longer knows.
     assert!(
-        luma(faded) < luma(bright),
-        "it faded up, not down: {bright:?} then {faded:?}"
+        !toast_border_is_dim(&frame_at_time(&app, 100, 24, t0)),
+        "a fresh alert is already dim"
+    );
+    assert!(
+        toast_border_is_dim(&frame_at_time(
+            &app,
+            100,
+            24,
+            t0 + Duration::from_millis(4600),
+        )),
+        "the toast vanishes rather than dimming first"
     );
 }
 

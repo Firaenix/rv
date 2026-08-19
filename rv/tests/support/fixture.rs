@@ -169,6 +169,18 @@ impl Fixture {
         fixture
     }
 
+    /// One change adding a file whose first line is far wider than any pane.
+    pub fn wide() -> Self {
+        let fixture = Self::empty();
+        fixture.write(
+            "wide.rs",
+            &format!("// {}\nfn wide() {{}}\n", "abcdefghij".repeat(20)),
+        );
+        fixture.jj(&["describe", "-m", "one very wide line"]);
+        fixture.jj(&["new"]);
+        fixture
+    }
+
     /// One file with no grammar rv ships.
     pub fn plain() -> Self {
         let fixture = Self::empty();

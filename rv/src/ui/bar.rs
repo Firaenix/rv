@@ -113,13 +113,14 @@ pub(super) fn draw_bar(frame: &mut Frame, app: &App, area: Rect) {
 /// so this is the whole of the coupling between the two, and the bar stays
 /// testable without a workspace.
 ///
-/// `mode` is `BROWSE` and nothing else, because this is the only mode that
-/// draws the bar. Naming the *context* the cursor is in is a later wave's; the
-/// segment is here so that what a reviewer reads is a fact about the keyboard
-/// rather than about which pane happened to draw last.
+/// `mode` names the [`crate::app::Context`] the cursor is in — `FILES`,
+/// `COMMITS`, `DIFF`, `STACK` — in that context's own hue, so the bar says not
+/// just that keys are being browsed but *what the next keystroke moves*.
 fn status_view(app: &App) -> statusbar::View<'_> {
+    let context = app.context();
     statusbar::View {
-        mode: "BROWSE",
+        mode: context.name(),
+        mode_colour: Some(context.colour()),
         file: app.selected_file().map(|file| file.path.as_str()),
         file_index: app.file_index(),
         file_count: app.files().len(),

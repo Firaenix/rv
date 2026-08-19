@@ -255,10 +255,11 @@ fn no_row_of_the_file_list_is_painted_over() {
     }
 }
 
-/// The proportion survives as a small bar beside the counts, on a row with the
-/// columns to spare — a mark on the row rather than the row itself.
+/// The proportion is painted onto the row's own text: a name that is all
+/// additions reads green, one that is all removals reads red, and the counts
+/// keep their own inks beside it.
 #[test]
-fn a_row_with_room_to_spare_draws_its_proportion_as_a_bar() {
+fn a_rows_name_is_tinted_by_its_proportion() {
     let workspace = Fixture::mixed();
     let mut app = workspace.app_from("@--");
     for _ in 0..12 {
@@ -271,58 +272,98 @@ fn a_row_with_room_to_spare_draws_its_proportion_as_a_bar() {
     let added = sidebar_row_for_in(&frame, area, "added.rs");
     let removed = sidebar_row_for_in(&frame, area, "removed.rs");
 
-    let bar_of = |row: u16| -> Vec<Option<Color>> {
+    let inks_of = |row: u16, name: &str| -> Vec<Option<Color>> {
         (area.x..area.right())
-            .filter(|x| frame[(*x, row)].symbol() == "\u{2588}")
+            .filter(|x| name.contains(frame[(*x, row)].symbol()) && frame[(*x, row)].symbol() != " ")
             .map(|x| frame[(x, row)].style().fg)
             .collect()
     };
-    let green = bar_of(added);
-    let red = bar_of(removed);
+    let green = inks_of(added, "added.rs");
+    let red = inks_of(removed, "removed.rs");
     assert!(
-        !green.is_empty(),
-        "no bar on a row with room for one:\n{}",
+        green.contains(&Some(colour(gradient::ADDED))),
+        "a file that is nothing but additions has no green in its name: {green:?}\n{}",
         text_in(&frame, area)
     );
     assert!(
-        green
-            .iter()
-            .all(|ink| *ink == Some(colour(gradient::ADDED))),
-        "a file that is nothing but additions has a bar that is not all green: {green:?}"
+        !green.contains(&Some(colour(gradient::REMOVED))),
+        "...and must carry no red: {green:?}"
     );
     assert!(
-        red.iter()
-            .all(|ink| *ink == Some(colour(gradient::REMOVED))),
-        "a file that is nothing but removals has a bar that is not all red: {red:?}"
+        red.contains(&Some(colour(gradient::REMOVED))),
+        "a file that is nothing but removals has no red in its name: {red:?}"
     );
 }
 
-/// ...and it is the first thing given up, ahead of the counts, which are given
-/// up ahead of the path. Each is more the row's identity than the last.
+/// `g` turns the tint off — and back on. Some reviewers read colour as noise,
+/// and the counts still say everything the tint says.
 #[test]
-fn the_bar_is_dropped_before_the_counts_are() {
+fn g_toggles_the_tint_off_and_on() {
+    let workspace = Fixture::mixed();
+    let mut app = workspace.app_from("@--");
+    for _ in 0..12 {
+        app.on_key(KeyCode::Char('>')).expect("widen the sidebar");
+    }
+    app.on_key(KeyCode::Char('g')).expect("g");
+
+    let split = app.split();
+    let frame = frame_at(&app, 120, 24);
+    let area = inner(areas(120, 24, split).sidebar);
+    let added = sidebar_row_for_in(&frame, area, "added.rs");
+    let tinted = (area.x..area.right()).any(|x| {
+        "added.rs".contains(frame[(x, added)].symbol())
+            && frame[(x, added)].symbol() != " "
+            && frame[(x, added)].style().fg == Some(colour(gradient::ADDED))
+    });
+    assert!(!tinted, "g did not untint the names");
+
+    app.on_key(KeyCode::Char('g')).expect("g again");
+    let frame = frame_at(&app, 120, 24);
+    let added = sidebar_row_for_in(&frame, area, "added.rs");
+    let tinted = (area.x..area.right()).any(|x| {
+        "added.rs".contains(frame[(x, added)].symbol())
+            && frame[(x, added)].style().fg == Some(colour(gradient::ADDED))
+    });
+    assert!(tinted, "g did not bring the tint back");
+}
+
+/// `#` puts the counts column away — the names get every column — and brings
+/// it back.
+#[test]
+fn hash_toggles_the_counts_off_and_on() {
+    let workspace = Fixture::nested();
+    let mut app = workspace.app();
+    let text = sidebar_text(&frame_at(&app, 100, 24), 100, 24, Split::default());
+    assert!(text.contains("+10"), "no counts to toggle:\n{text}");
+
+    app.on_key(KeyCode::Char('#')).expect("#");
+    let text = sidebar_text(&frame_at(&app, 100, 24), 100, 24, Split::default());
+    assert!(!text.contains("+10"), "# did not hide the counts:\n{text}");
+    assert!(text.contains("top.rs"), "the names must survive:\n{text}");
+
+    app.on_key(KeyCode::Char('#')).expect("# again");
+    let text = sidebar_text(&frame_at(&app, 100, 24), 100, 24, Split::default());
+    assert!(text.contains("+10"), "# did not bring the counts back:\n{text}");
+}
+
+/// The counts are given up before the path is: each is more the row's identity
+/// than the last.
+#[test]
+fn the_counts_are_given_up_before_the_path_is() {
     let workspace = Fixture::nested();
     let mut app = workspace.app();
 
-    // At the default split these paths leave no room for a bar beside them.
     let text = sidebar_text(&frame_at(&app, 100, 24), 100, 24, Split::default());
-    assert!(
-        !text.contains('\u{2588}'),
-        "the bar was drawn by clipping the names:\n{text}"
-    );
-    assert!(
-        text.contains("+10"),
-        "and it took the counts with it:\n{text}"
-    );
+    assert!(text.contains("+10"), "room for the counts here:\n{text}");
 
-    // Squeezed further, the counts go too and the names stay.
+    // Squeezed, the counts go and the names stay.
     for _ in 0..30 {
         app.on_key(KeyCode::Char('<')).expect("squeeze the sidebar");
     }
     let split = app.split();
     let text = sidebar_text(&frame_at(&app, 60, 24), 60, 24, split);
     assert!(
-        !text.contains("+10") && !text.contains('\u{2588}'),
+        !text.contains("+10"),
         "the counts outlived the path:\n{text}"
     );
     assert!(text.contains("top.rs"), "the path went first:\n{text}");
