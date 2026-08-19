@@ -151,7 +151,8 @@ fn the_view_keys_say_they_are_about_the_file_list() {
 fn the_tree_carries_nerdfont_icons_unless_ascii_asks_otherwise() {
     let workspace = Fixture::nested();
     let mut app = workspace.app();
-    app.on_key(crossterm::event::KeyCode::Char('t')).expect("tree view");
+    app.on_key(crossterm::event::KeyCode::Char('t'))
+        .expect("tree view");
 
     let text = sidebar_text(
         &frame_at(&app, 100, 24),
@@ -169,9 +170,12 @@ fn the_tree_carries_nerdfont_icons_unless_ascii_asks_otherwise() {
     );
 
     // Folding swaps the folder icon for its closed form.
-    app.on_key(crossterm::event::KeyCode::Left).expect("focus the sidebar");
-    app.on_key(crossterm::event::KeyCode::Up).expect("onto the directory row");
-    app.on_key(crossterm::event::KeyCode::Char(' ')).expect("fold");
+    app.on_key(crossterm::event::KeyCode::Left)
+        .expect("focus the sidebar");
+    app.on_key(crossterm::event::KeyCode::Up)
+        .expect("onto the directory row");
+    app.on_key(crossterm::event::KeyCode::Char(' '))
+        .expect("fold");
     let text = sidebar_text(
         &frame_at(&app, 100, 24),
         100,

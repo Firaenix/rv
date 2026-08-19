@@ -241,12 +241,11 @@ impl Store {
 
     /// Overwrites `REVIEW-FEEDBACK.md` with `document`.
     ///
-    /// Atomic like every other file this module writes, which matters more
-    /// here than anywhere else: the markdown is the one file another program
-    /// reads *while* `rv` is running, and it is rewritten from
-    /// `comments.json` after every saved comment. A reader that caught a
-    /// half-written document would see an entry without its anchor marker, or
-    /// a truncated reply.
+    /// Atomic like every other file this module writes. The document is a
+    /// **view**, written only on request (`rv render --out`, the TUI's `e`)
+    /// and read back by nothing — but a human may still be reading it in a
+    /// pager while `rv` rewrites it, and a half-written file is a bad page
+    /// whoever the reader is.
     ///
     /// Rendering the document is [`crate::markdown::render`]'s job; this
     /// method only puts the bytes on disk.

@@ -82,6 +82,7 @@ impl App {
         loop {
             let now = Instant::now();
             self.expire_alerts(now);
+            self.expire_status(now);
             // Before the frame, so a parse that landed while the reviewer was
             // reading is painted on this pass rather than the next.
             self.collect_highlights();

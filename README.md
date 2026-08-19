@@ -217,6 +217,9 @@ everywhere.
 | `H` | Scroll the focused pane's text sideways, back toward the start of the line — in the diff, `Shift`+`←` does the same |
 | `L` | The other way, to read the tail of lines wider than the pane — in the diff, `Shift`+`→` and a trackpad's sideways flick do the same |
 | `Tab` | Cycle the sidebar through **Files**, **Commits** and **Comments**. A file row under a change shows *that change's* diff of it |
+| `1` | Jump straight to the **Files** tab without cycling. Switching tabs preserves your position: the cursor lands on the selected file's row in the list that appears — in the Commits tab, under the newest change that touched it |
+| `2` | The **Commits** tab, likewise |
+| `3` | The **Comments** tab |
 | `Enter` | **Zoom into** the directory or change under the sidebar cursor — its contents become the whole view, under a `▴` row that names where you are and leads back out. In the sidebar `Shift`+`→` zooms in and `Shift`+`←` backs out, the plain arrows one layer deeper. From the diff, step into the selected line's comment stack — or, from the Comments tab, jump to the code that comment is about |
 | `Space` | Fold the directory or change under the cursor |
 | `Esc` | Leave the comment stack, or back out of a zoomed directory |
@@ -400,7 +403,7 @@ the same label, if `difft` is absent or returns something unexpected.
 
 ## Current limits
 
-This is 0.1.0 — the point at which `rv` reviews its own development stack, and
+This is 1.0.0 — the first release. `rv` reviews its own development stack, and
 has been doing so for the whole of its own history. Known and deliberate gaps:
 
 - **Line-scoped comments only.** One line, one comment, one line of text. No

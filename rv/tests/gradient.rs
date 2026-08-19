@@ -233,7 +233,11 @@ fn the_pivot_carries_no_hue_of_its_own() {
 
 #[test]
 fn mixing_lands_on_its_own_endpoints() {
-    for (a, b) in [(ADDED, REMOVED), (pivot(), ADDED), (Rgb(10, 20, 30), Rgb(200, 100, 50))] {
+    for (a, b) in [
+        (ADDED, REMOVED),
+        (pivot(), ADDED),
+        (Rgb(10, 20, 30), Rgb(200, 100, 50)),
+    ] {
         let start = oklab_mix(a, b, 0.0);
         let end = oklab_mix(a, b, 1.0);
         assert_eq!(start, a, "t = 0 is the first colour");

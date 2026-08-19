@@ -579,7 +579,13 @@ proptest! {
 
         let anchor = create("f.txt", side_of(left), line, &before);
         let expected = if deleted == line {
-            (None, Confidence::Outdated)
+            // The content is gone, but unless the deleted line was the last
+            // one the file still has a line at that number to fall back on.
+            if (line as usize) <= after_lines.len() {
+                (Some(line), Confidence::Weak)
+            } else {
+                (None, Confidence::Outdated)
+            }
         } else if deleted < line {
             (Some(line - 1), Confidence::Moved)
         } else {
@@ -589,20 +595,25 @@ proptest! {
     }
 
     /// Soundness — resolution never invents a location. Whenever `resolve`
-    /// returns a line, that line exists in the new text and actually carries
-    /// the anchored content (checked with [`ref_normalize`], not by re-asking
-    /// the hash), `Exact` means the number did not change, `Moved` means it did
-    /// and landed on a non-blank line, and `Weak` is never produced in this
-    /// milestone.
+    /// returns a line, that line exists in the new text; for `Exact` and
+    /// `Moved` it actually carries the anchored content (checked with
+    /// [`ref_normalize`], not by re-asking the hash); `Weak` is the honest
+    /// opposite — the stored number with content that does *not* match, taken
+    /// only when no line anywhere carries the content.
     #[test]
     fn resolve_never_invents_a_line(raw in scenario()) {
         let outcome = resolve_scenario(raw);
-        prop_assert_ne!(outcome.confidence, Confidence::Weak);
         match outcome.resolved {
             None => prop_assert_eq!(outcome.confidence, Confidence::Outdated),
             Some(landed) => {
                 prop_assert!(landed >= 1 && (landed as usize) <= outcome.after_lines.len());
                 let landed_content = ref_normalize(&outcome.after_lines[landed as usize - 1]);
+                if outcome.confidence == Confidence::Weak {
+                    prop_assert_eq!(landed, outcome.line);
+                    prop_assert_ne!(outcome.target.as_deref(), Some(landed_content.as_str()));
+                    prop_assert!(outcome.candidates().is_empty());
+                    return Ok(());
+                }
                 prop_assert_eq!(outcome.target.as_deref(), Some(landed_content.as_str()));
                 match outcome.confidence {
                     Confidence::Exact => prop_assert_eq!(landed, outcome.line),
@@ -728,7 +739,12 @@ proptest! {
     fn resolve_is_outdated_only_when_nothing_matches(raw in scenario()) {
         let outcome = resolve_scenario(raw);
         let nothing_matches = outcome.candidates().is_empty() && !outcome.same_line_matches();
-        prop_assert_eq!(outcome.resolved.is_none(), nothing_matches);
+        // ...and, since the weak tier, only when there is no line at the
+        // stored number to fall back on either.
+        let no_fallback = (outcome.line as usize) > outcome.after_lines.len()
+            || outcome.line == 0
+            || outcome.target.is_none();
+        prop_assert_eq!(outcome.resolved.is_none(), nothing_matches && no_fallback);
     }
 
     /// A blank line has no identity: every blank or whitespace-only line
@@ -757,10 +773,15 @@ proptest! {
 
         let (resolved, confidence) = resolve(&anchor, &after_text);
         prop_assert_ne!(confidence, Confidence::Moved);
-        let still_blank = (line as usize) <= after_lines.len()
-            && ref_normalize(&after_lines[line as usize - 1]).is_empty();
+        let line_exists = (line as usize) <= after_lines.len();
+        let still_blank =
+            line_exists && ref_normalize(&after_lines[line as usize - 1]).is_empty();
         if still_blank {
             prop_assert_eq!((resolved, confidence), (Some(line), Confidence::Exact));
+        } else if line_exists {
+            // Not blank any more: never `Moved` to some other blank line, but
+            // the number itself still exists, and the weak tier keeps it.
+            prop_assert_eq!((resolved, confidence), (Some(line), Confidence::Weak));
         } else {
             prop_assert_eq!((resolved, confidence), (None, Confidence::Outdated));
         }
@@ -955,6 +976,12 @@ proptest! {
                 prop_assert_eq!(confidence, Confidence::Outdated);
                 break;
             };
+            if confidence == Confidence::Weak {
+                // The weak tier is a fallback to a number, not to the
+                // content, so the chain of content-preserving re-anchors
+                // ends here.
+                break;
+            }
             prop_assert_eq!(&ref_normalize(&next_lines[landed as usize - 1]), &origin_content);
 
             let re_anchored = create("f.txt", side_of(left), landed, &next_text);
@@ -1058,11 +1085,11 @@ fn edge_shape_resolves_against_its_own_text(
 #[case::trailing_newline_added("a\nb".into(), 2, "a\nb\n".into(), Some(2), Confidence::Exact)]
 #[case::reindented_single_line("\tlet   x = 1;".into(), 1, "        let x  =  1;".into(), Some(1), Confidence::Exact)]
 #[case::emoji_line_moved("é\n😀\nz\n".into(), 2, "z\nq\n😀\n".into(), Some(3), Confidence::Moved)]
-#[case::combining_mark_is_not_precomposed("e\u{301}\n".into(), 1, "é\n".into(), None, Confidence::Outdated)]
+#[case::combining_mark_is_not_precomposed("e\u{301}\n".into(), 1, "é\n".into(), Some(1), Confidence::Weak)]
 #[case::blank_anchor_into_blank_text("a\n\nb\n".into(), 2, "\n\n\n\n".into(), Some(2), Confidence::Exact)]
-#[case::blank_anchor_into_nonblank_text("a\n\nb\n".into(), 2, "a\nb\nc\n".into(), None, Confidence::Outdated)]
+#[case::blank_anchor_into_nonblank_text("a\n\nb\n".into(), 2, "a\nb\nc\n".into(), Some(2), Confidence::Weak)]
 #[case::everything_deleted("a\nb\n".into(), 1, "".into(), None, Confidence::Outdated)]
-#[case::file_became_blank("a\nb\n".into(), 1, "\n\n".into(), None, Confidence::Outdated)]
+#[case::file_became_blank("a\nb\n".into(), 1, "\n\n".into(), Some(1), Confidence::Weak)]
 fn edge_shape_resolves_across_texts(
     #[case] before: String,
     #[case] line: u32,

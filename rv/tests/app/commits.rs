@@ -28,7 +28,11 @@ fn two_changes() -> Fixture {
 /// Walks the commits list down to its first file row, whichever change holds
 /// it. The first change of a stack is often the empty working copy, which has
 /// no files under it at all.
+///
+/// From the top: switching tabs lands the cursor on the selected file's row —
+/// position preservation — which may be *below* the row these walks look for.
 fn down_to_a_file(app: &mut App) {
+    to_top(app);
     for _ in 0..20 {
         if matches!(
             app.commit_nodes().get(app.sidebar_row()).map(|n| &n.kind),
@@ -43,6 +47,7 @@ fn down_to_a_file(app: &mut App) {
 
 /// The same for a change row that actually holds files.
 fn down_to_a_change_with_files(app: &mut App) {
+    to_top(app);
     for _ in 0..20 {
         let nodes = app.commit_nodes();
         let row = app.sidebar_row();
@@ -425,6 +430,7 @@ fn a_file_row_shows_the_diff_of_the_change_it_sits_under() {
     // And the second change's, which is one of them.
     to_commits(&mut app);
     app.on_key(KeyCode::Left).expect("focus the sidebar");
+    to_top(&mut app);
     let mut found = false;
     for _ in 0..app.nodes().len() {
         if app
@@ -464,6 +470,7 @@ fn a_comment_written_under_a_change_is_anchored_to_that_change() {
     let mut app = workspace.app();
     to_commits(&mut app);
     app.on_key(KeyCode::Left).expect("focus the sidebar");
+    to_top(&mut app);
     while !app
         .nodes()
         .get(app.sidebar_row())
@@ -654,6 +661,7 @@ fn highlighting_a_change_shows_it_in_full() {
     let mut app = workspace.app();
     to_commits(&mut app);
     app.on_key(KeyCode::Left).expect("focus the sidebar");
+    to_top(&mut app);
     while app
         .change_under_cursor()
         .is_none_or(|(_, _, subject)| subject != "a second change")
@@ -814,4 +822,55 @@ fn a_change_that_cannot_be_enumerated_raises_an_alert() {
     to_comments(&mut app);
     to_commits(&mut app);
     assert_eq!(told(&app), first_visit, "the same failures were told twice");
+}
+
+/// Switching views preserves position (navigation spec §3): `Tab` into the
+/// commits tab lands the cursor on the selected file's row — under the newest
+/// change that touched it — and `1` lands back on the file in the file list.
+#[test]
+fn switching_tabs_lands_on_the_selected_file() {
+    let workspace = two_changes();
+    let mut app = workspace.app();
+    // Select the second file so "row 0" and "the selected file's row" differ.
+    app.on_key(KeyCode::Char(']')).expect("next file");
+    let selected = app.files()[app.file_index()].path.clone();
+
+    app.on_key(KeyCode::Char('2')).expect("the commits tab");
+    assert_eq!(app.sidebar_tab(), SidebarTab::Commits);
+    let nodes = app.commit_nodes();
+    let row = &nodes[app.sidebar_row()];
+    let NodeKind::File { index } = row.kind else {
+        panic!("the cursor is not on a file row: {row:?}");
+    };
+    assert_eq!(
+        app.commit_path(index),
+        Some(selected.as_str()),
+        "the cursor did not land on the selected file"
+    );
+
+    app.on_key(KeyCode::Char('1')).expect("the files tab");
+    assert_eq!(app.sidebar_tab(), SidebarTab::Files);
+    assert_eq!(
+        app.files()[app.file_index()].path,
+        selected,
+        "coming back lost the selection"
+    );
+    let nodes = app.sidebar_nodes();
+    assert!(
+        matches!(nodes[app.sidebar_row()].kind, NodeKind::File { index } if index == app.file_index()),
+        "the cursor is not on the selected file's row"
+    );
+}
+
+/// `3` reaches the comments tab directly, and a repeated direct jump is inert.
+#[test]
+fn number_keys_jump_straight_to_a_tab() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    app.on_key(KeyCode::Char('3')).expect("the comments tab");
+    assert_eq!(app.sidebar_tab(), SidebarTab::Comments);
+    app.on_key(KeyCode::Char('3')).expect("again");
+    assert_eq!(app.sidebar_tab(), SidebarTab::Comments);
+    app.on_key(KeyCode::Char('1')).expect("files");
+    assert_eq!(app.sidebar_tab(), SidebarTab::Files);
 }

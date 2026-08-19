@@ -21,11 +21,20 @@ impl App {
     /// reports which tab is up, and a key that overwrote the help text to
     /// announce itself would cost the reviewer the keymap they read off it.
     pub(super) fn switch_tab(&mut self) -> Result<()> {
-        self.sidebar_tab = match self.sidebar_tab {
+        self.goto_tab(match self.sidebar_tab {
             SidebarTab::Files => SidebarTab::Commits,
             SidebarTab::Commits => SidebarTab::Comments,
             SidebarTab::Comments => SidebarTab::Files,
-        };
+        })
+    }
+
+    /// Shows `tab` in the left column — `Tab`'s cycle, and `1`/`2`/`3`
+    /// directly.
+    pub(super) fn goto_tab(&mut self, tab: SidebarTab) -> Result<()> {
+        if tab == self.sidebar_tab {
+            return Ok(());
+        }
+        self.sidebar_tab = tab;
         // A zoom is an address in the tab it was made in; carried across it
         // would go dormant here and ambush the reviewer on the way back.
         self.zoom.clear();
@@ -37,26 +46,59 @@ impl App {
                 self.raise(error);
             }
         }
-        // The two node tabs share one cursor — they are never both on screen —
-        // so it has to be clamped onto whichever list just appeared.
-        self.sidebar_row = self.sidebar_row.min(self.nodes().len().saturating_sub(1));
-        // And the row it lands on has to be *selected*, not merely highlighted.
-        // Without this the commits tab opened with a file row under the cursor
-        // and the previous tab's diff still on screen — the sidebar naming one
-        // thing and the pane showing another, which is the one state this
-        // interface must never be in.
-        if let Some(tree::NodeKind::File { index }) = self
-            .nodes()
-            .get(self.sidebar_row)
-            .map(|node| node.kind.clone())
-        {
-            self.select_node_file(index)?;
+        // Switching views preserves position (navigation spec §3): the cursor
+        // lands on the selected file's row in the list that just appeared — in
+        // the commits tab, under the newest change that touched it. The raw
+        // row index is meaningless across two different lists; the file is
+        // what the reviewer was on.
+        if let Some(row) = self.row_of_selected_file() {
+            self.sidebar_row = row;
+            if let Some(tree::NodeKind::File { index }) = self
+                .nodes()
+                .get(self.sidebar_row)
+                .map(|node| node.kind.clone())
+            {
+                self.select_node_file(index)?;
+            }
+        } else {
+            // No row shows the file — folded away, or the Comments tab — so
+            // the cursor is clamped onto whichever list appeared.
+            self.sidebar_row = self.sidebar_row.min(self.nodes().len().saturating_sub(1));
+            // And the row it lands on has to be *selected*, not merely
+            // highlighted: a file row under the cursor with the previous
+            // tab's diff still on screen is the sidebar naming one thing and
+            // the pane showing another.
+            if let Some(tree::NodeKind::File { index }) = self
+                .nodes()
+                .get(self.sidebar_row)
+                .map(|node| node.kind.clone())
+            {
+                self.select_node_file(index)?;
+            }
         }
         // A parked view is a row of *the list that was showing*; the other tab
         // is a different list of a different length.
         self.sidebar_scroll = None;
         self.clamp_browser();
         Ok(())
+    }
+
+    /// The row of the current tab's list that names the selected file, or
+    /// `None` where no row does. In the commits tab the first match wins,
+    /// which — the stack being listed newest first — is the newest change
+    /// that touched the file.
+    fn row_of_selected_file(&self) -> Option<usize> {
+        let selected = self.selected_file()?.path.clone();
+        self.nodes().iter().position(|node| {
+            let tree::NodeKind::File { index } = node.kind else {
+                return false;
+            };
+            match self.sidebar_tab {
+                SidebarTab::Files => index == self.file_index,
+                SidebarTab::Commits => self.commit_path(index) == Some(selected.as_str()),
+                SidebarTab::Comments => false,
+            }
+        })
     }
 
     /// Keeps the browser's cursor on the list after the list has changed under

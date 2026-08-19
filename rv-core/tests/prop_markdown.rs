@@ -79,10 +79,11 @@ static SIDES: [Side; 2] = [Side::Left, Side::Right];
 
 /// The four sections in the fixed order the spec assigns them: the ordering
 /// oracle for entries, and the expected heading order.
-const SECTION_ORDER: [(&str, CommentState); 4] = [
+const SECTION_ORDER: [(&str, CommentState); 5] = [
     ("Open", CommentState::Open),
     ("Awaiting verification", CommentState::AwaitingVerification),
     ("Resolved", CommentState::Resolved),
+    ("Abandoned", CommentState::Abandoned),
     ("Outdated", CommentState::Outdated),
 ];
 
@@ -446,6 +447,7 @@ fn comment_spec() -> impl Strategy<Value = CommentSpec> {
                 CommentState::Open,
                 CommentState::AwaitingVerification,
                 CommentState::Resolved,
+                CommentState::Abandoned,
                 CommentState::Outdated,
             ][..],
         ),
@@ -933,7 +935,7 @@ proptest! {
         prop_assert_eq!(
             count_lines(&document, |line| line.starts_with("## ")),
             SECTION_ORDER.len(),
-            "exactly four section headings, whatever the bodies contain"
+            "exactly five section headings, whatever the bodies contain"
         );
         prop_assert_eq!(
             depths.last().copied().unwrap_or(0)

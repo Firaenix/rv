@@ -11,6 +11,7 @@ use rv::session::Review;
 use rv::stale;
 use rv_core::markdown;
 use rv_core::model::ChangeKind;
+use rv_core::model::Confidence;
 use rv_core::store::Comment;
 use rv_core::store::CommentState;
 use rv_core::store::SettledBy;
@@ -121,7 +122,10 @@ pub fn comments(review: &Review, json: bool, state: Option<CommentState>) -> Res
         .collect();
 
     if json {
-        let listed: Vec<_> = comments.iter().map(|comment| comment_json(comment)).collect();
+        let listed: Vec<_> = comments
+            .iter()
+            .map(|comment| comment_json(review, comment))
+            .collect();
         let serialized =
             serde_json::to_string_pretty(&listed).context("could not serialize the comments")?;
         println!("{serialized}");
@@ -145,12 +149,18 @@ pub fn comments(review: &Review, json: bool, state: Option<CommentState>) -> Res
     Ok(())
 }
 
-fn comment_json(comment: &Comment) -> serde_json::Value {
+fn comment_json(review: &Review, comment: &Comment) -> serde_json::Value {
+    // Where the anchor lands in the code as it now stands: the resolved line
+    // (which may differ from the stored one when the content moved) and how
+    // confidently the cascade placed it — spec §9's "confidence is surfaced".
+    let (resolved_line, confidence) = stale::resolution(review, comment);
     json!({
         "id": comment.id,
         "change_id": comment.change_id,
         "commit_id": comment.commit_id,
         "state": state_name(comment.state),
+        "resolved_line": resolved_line,
+        "confidence": confidence_name(confidence),
         "settled_by": comment.settled_by.map(|by| match by {
             SettledBy::Agent => "agent",
             SettledBy::User => "user",
@@ -171,6 +181,16 @@ fn comment_json(comment: &Comment) -> serde_json::Value {
             "context": comment.anchor.context,
         },
     })
+}
+
+/// A [`Confidence`]'s name, in the same lowercase vocabulary as the states.
+fn confidence_name(confidence: Confidence) -> &'static str {
+    match confidence {
+        Confidence::Exact => "exact",
+        Confidence::Moved => "moved",
+        Confidence::Weak => "weak",
+        Confidence::Outdated => "outdated",
+    }
 }
 
 /// A comment state's name, spelled the way the store serializes it.

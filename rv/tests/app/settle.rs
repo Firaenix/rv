@@ -182,9 +182,10 @@ fn a_comment_whose_line_has_gone_reads_outdated_without_being_stored_so() {
     write_comment(&mut app, "about this exact line");
     assert_eq!(stored_state(&workspace).0, CommentState::Open);
 
-    // The commented line is rewritten under the comment.
-    workspace.write("a.rs", "fn completely_different() {\n    let y = 9;\n}\n");
-    workspace.jj(&["describe", "-m", "rewrite the file"]);
+    // The file is cut down until the commented line's number does not exist:
+    // no content match anywhere, and no line to fall back on weakly.
+    workspace.write("a.rs", "");
+    workspace.jj(&["describe", "-m", "empty the file"]);
     workspace.jj(&["new"]);
 
     let reopened = workspace.app();
@@ -197,6 +198,28 @@ fn a_comment_whose_line_has_gone_reads_outdated_without_being_stored_so() {
         stored_state(&workspace).0,
         CommentState::Open,
         "the derived state was written to disk"
+    );
+}
+
+/// A line rewritten *in place* keeps its comment, weakly: the content is gone
+/// but "line n of this file" still exists, and the anchor falls back to it
+/// (the branch spec §9's third tier) rather than declaring the comment
+/// unplaceable while its line is visibly there.
+#[test]
+fn a_rewritten_line_keeps_its_comment_on_the_weak_tier() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    write_comment(&mut app, "about this exact line");
+
+    workspace.write("a.rs", "fn completely_different() {\n    let y = 9;\n}\n");
+    workspace.jj(&["describe", "-m", "rewrite the file"]);
+    workspace.jj(&["new"]);
+
+    let reopened = workspace.app();
+    assert_eq!(
+        reopened.comments().first().map(|comment| comment.state),
+        Some(CommentState::Open),
+        "a weak anchor is a placed anchor, not an outdated one"
     );
 }
 

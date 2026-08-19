@@ -382,6 +382,36 @@ impl App {
         self.highlights.get(&(commit, path.to_owned()))
     }
 
+    /// The 1-based number of the line the cursor is on, on the side a comment
+    /// there would anchor to — the number the pane's gutter shows.
+    pub fn cursor_line_number(&self) -> Option<u32> {
+        let line = self.selected_line()?;
+        match super::anchored_side(line.kind) {
+            Side::Left => line.left.or(line.right),
+            Side::Right => line.right.or(line.left),
+        }
+    }
+
+    /// The symbol enclosing the cursor — the nearest definition at or above
+    /// its line in the selected file — where the symbol index already knows.
+    ///
+    /// "Already knows" is the whole contract: the bar is painted per keystroke
+    /// and must never build an index, so this reads the cache `n`/`N`/`/`
+    /// filled and answers nothing until they have.
+    pub fn enclosing_symbol(&self) -> Option<String> {
+        if self.indexed_scope.as_ref() != Some(&self.scope()) {
+            return None;
+        }
+        let path = &self.selected_file()?.path;
+        let line = self.cursor_line_number()?;
+        self.symbol_index
+            .entries()
+            .iter()
+            .filter(|entry| &entry.path == path && entry.symbol.line <= line)
+            .max_by_key(|entry| entry.symbol.line)
+            .map(|entry| format!("in {} {}", entry.symbol.kind.label(), entry.symbol.name))
+    }
+
     /// The comment being typed, empty outside [`Mode::Comment`].
     pub fn buffer(&self) -> &str {
         &self.buffer

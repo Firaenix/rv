@@ -115,10 +115,20 @@ fn the_event_loop_is_told_when_to_wake_up() {
     let mut app = workspace.app();
     let t0 = Instant::now();
 
+    // The launch hint is a status, and a status ages: the loop is asked back
+    // to stamp it and again to drop it, and only then may it block forever.
+    app.expire_status(t0);
+    let for_the_status = app
+        .next_deadline(t0)
+        .expect("a fresh status gives the loop a timeout");
+    assert!(
+        for_the_status <= Duration::from_secs(8),
+        "the timeout outlives the status: {for_the_status:?}"
+    );
     assert_eq!(
-        app.next_deadline(t0),
+        app.next_deadline(t0 + Duration::from_secs(9)),
         None,
-        "an idle rv waits for a key, forever"
+        "an idle rv with its status expired waits for a key, forever"
     );
 
     app.alert("careful", t0);
@@ -130,9 +140,9 @@ fn the_event_loop_is_told_when_to_wake_up() {
         "the timeout outlives the alert: {wait:?}"
     );
 
-    app.expire_alerts(t0 + Duration::from_secs(6));
+    app.expire_alerts(t0 + Duration::from_secs(9));
     assert_eq!(
-        app.next_deadline(t0 + Duration::from_secs(6)),
+        app.next_deadline(t0 + Duration::from_secs(9)),
         None,
         "an expired alert still asks the loop to wake up"
     );

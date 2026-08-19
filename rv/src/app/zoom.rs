@@ -41,7 +41,9 @@ impl App {
         let Some(zoom) = self.zoom.last() else {
             return nodes;
         };
-        let Some(root) = nodes.iter().position(|node| zoomable_key(node) == Some(&zoom.key))
+        let Some(root) = nodes
+            .iter()
+            .position(|node| zoomable_key(node) == Some(&zoom.key))
         else {
             return nodes;
         };

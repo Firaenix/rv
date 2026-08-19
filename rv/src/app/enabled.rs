@@ -20,6 +20,9 @@ impl App {
             // Always something to do: they change what is on screen, never what
             // is under the cursor.
             Command::SwitchTab
+            | Command::FilesTab
+            | Command::CommitsTab
+            | Command::CommentsTab
             | Command::Narrower
             | Command::Wider
             | Command::Help
@@ -105,4 +108,3 @@ impl App {
         }
     }
 }
-

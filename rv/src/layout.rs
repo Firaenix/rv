@@ -126,9 +126,9 @@ pub struct Chrome {
     pub toast: bool,
     /// Whether the reviewer has put the sidebar away with `z`.
     ///
-    /// A narrow enough terminal puts it away regardless — see
-    /// [`NARROW_COLUMNS`] — so this is what the reviewer asked for, not what
-    /// they get.
+    /// What they asked for, and exactly what they get: a narrow terminal
+    /// degrades the sidebar's columns rather than hiding it — see [`layout`],
+    /// which holds that ruling.
     pub sidebar_hidden: bool,
 }
 

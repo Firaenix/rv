@@ -33,12 +33,14 @@
 //!
 //! Two layers, kept apart **by channel, not by hue**. The chrome — borders, the
 //! file list, comment boxes, the bar, the gutter — spends one colour per
-//! meaning, every one declared in [`crate::gradient`]: blue is a *comment*,
-//! green an *addition*, red a *removal*, orange an *alert*, magenta the
-//! *focused pane*. The code inside the diff pane carries the *terminal's* own
-//! syntax colours — see [`capture_colour`]. A wash is a background and a syntax
-//! colour is a foreground, so the two never contend for the same channel; spec
-//! §6 holds the ruling and §14 the history.
+//! meaning: blue is a *comment*, cyan a *commit hash*, yellow an *alert*,
+//! magenta the *focused pane* — ANSI indices from [`crate::theme`], resolved by
+//! the terminal's own scheme — and green/red the *additions and removals*,
+//! which stay [`crate::gradient`]'s RGB because a proportion is a blend. The
+//! code inside the diff pane carries the *terminal's* own syntax colours — see
+//! [`capture_colour`]. A wash is a background and a syntax colour is a
+//! foreground, so the two never contend for the same channel; spec §6 holds
+//! the ruling and §14 the history.
 //!
 //! Focus is shown three times over — the `▸` on the title, a bold border, and
 //! the magenta — because the two cheap signals survive a sixteen-colour
@@ -129,7 +131,7 @@ pub fn draw(frame: &mut Frame, app: &App, now: Instant) {
 
     // The bar starts after the chevron's column, so the control and the status
     // text never contend for the same cell.
-    bar::draw_bar(frame, app, beside(rects.bar, rects.chevron.width));
+    bar::draw_bar(frame, app, beside(rects.bar, rects.chevron.width), now);
     sidebar::draw_sidebar(frame, app, rects.sidebar);
     diff::draw_diff(frame, app, rects.diff);
     // After the bar, which it is drawn on top of.

@@ -95,9 +95,21 @@ fn enter_zooms_into_a_change_in_the_commits_tab() {
     let mut app = workspace.app();
     app.on_key(KeyCode::Left).expect("focus the sidebar");
     app.on_key(KeyCode::Tab).expect("the commits tab");
-    // The stack lists newest first and `@` is an empty, undescribed change;
-    // the described one is the row beneath it.
-    app.on_key(KeyCode::Down).expect("onto the described change");
+    // Tab-entry parks the cursor on the selected file's row; the walk down
+    // starts at the top. The stack lists newest first and `@` is an empty,
+    // undescribed change; the described one is the row beneath it.
+    to_top(&mut app);
+    while !matches!(
+        app.commit_nodes().get(app.sidebar_row()).map(|n| &n.kind),
+        Some(rv::tree::NodeKind::Commit { .. })
+    ) || !matches!(
+        app.commit_nodes()
+            .get(app.sidebar_row() + 1)
+            .map(|n| &n.kind),
+        Some(rv::tree::NodeKind::File { .. })
+    ) {
+        app.on_key(KeyCode::Down).expect("next row");
+    }
 
     app.on_key(KeyCode::Enter).expect("zoom into the change");
     let text = sidebar_text(&frame_at(&app, 100, 24), 100, 24, Split::default());

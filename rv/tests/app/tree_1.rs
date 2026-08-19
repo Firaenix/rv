@@ -274,7 +274,9 @@ fn a_rows_name_is_tinted_by_its_proportion() {
 
     let inks_of = |row: u16, name: &str| -> Vec<Option<Color>> {
         (area.x..area.right())
-            .filter(|x| name.contains(frame[(*x, row)].symbol()) && frame[(*x, row)].symbol() != " ")
+            .filter(|x| {
+                name.contains(frame[(*x, row)].symbol()) && frame[(*x, row)].symbol() != " "
+            })
             .map(|x| frame[(x, row)].style().fg)
             .collect()
     };
@@ -343,7 +345,10 @@ fn hash_toggles_the_counts_off_and_on() {
 
     app.on_key(KeyCode::Char('#')).expect("# again");
     let text = sidebar_text(&frame_at(&app, 100, 24), 100, 24, Split::default());
-    assert!(text.contains("+10"), "# did not bring the counts back:\n{text}");
+    assert!(
+        text.contains("+10"),
+        "# did not bring the counts back:\n{text}"
+    );
 }
 
 /// The counts are given up before the path is: each is more the row's identity

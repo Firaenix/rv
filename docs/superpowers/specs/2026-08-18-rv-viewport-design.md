@@ -897,3 +897,38 @@ module per feature area and the fixtures shared through `rv/tests/support/`.
 Splitting them into separate top-level test files would have meant one binary
 per area, each rebuilding its own fixtures; module files keep the fixture cost
 where it was while still naming the area in every test path.
+
+---
+
+## Implementation status (audited 2026-08-19)
+
+- **§4 below-80-columns pane swapping** — reversed after two rounds of using
+  the running tool: a narrow terminal *degrades* the sidebar (bar, then
+  counts, then clipped paths) rather than hiding it, and `z` plus the bar's
+  chevron are the reviewer's own choice. `rv/src/layout.rs` holds the ruling;
+  three tests defend the degradation.
+- **§4 the chevron** — shipped as the bar's first cell, not the sidebar's top
+  border: a control drawn over `╭` destroys the frame it sits on.
+- **§5 `Context`** — shipped 2026-08-19 as `Files/Commits/Comments/Diff/
+  Stack/Writing/Confirming/Finding`; commits are their own tab, so the "on a
+  commit node → Commit" row cannot occur. The first `?` press is now a
+  *contextual tip* in the corner listing this context's keys, with the whole
+  table one more press away — the "never hides by context" ruling holds for
+  the full popup, which still dims rather than hides.
+- **§7 colour depth** — superseded by the 2026-08-19 theme ruling: the chrome
+  is ANSI palette indices resolved by the terminal's own scheme (no probe, no
+  truecolour detection), and only additions/removals are RGB because a
+  proportion is a blend. The alert is the theme's **yellow** (§9's "orange"
+  with it).
+- **§7 the compact change bar** — replaced 2026-08-19 by the gradient painted
+  across the row's own name text, `g` to toggle it and `#` the counts.
+- **§7 `t`/`o` named in the title** — both live on the sidebar's *bottom*
+  border: at 80 columns the title would truncate the very thing it states.
+- **§7 `1`/`2` direct shortcuts** — shipped 2026-08-19 (`1`/`2`/`3`).
+- **§9 status expiry** — shipped 2026-08-19: a status is stamped by the event
+  loop and the bar drops it after eight seconds, on the alerts' own
+  injected-clock machinery.
+- **§12 "no horizontal scrolling" non-goal** — deleted 2026-08-19: `H`/`L`,
+  `Shift+←/→` in the diff and the horizontal wheel scroll both panes
+  sideways. The reason survives — the row model is still one row per diff
+  line, and clipping is still marked — the prohibition does not.

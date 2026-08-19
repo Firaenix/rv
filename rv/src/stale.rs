@@ -32,33 +32,61 @@ use crate::session::Review;
 /// the sidebar's counts already do before the first frame.
 pub fn mark_outdated(review: &Review, comments: &mut [Comment]) {
     for comment in comments {
-        if !matches!(
-            comment.state,
-            CommentState::Open | CommentState::AwaitingVerification
-        ) {
-            continue;
-        }
-        // The side the comment is anchored to decides which revision counts as
-        // "there now": a comment on a removed line describes the base, and the
-        // base of a review does not move under it.
-        let commit = match comment.anchor.side {
-            Side::Left => &review.session.base_commit,
-            Side::Right => &review.session.head_commit,
-        };
-        let Some(text) = read(review, commit, &comment.anchor.file) else {
-            // No blob at all — the file is gone from that side. That is the most
-            // outdated a comment can be.
-            comment.state = CommentState::Outdated;
-            continue;
-        };
-        if anchor::resolve(&comment.anchor, &text).1 == Confidence::Outdated {
+        if resolution(review, comment).1 == Confidence::Outdated {
             comment.state = CommentState::Outdated;
         }
     }
 }
 
-/// The file's text at `commit`, or `None` where it is absent or not UTF-8.
-fn read(review: &Review, commit: &str, path: &str) -> Option<String> {
-    let bytes = review.repo.read_blob(commit, path).ok().flatten()?;
+/// Where `comment`'s anchor lands in the code as it now stands, and how
+/// confidently — the same cascade [`mark_outdated`] derives `outdated` from,
+/// exposed so `rv comments` can say it out loud (spec §9: confidence is
+/// surfaced, never silently discarded).
+///
+/// A settled comment reports [`Confidence::Exact`] at its stored line without
+/// a read: it is a fact about what happened, not about the current text, and
+/// re-resolving it would be the "only an unsettled comment goes stale" rule
+/// broken in a second place.
+pub fn resolution(review: &Review, comment: &Comment) -> (Option<u32>, Confidence) {
+    if !matches!(
+        comment.state,
+        CommentState::Open | CommentState::AwaitingVerification
+    ) {
+        return (Some(comment.anchor.line), Confidence::Exact);
+    }
+    // The side the comment is anchored to decides which revision counts as
+    // "there now": a comment on a removed line describes the base, and the
+    // base of a review does not move under it.
+    let commit = match comment.anchor.side {
+        Side::Left => &review.session.base_commit,
+        Side::Right => &review.session.head_commit,
+    };
+    let Some(text) = read(review, commit, &comment.anchor.file, comment.anchor.side) else {
+        // No blob at all — the file is gone from that side. That is the most
+        // outdated a comment can be.
+        return (None, Confidence::Outdated);
+    };
+    anchor::resolve(&comment.anchor, &text)
+}
+
+/// The file's text at `commit` — followed through the review's rename records
+/// where the path itself has moved — or `None` where it is absent or not UTF-8.
+///
+/// The rename step is what keeps a moved file from mass-outdating every
+/// comment on it (spec §9): a head-side comment filed under the old name reads
+/// the file at its new one.
+fn read(review: &Review, commit: &str, path: &str, side: Side) -> Option<String> {
+    let direct = review.repo.read_blob(commit, path).ok().flatten();
+    let bytes = match (direct, side) {
+        (Some(bytes), _) => Some(bytes),
+        (None, Side::Right) => {
+            let renamed = review
+                .files
+                .iter()
+                .find(|file| file.source_path.as_deref() == Some(path))?;
+            review.repo.read_blob(commit, &renamed.path).ok().flatten()
+        }
+        (None, Side::Left) => None,
+    }?;
     String::from_utf8(bytes).ok()
 }

@@ -59,6 +59,8 @@ fn sample_view() -> View<'static> {
         mode: "BROWSE",
         mode_colour: None,
         file: Some("src/app.rs"),
+        line: Some(42),
+        symbol: "in fn draw".to_owned(),
         file_index: 2,
         file_count: 29,
         stat: Some(Stat {
@@ -148,7 +150,7 @@ fn roles(segments: &[Segment]) -> Vec<Role> {
 /// segment matching another.
 const PREFIXES: &[(&str, &str)] = &[
     ("BROWSE", "BRO"),
-    ("src/app.rs 3/29 +12 -3", "src"),
+    ("src/app.rs:42 3/29 +12 -3", "src"),
     ("trunk()..@", "tru"),
     ("4 open", "4 o"),
     ("saved comment at app.rs:42", "sav"),
@@ -161,9 +163,16 @@ const PREFIXES: &[(&str, &str)] = &[
 
 #[test]
 fn the_bar_names_the_mode_the_file_and_the_scope() {
-    let text = line_text(&render(&sample_segments(), 100, false));
+    let text = line_text(&render(&sample_segments(), 150, false));
     assert!(text.contains("BROWSE"), "the mode is visible: {text}");
-    assert!(text.contains("src/app.rs"), "and the selected file: {text}");
+    assert!(
+        text.contains("src/app.rs:42"),
+        "and the selected file with the cursor's line: {text}"
+    );
+    assert!(
+        text.contains("in fn draw"),
+        "and the enclosing symbol: {text}"
+    );
     assert!(
         text.contains("3/29"),
         "and how far through the list it is: {text}"
@@ -208,6 +217,8 @@ fn the_bar_carries_its_segments_in_reading_order() {
         [
             Role::Mode,
             Role::Position,
+            // The enclosing symbol reads as part of the position it refines.
+            Role::Symbol,
             // Narrower than the review and wider than one file, and read
             // together with the scope beside it.
             Role::Change,
@@ -276,7 +287,7 @@ fn a_status_message_displaces_nothing() {
     // The defect this module exists to fix: a status used to replace the whole
     // bar, so the first thing a reviewer did evicted the keymap hint for the
     // rest of the session.
-    let text = line_text(&render(&sample_segments(), 130, false));
+    let text = line_text(&render(&sample_segments(), 160, false));
     assert!(
         text.contains("saved comment at app.rs:42"),
         "the status is on the bar: {text}"
@@ -393,7 +404,16 @@ fn segments_survive_in_priority_order_at_every_width() {
     // so the set of survivors is always a prefix of that ranking read
     // backwards. A bar that ever showed the scope but not the mode would mean
     // two rankings had drifted apart.
-    let keep_order = [HINT, "BROWSE", "4 open", "src", "trunk", "saved"];
+    let keep_order = [
+        HINT,
+        "BROWSE",
+        "4 open",
+        "src",
+        "ytskpxpw",
+        "trunk",
+        "in fn draw",
+        "saved",
+    ];
     for width in 0u16..=120 {
         let text = line_text(&render(&sample_segments(), width, false));
         let survivors: Vec<bool> = keep_order
@@ -604,6 +624,7 @@ fn any_role() -> impl Strategy<Value = Role> {
     prop_oneof![
         Just(Role::Mode),
         Just(Role::Position),
+        Just(Role::Symbol),
         Just(Role::Scope),
         Just(Role::Comments),
         Just(Role::Status),

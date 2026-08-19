@@ -303,3 +303,22 @@ Terminal-free where it matters, per the existing boundary.
 | A third focus target makes the keymap hard to hold in the head | One table, in this spec and in the README, plus `?` help remains a milestone-2 item; `Left`/`Esc` both escape the stack so no state is a trap |
 | Deleting the wrong comment | `y`/`n` confirmation naming path and line; deletion from the stack targets exactly the highlighted box |
 | Blue borders unreadable on some terminal themes | Border colour only, body text left at default contrast; no background fills |
+
+---
+
+## Implementation status (audited 2026-08-19)
+
+Implemented as specified, with these exceptions and later rulings:
+
+- **§4 "focus is deliberately not signalled with colour"** — reversed by the
+  viewport spec: the focused pane's border is the theme's magenta, alongside
+  the `▸` and the bold border that carry the signal without colour.
+- **§4 comment states** — `dismissed` shipped as the storage spec's
+  `resolved`/`abandoned` pair, each recording the actor.
+- **§3/§6 snapshot files** — never written any more (storage §11); deletion's
+  snapshot removal is legacy cleanup only.
+- **Replies** arrive via `rv reply` (CLI-loop amendment, 2026-08-19), not via
+  the export.
+- **Open:** §4's expanded-outdated before/after block (the storage spec §4
+  view over `anchor.context`), and §3's comment browser grouping — the
+  browser lists comments flat in store order, without file heading rows.

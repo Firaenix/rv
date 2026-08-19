@@ -1070,3 +1070,30 @@ fn an_anchor_with_no_recorded_start_is_left_uncaptioned() {
         "a caption was invented for an anchor that records no start:\n{document}"
     );
 }
+
+/// An abandoned comment renders, collapsed, in its own section: *dropped
+/// unfixed* is part of what the review concluded, and for a while the render
+/// silently omitted it — the one outcome the storage spec forbids.
+#[test]
+fn an_abandoned_comment_renders_in_its_own_section() {
+    let dropped = comment(
+        "cccc",
+        FIRST_CHANGE,
+        "rv-core/src/diff.rs",
+        7,
+        CommentState::Abandoned,
+    );
+    let document = render(&session(), &[dropped]);
+
+    assert!(
+        document.contains("## Abandoned (1)"),
+        "no abandoned section:\n{document}"
+    );
+    assert!(
+        document.contains("<details>"),
+        "an abandoned entry renders expanded rather than collapsed:\n{document}"
+    );
+    // The order is fixed: abandoned sits between resolved and outdated.
+    assert_before(&document, "## Resolved (0)", "## Abandoned (1)");
+    assert_before(&document, "## Abandoned (1)", "## Outdated (0)");
+}

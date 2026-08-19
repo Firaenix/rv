@@ -213,7 +213,8 @@ fn every_binding_the_handler_dispatches_appears_in_the_popup() {
     let workspace = Fixture::new();
     let mut app = workspace.app();
     app.on_key(KeyCode::Char('?')).expect("?");
-    app.on_key(KeyCode::Char('?')).expect("? again, for the whole keymap");
+    app.on_key(KeyCode::Char('?'))
+        .expect("? again, for the whole keymap");
     let frame = buffer_text(&frame_at(&app, 120, 40));
 
     assert!(!BINDINGS.is_empty(), "the binding table is empty");
@@ -240,7 +241,8 @@ fn the_whole_keymap_fits_at_80x24_without_scrolling() {
     let workspace = Fixture::new();
     let mut app = workspace.app();
     app.on_key(KeyCode::Char('?')).expect("?");
-    app.on_key(KeyCode::Char('?')).expect("? again, for the whole keymap");
+    app.on_key(KeyCode::Char('?'))
+        .expect("? again, for the whole keymap");
     let frame = buffer_text(&frame_at(&app, 80, 24));
 
     for binding in BINDINGS {
@@ -274,7 +276,8 @@ fn a_binding_that_does_nothing_here_is_dimmed_rather_than_hidden() {
     app.on_key(KeyCode::Left).expect("focus the sidebar");
     assert_eq!(app.sidebar_tab(), SidebarTab::Files);
     app.on_key(KeyCode::Char('?')).expect("?");
-    app.on_key(KeyCode::Char('?')).expect("? again, for the whole keymap");
+    app.on_key(KeyCode::Char('?'))
+        .expect("? again, for the whole keymap");
 
     let frame = frame_at(&app, 100, 30);
     assert!(
@@ -302,7 +305,8 @@ fn the_same_binding_is_live_where_it_acts_on_something() {
     let mut app = workspace.app();
     write_comment(&mut app, "a finding");
     app.on_key(KeyCode::Char('?')).expect("?");
-    app.on_key(KeyCode::Char('?')).expect("? again, for the whole keymap");
+    app.on_key(KeyCode::Char('?'))
+        .expect("? again, for the whole keymap");
 
     let frame = frame_at(&app, 100, 30);
     assert!(
@@ -324,7 +328,8 @@ fn the_help_renders_in_a_pane_too_small_for_it(#[case] width: u16, #[case] heigh
     let mut app = workspace.app();
     write_comment(&mut app, "a finding");
     app.on_key(KeyCode::Char('?')).expect("?");
-    app.on_key(KeyCode::Char('?')).expect("? again, for the whole keymap");
+    app.on_key(KeyCode::Char('?'))
+        .expect("? again, for the whole keymap");
 
     let _ = frame_at(&app, width, height);
     // ...and scrolling a popup that cannot show its whole keymap is still just
@@ -361,7 +366,8 @@ fn the_popup_covers_what_is_beneath_it() {
     .expect("the popup has a rect at 100x24");
 
     app.on_key(KeyCode::Char('?')).expect("?");
-    app.on_key(KeyCode::Char('?')).expect("? again, for the whole keymap");
+    app.on_key(KeyCode::Char('?'))
+        .expect("? again, for the whole keymap");
     let over = frame_at(&app, 100, 24);
 
     let changed = (popup.y..popup.bottom())

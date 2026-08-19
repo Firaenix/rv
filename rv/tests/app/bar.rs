@@ -112,3 +112,50 @@ fn the_powerline_glyphs_are_decided_by_the_app_at_startup() {
         "the bar drew glyphs the app did not ask for: {bar:?}"
     );
 }
+
+/// A status expires: roughly eight seconds after the loop stamps it, the bar
+/// drops the segment — and the hint, the mode and the rest stay.
+#[test]
+fn a_status_message_expires_off_the_bar() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    write_comment(&mut app, "a finding");
+    let t0 = std::time::Instant::now();
+    app.expire_status(t0);
+
+    let fresh = last_row(&frame_at_time(&app, 130, 24, t0));
+    assert!(
+        fresh.contains("comment saved"),
+        "the status never reached the bar: {fresh:?}"
+    );
+
+    let later = last_row(&frame_at_time(
+        &app,
+        130,
+        24,
+        t0 + std::time::Duration::from_secs(9),
+    ));
+    assert!(
+        !later.contains("comment saved"),
+        "the status outlived its eight seconds: {later:?}"
+    );
+    assert!(
+        later.contains("? help") && later.contains("DIFF"),
+        "expiry took the rest of the bar with it: {later:?}"
+    );
+}
+
+/// The position segment carries the cursor's own line, `path:line`.
+#[test]
+fn the_bar_names_the_line_the_cursor_is_on() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    let line = select_line(&mut app, |line| line.text.contains("let x = 1;"));
+    let number = line.right.expect("an added line has a head-side number");
+
+    let bar = last_row(&frame_at(&app, 130, 24));
+    assert!(
+        bar.contains(&format!("a.rs:{number}")),
+        "the bar does not say which line the cursor is on: {bar:?}"
+    );
+}

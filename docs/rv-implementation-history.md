@@ -434,3 +434,24 @@ rule, `write_markdown_if_current` and the TUI's ingest-on-export all went;
 pre-amendment reply into the store on load, and its hostile-input test corpus
 stays with it until both are deleted together. Both skills rewritten around
 the three-command loop; the reviewer's `jj diff` dependency is gone.
+
+**The spec reconciliation** — two auditors swept all five design specs against
+the code; everything they found was either fixed, implemented, or written
+down. Fixed: abandoned comments had no section in the rendered markdown and
+silently vanished from it — the one outcome the storage spec forbids.
+Implemented from the specs' unmet promises: the anchor cascade's third tier
+(`Weak` — content gone, the raw line number still standing — so a rewritten
+line keeps its comment instead of outdating it) with rename-following on
+re-anchor, and `confidence`/`resolved_line` surfaced in `rv comments --json`;
+statuses now expire off the bar after eight seconds on the alerts' injected
+clock; `1`/`2`/`3` jump straight to a sidebar tab, and switching tabs
+preserves position — the cursor lands on the selected file's row, under the
+newest change that touched it in the commits tab; the `/` picker matches
+every query word against name-then-file (`store write` finds
+`write_markdown` in `store.rs`) and shows each match's kind; the bar's
+position segment carries `path:line`, plus the enclosing symbol whenever the
+index is already warm. Every spec gained a dated implementation-status
+appendix naming what was superseded by later rulings and what remains open:
+single-file storage consolidation, the outdated before/after block, browser
+grouping by file, file-scoped comments, hunk navigation, an editor key, the
+difft version probe, the tracked-`.review/` warning.

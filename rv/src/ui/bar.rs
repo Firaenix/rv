@@ -1,6 +1,8 @@
 //! The row under both panes: the status bar, the confirmation being answered,
 //! or the comment being typed.
 
+use std::time::Instant;
+
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Modifier;
@@ -30,10 +32,10 @@ use crate::statusbar;
 /// a modal question whose answer destroys written work, and a question that
 /// could be dropped for want of room is one the reviewer answers blind. It is
 /// clipped with a marker rather than dropped, for the same reason.
-pub(super) fn draw_bar(frame: &mut Frame, app: &App, area: Rect) {
+pub(super) fn draw_bar(frame: &mut Frame, app: &App, area: Rect, now: Instant) {
     match app.mode() {
         Mode::Browse => {
-            let view = status_view(app);
+            let view = status_view(app, now);
             frame.render_widget(
                 Paragraph::new(statusbar::render(
                     &statusbar::segments(&view),
@@ -70,10 +72,14 @@ pub(super) fn draw_bar(frame: &mut Frame, app: &App, area: Rect) {
             let matches = app.matches();
             lines.extend(matches.iter().take(rows).enumerate().map(|(rank, entry)| {
                 let text = format!(
-                    "{} {}  {}:{}",
+                    "{} {} {}  {}:{}",
                     // The one `Enter` takes, marked: a list whose first row is
                     // the choice has to say which row that is.
                     if rank == 0 { "▸" } else { " " },
+                    // The kind, in its language's own keyword, so two symbols
+                    // sharing a name — a struct and its constructor fn — are
+                    // told apart without jumping to both.
+                    entry.symbol.kind.label(),
                     entry.symbol.name,
                     entry.path,
                     entry.symbol.line
@@ -116,12 +122,15 @@ pub(super) fn draw_bar(frame: &mut Frame, app: &App, area: Rect) {
 /// `mode` names the [`crate::app::Context`] the cursor is in — `FILES`,
 /// `COMMITS`, `DIFF`, `STACK` — in that context's own hue, so the bar says not
 /// just that keys are being browsed but *what the next keystroke moves*.
-fn status_view(app: &App) -> statusbar::View<'_> {
+fn status_view(app: &App, now: Instant) -> statusbar::View<'_> {
     let context = app.context();
     statusbar::View {
         mode: context.name(),
         mode_colour: Some(context.colour()),
         file: app.selected_file().map(|file| file.path.as_str()),
+        line: app.cursor_line_number(),
+        // Only when the index is warm — the bar never builds one.
+        symbol: app.enclosing_symbol().unwrap_or_default(),
         file_index: app.file_index(),
         file_count: app.files().len(),
         stat: app.selected_file().map(|_| app.stat(app.file_index())),
@@ -137,6 +146,8 @@ fn status_view(app: &App) -> statusbar::View<'_> {
             .iter()
             .filter(|comment| comment.state == CommentState::Open)
             .count(),
-        status: app.status(),
+        // The last thing that happened — empty once it has expired, which is
+        // the eight-second rule the viewport spec asks for.
+        status: app.status_line(now),
     }
 }

@@ -8,6 +8,11 @@ use super::App;
 /// How long an alert stays on screen (spec §9).
 const ALERT_LIFETIME: Duration = Duration::from_secs(5);
 
+/// How long a status message stays on the bar (viewport spec §9): a status
+/// describes the *last thing that happened*, and eight seconds later it no
+/// longer did.
+const STATUS_LIFETIME: Duration = Duration::from_secs(8);
+
 /// How much of that life is spent fading out.
 const ALERT_FADE: Duration = Duration::from_secs(1);
 
@@ -117,6 +122,30 @@ impl App {
         self.alerts.retain(|alert| alert.live(now));
     }
 
+    /// Stamps a status the loop has not seen before.
+    ///
+    /// Change detection rather than a stamp at every write site: `status` is
+    /// assigned all over the state machine by handlers with no clock in reach,
+    /// and this is the same one-pass-later discipline unstamped alerts use.
+    pub fn expire_status(&mut self, now: Instant) {
+        if self.status != self.status_seen {
+            self.status_seen = self.status.clone();
+            self.status_stamp = Some(now);
+        }
+    }
+
+    /// The status as the bar shows it at `now`: the message, until it expires.
+    ///
+    /// The expiry is answered at read time rather than by clearing the field,
+    /// so [`App::status`] still reports the last thing that happened to any
+    /// test that asks — what expires is the *display*.
+    pub fn status_line(&self, now: Instant) -> &str {
+        match self.status_stamp {
+            Some(stamp) if now.saturating_duration_since(stamp) >= STATUS_LIFETIME => "",
+            _ => &self.status,
+        }
+    }
+
     /// What has gone wrong lately, oldest first.
     pub fn alerts(&self) -> &[Alert] {
         &self.alerts
@@ -128,6 +157,20 @@ impl App {
     /// This is the whole of what makes "it leaves on its own" true: without it
     /// a toast in front of a reviewer who walked away stays until they return.
     pub fn next_deadline(&self, now: Instant) -> Option<Duration> {
-        self.alerts.iter().map(|alert| alert.next_change(now)).min()
+        let alerts = self.alerts.iter().map(|alert| alert.next_change(now));
+        alerts.chain(self.status_deadline(now)).min()
+    }
+
+    /// How long until the status next changes what is on screen: its expiry,
+    /// or [`Duration::ZERO`] while a fresh status waits to be stamped.
+    fn status_deadline(&self, now: Instant) -> Option<Duration> {
+        if self.status.is_empty() {
+            return None;
+        }
+        if self.status != self.status_seen {
+            return Some(Duration::ZERO);
+        }
+        let stamp = self.status_stamp?;
+        STATUS_LIFETIME.checked_sub(now.saturating_duration_since(stamp))
     }
 }

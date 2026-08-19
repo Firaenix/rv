@@ -387,3 +387,28 @@ The store now writes `comments.json` and nothing else per save. Legacy
 `snapshots/` directories still load fine; a removed comment's leftover file is
 deleted with it, and an orphan is inert — neither resurrected nor adopted when
 its id is reused. `Store::open` no longer creates the directory.
+
+---
+
+## Implementation status (audited 2026-08-19)
+
+- **§2 single-file consolidation (`session.toml` absorbing `comments.json`)**
+  — approved, **not yet implemented**: `comments.json` is still the comment
+  store, and §6's migration, §7's `read_review`/`write_review` and the first
+  §8 test go with the consolidation when it lands. The CLI-loop amendment
+  (2026-08-19) §4 records the same status.
+- **§3 `awaiting-verification` disappears** — still pending the milestone-2
+  verification-flow decision; the state remains stored, counted and rendered
+  until that work replaces it.
+- **§3 abandoned in the export** — fixed 2026-08-19: the render was silently
+  omitting abandoned comments (no section matched them), which was exactly
+  the "dropping a comment is never an acceptable outcome" failure. The
+  document now carries an `## Abandoned` section, collapsed like resolved.
+- **§4 the outdated before/after block** — **open**; `context` and
+  `context_start` are stored and rendered into the export's fence, but the
+  TUI does not yet diff them against the current text.
+- **§5 (the export)** — superseded by the CLI-loop amendment: the markdown is
+  a one-way view, `fold_replies` became the one-release `rescue_replies`
+  migration, and nothing writes the export as a side effect.
+- **§7/§10 details** — `snapshots_dir` survives only as legacy cleanup;
+  `read_review`/`write_review` await §2.

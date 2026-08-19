@@ -88,11 +88,13 @@ pub(super) const PIPE: &str = "|";
 /// cannot be added without answering all three.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Role {
-    /// What the next keystroke will do: `BROWSE`, `COMMENT`, `CONFIRM`.
+    /// The context the cursor is in: `FILES`, `COMMITS`, `DIFF`, `STACK`.
     Mode,
-    /// The selected file, how far through the list it is, and the shape of its
-    /// change.
+    /// The selected file, the line the cursor is on, how far through the list
+    /// it is, and the shape of its change.
     Position,
+    /// The symbol enclosing the cursor, when the index already knows it.
+    Symbol,
     Change,
     /// The revset under review.
     Scope,
@@ -114,15 +116,18 @@ impl Role {
     const fn rank(self) -> u8 {
         match self {
             Role::Status => 0,
-            Role::Scope => 1,
+            // Nice to know, never load-bearing: the position already says the
+            // line, and the symbol is only present when the index is warm.
+            Role::Symbol => 1,
+            Role::Scope => 2,
             // Above the scope and below the position: a reviewer who has walked
             // into a change wants to know which one, and the revset is the same
             // sentence it was when they opened the review.
-            Role::Change => 2,
-            Role::Position => 3,
-            Role::Comments => 4,
-            Role::Mode => 5,
-            Role::Hint => 6,
+            Role::Change => 3,
+            Role::Position => 4,
+            Role::Comments => 5,
+            Role::Mode => 6,
+            Role::Hint => 7,
         }
     }
 
@@ -146,6 +151,7 @@ impl Role {
             // block — see [`segments`].
             Role::Mode => Color::Black,
             Role::Position | Role::Scope | Role::Hint => Color::DarkGray,
+            Role::Symbol => Color::Gray,
             // Between the position and the scope, because that is what it is
             // between: narrower than the review, wider than one file.
             Role::Change | Role::Status => Color::Gray,
@@ -219,6 +225,12 @@ pub struct View<'a> {
     pub mode: &'a str,
     /// The hue of the context the mode names, [`None`] for the default.
     pub mode_colour: Option<Color>,
+    /// The line the cursor is on in the selected file, where there is one.
+    pub line: Option<u32>,
+    /// The symbol enclosing the cursor — `in fn write_markdown` — or empty
+    /// where none is known. Known means the symbol index is already built:
+    /// the bar is painted per keystroke and must never build one itself.
+    pub symbol: String,
     pub file: Option<&'a str>,
     /// Its zero-based position in the file list; shown one-based.
     pub file_index: usize,
@@ -277,8 +289,12 @@ pub fn segments(view: &View<'_>) -> Vec<Segment> {
             .filter(|stat| stat.total() > 0)
             .map(|stat| format!(" +{} -{}", stat.added, stat.removed))
             .unwrap_or_default();
-        push(Role::Position, format!("{file}{counter}{shape}"));
+        // The line rides with the file it is a line of, `path:line`, the way
+        // every other tool spells the pair.
+        let line = view.line.map(|line| format!(":{line}")).unwrap_or_default();
+        push(Role::Position, format!("{file}{line}{counter}{shape}"));
     }
+    push(Role::Symbol, view.symbol.clone());
     // Before the scope: the change the cursor is in is the narrower and more
     // immediate fact, and the two are read together.
     push(Role::Change, view.change.clone());

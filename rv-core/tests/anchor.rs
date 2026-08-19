@@ -48,15 +48,28 @@ fn reindent_survives_hash_exact() {
 }
 
 /// The anchored line is deleted outright and its content appears nowhere
-/// else in the new text: no hash match anywhere, so resolution gives up
-/// rather than guessing.
+/// else — but the file still has a line at the anchor's number, so the raw
+/// number is the fallback: the third tier, `Weak`, not a guess at content.
 #[test]
-fn deleted_line_outdated() {
+fn deleted_line_falls_back_to_its_number_weakly() {
     let text = "a\nb\nc\n";
     let anchor = create("f.txt", Side::Right, 2, text);
 
     let edited = "a\nc\n";
     let (line, confidence) = resolve(&anchor, edited);
+
+    assert_eq!(line, Some(2));
+    assert_eq!(confidence, Confidence::Weak);
+}
+
+/// With the file shorter than the anchor's number there is no line to fall
+/// back on, and resolution gives up rather than guessing.
+#[test]
+fn a_line_past_the_new_end_is_outdated() {
+    let text = "a\nb\nc\n";
+    let anchor = create("f.txt", Side::Right, 3, text);
+
+    let (line, confidence) = resolve(&anchor, "a\n");
 
     assert_eq!(line, None);
     assert_eq!(confidence, Confidence::Outdated);
@@ -98,15 +111,17 @@ fn snapshot_captures_context() {
 /// entirely. A moved blank-line anchor resolves `Outdated` rather than
 /// guessing which blank line it moved to.
 #[test]
-fn blank_line_anchor_moved_resolves_outdated() {
+fn blank_line_anchor_moved_falls_back_weakly() {
     let text = "a\n\nb\n";
     let anchor = create("f.txt", Side::Left, 2, text);
 
     let edited = format!("x\n{text}");
     let (line, confidence) = resolve(&anchor, &edited);
 
-    assert_eq!(line, None);
-    assert_eq!(confidence, Confidence::Outdated);
+    // Never `Moved` — a blank line has no identity to follow — but its
+    // number still exists, so the raw-number tier catches it.
+    assert_eq!(line, Some(2));
+    assert_eq!(confidence, Confidence::Weak);
 }
 
 /// The blank-line exclusion applies only to the `Moved` scan: a blank line

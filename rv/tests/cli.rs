@@ -227,7 +227,9 @@ fn status_reports_a_stale_comment_as_outdated() {
     workspace.commit("first change");
 
     // A comment written against a line, by hand — the TUI is not what is under
-    // test here — and then the line rewritten under it.
+    // test here — and then the line removed under it. The hash no longer
+    // matches anything, and the file is short of the anchor's number, so
+    // neither the content tier nor the line-number fallback can place it.
     let head = workspace.rv(&["status", "--json"]).stdout.clone();
     let head: serde_json::Value =
         serde_json::from_slice(&head).expect("status --json is valid json");
@@ -252,6 +254,11 @@ fn status_reports_a_stale_comment_as_outdated() {
         serde_json::to_vec_pretty(&comment).expect("serialize"),
     )
     .expect("write comments.json");
+
+    // And the line removed from it, so the number fallback cannot hold the
+    // anchor either: the file no longer has a line 2.
+    workspace.write("a.rs", "fn a() {}\n");
+    workspace.commit("the commented line is gone");
 
     let output = workspace.rv(&["status", "--json"]);
     let report: serde_json::Value =
@@ -638,7 +645,14 @@ fn rv_comments_json_is_the_read_channel() {
         .nth(1)
         .expect("an id")
         .to_owned();
-    workspace.rv(&["comment", "a.rs", "--line", "1", "-m", "and this one settles"]);
+    workspace.rv(&[
+        "comment",
+        "a.rs",
+        "--line",
+        "1",
+        "-m",
+        "and this one settles",
+    ]);
 
     let listed = workspace.rv(&["comments", "--json"]);
     assert!(listed.status.success(), "{}", streams(&listed));
@@ -678,8 +692,7 @@ fn rv_comments_json_is_the_read_channel() {
         .to_owned();
     workspace.rv(&["resolve", &other]);
     let open = workspace.rv(&["comments", "--json", "--state", "open"]);
-    let open: serde_json::Value =
-        serde_json::from_slice(&open.stdout).expect("filtered json");
+    let open: serde_json::Value = serde_json::from_slice(&open.stdout).expect("filtered json");
     let open = open.as_array().expect("an array");
     assert_eq!(open.len(), 1, "{open:?}");
     assert_eq!(open[0]["id"], id.as_str());
@@ -710,15 +723,17 @@ fn rv_reply_stores_replaces_and_survives_settling() {
     );
     let stored = std::fs::read_to_string(workspace.root().join(".review/comments.json"))
         .expect("read comments.json");
-    assert!(!stored.contains("lost work"), "the failed reply stored something");
+    assert!(
+        !stored.contains("lost work"),
+        "the failed reply stored something"
+    );
 
     workspace.rv(&["reply", &id, "-m", "first answer"]);
     workspace.rv(&["reply", &id, "-m", "better answer"]);
     workspace.rv(&["resolve", &id]);
 
     let listed = workspace.rv(&["comments", "--json"]);
-    let comments: serde_json::Value =
-        serde_json::from_slice(&listed.stdout).expect("valid json");
+    let comments: serde_json::Value = serde_json::from_slice(&listed.stdout).expect("valid json");
     assert_eq!(comments[0]["reply"], "better answer", "{comments}");
     assert_eq!(comments[0]["state"], "resolved");
     assert_eq!(comments[0]["settled_by"], "agent");
@@ -771,8 +786,7 @@ fn a_body_from_stdin_round_trips_byte_identically() {
     assert!(saved.status.success(), "{}", streams(&saved));
 
     let listed = workspace.rv(&["comments", "--json"]);
-    let comments: serde_json::Value =
-        serde_json::from_slice(&listed.stdout).expect("valid json");
+    let comments: serde_json::Value = serde_json::from_slice(&listed.stdout).expect("valid json");
     assert_eq!(comments[0]["body"], body, "{comments}");
 
     // An empty stdin body is refused exactly as an empty `-m` argument is.
@@ -844,7 +858,14 @@ fn rv_diff_json_issues_the_coordinates_comment_accepts() {
         .clone();
     let number = line["right"].as_u64().expect("a number").to_string();
 
-    let saved = workspace.rv(&["comment", "a.rs", "--line", &number, "-m", "on rv's own number"]);
+    let saved = workspace.rv(&[
+        "comment",
+        "a.rs",
+        "--line",
+        &number,
+        "-m",
+        "on rv's own number",
+    ]);
     assert!(
         saved.status.success(),
         "rv refused a coordinate it issued itself: {}",

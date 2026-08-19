@@ -117,9 +117,8 @@ fn print_plain(computed: &FileDiff) {
     };
     println!("{} — {engine}{suppressed}", computed.path);
     for line in &computed.lines {
-        let number = |side: Option<u32>| {
-            side.map_or_else(|| " ".repeat(5), |number| format!("{number:>5}"))
-        };
+        let number =
+            |side: Option<u32>| side.map_or_else(|| " ".repeat(5), |number| format!("{number:>5}"));
         let sigil = match line.kind {
             LineKind::Added => '+',
             LineKind::Removed => '-',

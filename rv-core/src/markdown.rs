@@ -73,14 +73,17 @@ const PROTOCOL: &str = "> This file is a rendered view — nothing reads it back
 /// without expanding it but a long comment cannot blow out the line.
 const SUMMARY_BODY_CHARS: usize = 72;
 
-/// The four sections, in the fixed order that makes them the state machine:
+/// The five sections, in the fixed order that makes them the state machine:
 /// heading title, the state it holds, and the marker prefixed to a collapsed
 /// entry's summary (`None` for the expanded sections).
 ///
-/// Every section is rendered even when empty, so the document's shape — and
-/// therefore the instruction "do not edit … section order" — does not depend
-/// on which states happen to be occupied.
-const SECTIONS: [(&str, CommentState, Option<&str>); 4] = [
+/// Every section is rendered even when empty, so the document's shape does not
+/// depend on which states happen to be occupied. Every **state** has a section:
+/// abandoned comments were silently absent from the document for a while, which
+/// is precisely the "dropping a comment is never an acceptable outcome" failure
+/// the storage spec forbids — a decision *against* a finding is still part of
+/// what the review concluded.
+const SECTIONS: [(&str, CommentState, Option<&str>); 5] = [
     ("Open", CommentState::Open, None),
     (
         "Awaiting verification",
@@ -88,6 +91,7 @@ const SECTIONS: [(&str, CommentState, Option<&str>); 4] = [
         None,
     ),
     ("Resolved", CommentState::Resolved, Some("✅")),
+    ("Abandoned", CommentState::Abandoned, Some("🚫")),
     ("Outdated", CommentState::Outdated, Some("⚠️")),
 ];
 

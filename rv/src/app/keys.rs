@@ -9,6 +9,7 @@ use super::Action;
 use super::App;
 use super::HelpStage;
 use super::Mode;
+use super::SidebarTab;
 use super::bindings::BINDINGS;
 use super::bindings::Command;
 
@@ -174,6 +175,9 @@ impl App {
             Command::Fold => self.toggle_collapse(),
             // Focus-free, like `[` and `]`.
             Command::SwitchTab => self.switch_tab()?,
+            Command::FilesTab => self.goto_tab(SidebarTab::Files)?,
+            Command::CommitsTab => self.goto_tab(SidebarTab::Commits)?,
+            Command::CommentsTab => self.goto_tab(SidebarTab::Comments)?,
             Command::Enter => self.on_enter()?,
             Command::FoldRow => self.fold_row()?,
             Command::Escape => self.escape(),

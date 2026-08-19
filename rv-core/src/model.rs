@@ -54,11 +54,10 @@ pub enum Confidence {
     /// number.
     Moved,
     /// No content-hash match; the anchor fell back to its original line
-    /// number alone. Not produced in this milestone — line-number fallback
-    /// is later work — but defined now so callers can match exhaustively.
+    /// number, which the file still has.
     Weak,
-    /// No content-hash match anywhere in the new text, and no fallback was
-    /// attempted.
+    /// No content-hash match anywhere in the new text, and no line to fall
+    /// back to.
     Outdated,
 }
 

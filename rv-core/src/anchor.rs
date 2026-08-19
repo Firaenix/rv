@@ -130,11 +130,13 @@ pub fn create(file: &str, side: Side, line: u32, text: &str) -> Anchor {
 ///    line that moved would "resolve" `Moved` to some *other*, unrelated
 ///    blank line in the file rather than failing safely. Excluding them
 ///    means a moved blank-line anchor falls through to step 3 instead.
-/// 3. If no (non-blank) line matches at all, the anchor cannot be placed:
-///    `(None, Outdated)`.
-///
-/// `Weak` (a line-number-only fallback) is never produced here; it is later
-/// milestone work.
+/// 3. If no (non-blank) line matches but the file still *has* a line at
+///    `anchor.line`, the raw number is the fallback: `(Some(anchor.line),
+///    Weak)`. The commented-on content is gone, but "line 48 of this file" is
+///    still a place a reviewer can be taken to — which beats declaring the
+///    comment unplaceable while its line visibly exists (spec §9's third
+///    tier).
+/// 4. Otherwise the anchor cannot be placed: `(None, Outdated)`.
 pub fn resolve(anchor: &Anchor, text: &str) -> (Option<u32>, Confidence) {
     let lines: Vec<&str> = text.lines().collect();
 
@@ -160,6 +162,11 @@ pub fn resolve(anchor: &Anchor, text: &str) -> (Option<u32>, Confidence) {
 
     match nearest {
         Some((index, _)) => (Some(index as u32 + 1), Confidence::Moved),
+        // An out-of-range anchor never takes the fallback: it named no line
+        // when it was created, so there is no line to fall back to.
+        None if same_line.is_some() && anchor.content_hash != OUT_OF_RANGE_HASH => {
+            (Some(anchor.line), Confidence::Weak)
+        }
         None => (None, Confidence::Outdated),
     }
 }

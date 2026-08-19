@@ -260,6 +260,7 @@ fn the_commits_tab_narrows_the_walk_to_one_change() {
     // Onto the commits tab, and down to a file of the later change.
     to_commits(&mut app);
     app.on_key(KeyCode::Left).expect("focus the sidebar");
+    to_top(&mut app);
     while app
         .nodes()
         .get(app.sidebar_row())
@@ -293,6 +294,7 @@ fn the_scope_follows_the_cursor_between_changes() {
     let mut app = workspace.app();
     to_commits(&mut app);
     app.on_key(KeyCode::Left).expect("focus the sidebar");
+    to_top(&mut app);
 
     let mut seen: Vec<Vec<String>> = Vec::new();
     for _ in 0..app.nodes().len() {
@@ -313,5 +315,46 @@ fn the_scope_follows_the_cursor_between_changes() {
         seen[0],
         seen[seen.len() - 1],
         "the index was served from the cache after the scope changed: {seen:?}"
+    );
+}
+
+/// Every word of the query must match — the name first, the file second — so
+/// `second epsilon` finds `epsilon` in `second.rs` while a word that matches
+/// nothing rejects the entry (navigation spec §4).
+#[test]
+fn the_picker_matches_every_word_against_name_or_file() {
+    let workspace = symbols();
+    let mut app = workspace.app();
+    app.on_key(KeyCode::Char('/')).expect("open the picker");
+    type_text(&mut app, "second epsilon");
+
+    let best = app.matches();
+    assert_eq!(
+        best.first().map(|entry| entry.symbol.name.as_str()),
+        Some("epsilon"),
+        "a file word plus a name word did not find the symbol: {:?}",
+        best.iter()
+            .map(|entry| entry.symbol.name.as_str())
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        best.iter().all(|entry| entry.path == "second.rs"),
+        "an entry survived a file word it does not match"
+    );
+}
+
+/// The picker's rows say what kind of thing each match is, in its language's
+/// own keyword, so a struct and a fn sharing a name are told apart on sight.
+#[test]
+fn the_picker_shows_each_matchs_kind() {
+    let workspace = symbols();
+    let mut app = workspace.app();
+    app.on_key(KeyCode::Char('/')).expect("open the picker");
+    type_text(&mut app, "epsilon");
+
+    let frame = buffer_text(&frame_at(&app, 100, 24));
+    assert!(
+        frame.contains("fn epsilon"),
+        "the match does not carry its kind:\n{frame}"
     );
 }

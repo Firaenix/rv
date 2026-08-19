@@ -449,3 +449,37 @@ its own review.
 4. **References and timeline** — reference search, classification, symbol
    timeline, `rv symbol`.
 5. **Breadth** — remaining grammars, stack-view polish.
+
+---
+
+## Implementation status (audited 2026-08-19)
+
+Milestones 1–2 and most of 3 have shipped; the tenses above are historical.
+Where the code deliberately went another way, the later ruling wins:
+
+- **§6/§11 `1`/`2` views** — the two views shipped as sidebar *tabs*
+  (viewport spec §7): `Tab` cycles them, and `1`/`2`/`3` jump straight to the
+  Files / Commits / Comments tab. Focus moves with `←`/`→` (`h`/`l`), not
+  `Tab`.
+- **§11 `a` accept / `r` reopen** — superseded by storage spec §3: `r` is
+  resolve/reopen, `a` abandon/reopen, each recording who.
+- **§11 `o` open in `$EDITOR`** — `o` was reassigned to file-list ordering
+  (viewport §7); an editor key is unassigned, **open**.
+- **§5/§10 `snapshots/` and `.review/.lock`** — snapshots were removed as a
+  copy nothing read (storage §11); the lock was never built, and the
+  single-writer story is the store's atomic whole-file rewrites, **open** as a
+  ruling to make explicit if concurrent writers ever matter.
+- **§2.5/§10 markdown round trip** — superseded whole by the 2026-08-19
+  CLI-loop amendment: `rv comments --json` / `rv reply` are the loop, the
+  markdown is a view.
+- **§9 anchor cascade** — the `Weak` line tier and rename-following on
+  re-anchor shipped 2026-08-19; confidence and the resolved line are surfaced
+  through `rv comments --json` (`confidence`, `resolved_line`) rather than
+  through markdown markers, per the CLI-loop amendment. The TUI does not yet
+  show confidence: **open**.
+- **Still open, unassigned to a milestone:** file-scoped comments (§9
+  `Scope::File`, and with them commenting on binary files, §7.4); `J`/`K`
+  hunk navigation (§11); a `difft --version` probe (§7.3 — the JSON-parse
+  fallback covers malformed output, not a silently incompatible schema); an
+  "N files with no semantic change" collective note (§7.2); an `rv status`
+  warning when `.review/` is tracked (§13).

@@ -63,7 +63,7 @@ impl App {
     }
 
     /// What the sidebar is listing, which is what `n` walks.
-    fn scope(&self) -> Scope {
+    pub(super) fn scope(&self) -> Scope {
         match self.sidebar_tab {
             SidebarTab::Commits => self
                 .commit_change(self.commit_file_under_cursor().unwrap_or(0))
@@ -337,15 +337,18 @@ impl App {
 
     /// The entries the query matches, best first.
     ///
-    /// A case-insensitive substring of the name, ranked by where the match
-    /// starts: a name that *begins* with what was typed is what the reviewer
-    /// meant, and one that merely contains it is a fallback. Ties keep index
-    /// order, so the list never reorders itself under a keystroke that did not
-    /// change the ranking.
+    /// Every whitespace-separated word of the query must match — as a
+    /// case-insensitive substring of the **name** first, the **file** second —
+    /// so `store write` finds `write_markdown` in `store.rs` (navigation spec
+    /// §4). Ranked by where the earliest name match starts, with name matches
+    /// ahead of file-only ones: a name that *begins* with what was typed is
+    /// what the reviewer meant. Ties keep index order, so the list never
+    /// reorders itself under a keystroke that did not change the ranking.
     #[must_use]
     pub fn matches(&self) -> Vec<crate::index::Entry> {
         let query = self.buffer.to_lowercase();
-        if query.is_empty() {
+        let words: Vec<&str> = query.split_whitespace().collect();
+        if words.is_empty() {
             return self.symbol_index.entries().to_vec();
         }
         let mut found: Vec<(usize, usize, crate::index::Entry)> = self
@@ -354,11 +357,23 @@ impl App {
             .iter()
             .enumerate()
             .filter_map(|(position, entry)| {
-                let at = entry.symbol.name.to_lowercase().find(&query)?;
-                Some((at, position, entry.clone()))
+                let name = entry.symbol.name.to_lowercase();
+                let path = entry.path.to_lowercase();
+                // Every word somewhere; the rank is the best name hit, and a
+                // match that never touches the name sorts after every one
+                // that does.
+                let mut rank = usize::MAX;
+                for word in &words {
+                    match (name.find(word), path.contains(word)) {
+                        (Some(at), _) => rank = rank.min(at),
+                        (None, true) => {}
+                        (None, false) => return None,
+                    }
+                }
+                Some((rank, position, entry.clone()))
             })
             .collect();
-        found.sort_by_key(|(at, position, _)| (*at, *position));
+        found.sort_by_key(|(rank, position, _)| (*rank, *position));
         found.into_iter().map(|(_, _, entry)| entry).collect()
     }
 }

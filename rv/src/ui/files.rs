@@ -250,9 +250,12 @@ fn head(app: &App, node: &Node) -> String {
         // Neither scrolls: a commit's ids and the way out of a zoom are the
         // parts a reviewer acts on.
         NodeKind::Commit { .. } | NodeKind::Up => node.label.clone(),
-        NodeKind::Dir { .. } | NodeKind::File { .. } => {
-            shift(&node.label, app.sidebar_hscroll())
-        }
+        NodeKind::Dir { .. } | NodeKind::File { .. } => shift(&node.label, app.sidebar_hscroll()),
     };
-    format!("{}{}{}", "  ".repeat(node.depth), row_mark(app, node), label)
+    format!(
+        "{}{}{}",
+        "  ".repeat(node.depth),
+        row_mark(app, node),
+        label
+    )
 }

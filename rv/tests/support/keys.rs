@@ -60,6 +60,17 @@ pub fn to_commits(app: &mut App) {
     panic!("the commits tab is not in the Tab cycle");
 }
 
+/// Moves the sidebar cursor to the top of the list it is showing.
+///
+/// The commits tab parks the cursor on the selected file's row — position
+/// preservation, navigation spec §3 — which is *below* most rows a walk is
+/// looking for. A walk that means "the whole list" goes up first.
+pub fn to_top(app: &mut App) {
+    for _ in 0..40 {
+        app.on_key(KeyCode::Up).expect("previous row");
+    }
+}
+
 /// The same, for the file list — which is also the tab `t` and `o` mean something
 /// in.
 pub fn to_files(app: &mut App) {

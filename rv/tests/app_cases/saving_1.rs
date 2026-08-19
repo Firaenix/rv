@@ -137,8 +137,7 @@ fn a_typed_comment_reaches_the_store_byte_identically() {
         // The view, rendered on request, carries the comment on one line: the
         // body cannot have been split, escaped or re-indented. (Saving itself
         // writes no export any more — the markdown is a view.)
-        let review =
-            rv::session::read(fixture.root(), None, None).expect("read the review back");
+        let review = rv::session::read(fixture.root(), None, None).expect("read the review back");
         let document = rv::session::render_markdown(&review).expect("render the view");
         prop_assert!(
             document

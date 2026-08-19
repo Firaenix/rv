@@ -61,8 +61,12 @@ pub fn tip_size(app: &App) -> (u16, u16) {
     let title = tip_title(app).chars().count();
     let inner = (keys + HELP_GAP + what).max(title);
     (
-        u16::try_from(bindings.len()).unwrap_or(u16::MAX).saturating_add(BORDER_ROWS),
-        u16::try_from(inner).unwrap_or(u16::MAX).saturating_add(BORDER_ROWS + 2),
+        u16::try_from(bindings.len())
+            .unwrap_or(u16::MAX)
+            .saturating_add(BORDER_ROWS),
+        u16::try_from(inner)
+            .unwrap_or(u16::MAX)
+            .saturating_add(BORDER_ROWS + 2),
     )
 }
 

@@ -207,3 +207,33 @@ The keymap has outgrown what a new user can discover by poking at it, so:
 | The keymap becomes unlearnable | `?` overlay generated from the same table the app dispatches on, so it cannot go stale |
 | Parsing cost on entering the picker | Lazy per-file parse with a `(commit, path)` cache; measured at review sizes before shipping |
 | Symbol index and diff disagree about a line number | Symbols are extracted from the same blob the diff was computed from, keyed by the same `(commit, path)` pair |
+
+---
+
+## Implementation status (audited 2026-08-19)
+
+- **§3 view switching preserves position** — shipped 2026-08-19: `Tab` (and
+  `1`/`2`/`3`, which jump to a tab directly) lands the cursor on the selected
+  file's row in the list that appears — in the commits tab, under the newest
+  change that touched it.
+- **§3 `1` = Bookmark / `2` = Commits** — the views are sidebar tabs
+  (viewport §7); `1`/`2`/`3` shipped as direct jumps to them.
+- **§4 the `/` picker** — shipped without `nucleo`: rv deliberately carries
+  no fuzzy-matching dependency, and the matcher is its own — every word of
+  the query must match the name first or the file second, so `store write`
+  finds `write_markdown` in `store.rs`; rows show the symbol's kind in its
+  language's own keyword. Sub-word fuzziness (`stwr`) is **not** provided.
+- **§4 grammar order** — symbols ship for Rust, Go, Python,
+  JavaScript/TypeScript/TSX; Markdown, TOML, YAML and Bash are highlight-only
+  and SQL and Nix carry no grammar yet: **open** as grammars get added.
+- **§4 "labelled in the sidebar and status bar as having no symbol index"**
+  — the label lives on the diff pane's title (`— no highlighting`), and the
+  status line says "no symbols in this scope" when a symbol key is pressed;
+  the sidebar carries no per-file mark, by choice — a column of "no index"
+  marks on a mostly-unindexed review is noise.
+- **§5 the status bar** — the scope segment is the *revset* (viewport §9),
+  with the cursor's change as its own segment; the file:line position and the
+  enclosing symbol (`in fn write_markdown`, whenever the index is already
+  warm — the bar never builds one) shipped 2026-08-19. A jump's status names
+  `symbol — path:line`; the change is on the bar already and is not repeated
+  in the message.

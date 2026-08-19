@@ -220,6 +220,13 @@ pub struct App {
     mode: Mode,
     buffer: String,
     status: String,
+    /// When the event loop first saw the current `status`, and the text it
+    /// stamped — see [`alerts`], whose no-clock discipline this mirrors: the
+    /// key handlers that write `status` have no clock in reach, so the loop
+    /// stamps a changed status on its next pass and the bar drops it roughly
+    /// eight seconds later (viewport spec §9: a status expires).
+    status_stamp: Option<std::time::Instant>,
+    status_seen: String,
     engine: DiffEngine,
     /// Blobs whose highlight spans are being parsed on another thread, and the
     /// channel they come back on — see [`paint`].
@@ -341,6 +348,8 @@ impl App {
             mode: Mode::Browse,
             buffer: String::new(),
             status: HELP.to_owned(),
+            status_stamp: None,
+            status_seen: String::new(),
             engine,
             parsing: HashSet::new(),
             painter: paint::Painter::default(),
