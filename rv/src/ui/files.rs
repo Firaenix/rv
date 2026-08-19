@@ -55,6 +55,20 @@ const FOLDED: &str = "▸  ";
 /// The mark on the row that leads back out of a zoomed subtree.
 const UP: &str = "▴  ";
 
+/// The nerd-font folder icons a directory row carries beside its fold mark,
+/// and the file icon a file row carries beside its change mark.
+///
+/// Nerd-font glyphs live in the Private Use Area, so a font without the patch
+/// shows tofu and rv cannot detect one — exactly the powerline arrows'
+/// problem, so they ride the same switch: `RV_ASCII` turns both off. The
+/// codepoints are Font Awesome's folder, folder-open and file, which every
+/// nerd-font build carries.
+const DIR_ICON_OPEN: char = '\u{f07c}';
+/// See [`DIR_ICON_OPEN`].
+const DIR_ICON_FOLDED: char = '\u{f07b}';
+/// See [`DIR_ICON_OPEN`].
+const FILE_ICON: char = '\u{f15b}';
+
 /// # The shape and the order go on the bottom border
 ///
 /// The title already carries the focus mark and the count, and at 80 columns
@@ -197,15 +211,26 @@ fn marker(kind: ChangeKind) -> &'static str {
     }
 }
 
-/// The three columns a row spends on saying what kind of row it is: how a file
-/// changed, or whether a row that holds others is open or folded.
+/// What a row spends on saying what kind of row it is: how a file changed, or
+/// whether a row that holds others is open or folded — with a nerd-font folder
+/// or file icon beside it, unless `RV_ASCII` turned the patched glyphs off.
 fn row_mark(app: &App, node: &Node) -> String {
+    let icons = !app.ascii();
     match &node.kind {
+        NodeKind::Dir { collapsed, .. } if icons => {
+            let (mark, icon) = if *collapsed {
+                ("▸", DIR_ICON_FOLDED)
+            } else {
+                ("▾", DIR_ICON_OPEN)
+            };
+            format!("{mark} {icon} ")
+        }
         NodeKind::Dir { collapsed, .. } | NodeKind::Commit { collapsed, .. } => {
             if *collapsed { FOLDED } else { OPEN }.to_owned()
         }
         NodeKind::Up => UP.to_owned(),
         NodeKind::File { index } => match app.files().get(*index) {
+            Some(file) if icons => format!("{:<2}{FILE_ICON} ", marker(file.kind)),
             Some(file) => format!("{:<2} ", marker(file.kind)),
             // A row addressing a file the review does not have cannot happen —
             // the rows are built from that very list — and is drawn blank

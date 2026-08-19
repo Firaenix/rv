@@ -371,6 +371,19 @@ meets the shell. Two skills in this repository teach the loop to agents:
 wrote into a pre-CLI export is rescued into the store once, the first time this
 version loads the review.
 
+## `RV_ASCII`
+
+The status bar's powerline arrows and the sidebar's folder and file icons are
+nerd-font glyphs. They need a patched font, rv cannot detect one, and a font
+without the patch shows tofu — so one switch turns both off:
+
+```sh
+RV_ASCII=1 rv
+```
+
+As with `RV_NO_DIFFT`, *presence* is the switch: `RV_ASCII=0` turns the glyphs
+off like any other value.
+
 ## `RV_NO_DIFFT`
 
 Set `RV_NO_DIFFT=1` to skip difftastic entirely and use the built-in line diff:

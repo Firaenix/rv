@@ -62,7 +62,10 @@ use ratatui::text::Span;
 use crate::gradient::Stat;
 use crate::theme;
 
-/// The environment variable that turns the powerline glyphs off.
+/// The environment variable that turns the patched-font glyphs off: the bar's
+/// powerline arrows, and the sidebar's nerd-font folder and file icons. One
+/// switch for both, because they fail the same way — a font without the patch
+/// shows tofu, and rv cannot detect one.
 pub const RV_ASCII: &str = "RV_ASCII";
 
 /// What the hint segment says. `?` is the only key the bar names, because it is
