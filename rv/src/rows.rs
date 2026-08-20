@@ -19,12 +19,27 @@ use std::ops::Range;
 
 use rv_core::diff::DiffLine;
 use rv_core::diff::FileDiff;
+use rv_core::diff::LineKind;
 use rv_core::store::Comment;
+use rv_core::store::CommentState;
+
+use crate::stale::Drift;
 
 /// What a reply is labelled with inside its comment's box. A reply is part of
 /// the same conversation as the body it answers, so it shares the box rather
 /// than opening a second one.
 const REPLY_PREFIX: &str = "reply: ";
+
+/// What a diff says when the two sides differ in a way no line can show. Named
+/// here rather than in the renderer because both the diff pane and an outdated
+/// comment's before/after block say it about the same condition, and two
+/// spellings of one sentence is two things to keep in step.
+pub const NO_SEMANTIC_CHANGE: &str = "no semantic change";
+
+/// What the before/after block says when the anchor could not be placed at all.
+/// The stored lines follow it unaccompanied, which is still the most useful
+/// thing available (storage spec §4).
+const ANCHOR_LOST: &str = "the anchor could not be located — this is what it was written against";
 
 /// Which half of a comment's conversation a body row belongs to.
 ///
@@ -46,6 +61,9 @@ pub enum BodyKind {
     /// The answer folded back in from the export — every wrapped row of it, not
     /// only the one carrying the prefix.
     Reply,
+    /// The box's own remark about what it is showing, not part of the
+    /// conversation: why a before/after block has no lines of its own to give.
+    Note,
 }
 
 /// One drawable row.
@@ -74,6 +92,18 @@ pub enum Row<'a> {
     /// row of its own so that a collapsed comment can be selected, deleted and
     /// expanded again like any other.
     BoxCollapsed { line: usize, comment: &'a Comment },
+    /// The divider between an outdated comment's body and the before/after
+    /// block under it (storage spec §4).
+    BoxRule { line: usize, comment: &'a Comment },
+    /// One line of that block: the stored context against the code standing
+    /// where it used to. `kind` is what the renderer draws the sigil and the
+    /// colour from.
+    BoxDiff {
+        line: usize,
+        comment: &'a Comment,
+        text: String,
+        kind: LineKind,
+    },
 }
 
 impl Row<'_> {
@@ -90,6 +120,8 @@ impl Row<'_> {
             Row::Diff { index, .. } => *index,
             Row::BoxTop { line, .. }
             | Row::BoxBody { line, .. }
+            | Row::BoxRule { line, .. }
+            | Row::BoxDiff { line, .. }
             | Row::BoxBottom { line, .. }
             | Row::BoxCollapsed { line, .. } => *line,
         }
@@ -113,9 +145,15 @@ pub struct Plan<'a> {
 /// those costs one row instead of a box. `width` is how many columns a body
 /// row may occupy — the caller subtracts whatever border and indent it draws
 /// around the text before passing it in.
+///
+/// `drift_of` is what an outdated comment's before/after block is drawn from,
+/// asked per comment rather than computed here: it costs a blob read, and this
+/// function runs once a frame. `None` means there is nothing to show, which is
+/// the answer for every comment whose code is still where it was.
 pub fn plan<'a>(
     diff: &'a FileDiff,
     comments_for: &dyn Fn(usize) -> Vec<&'a Comment>,
+    drift_of: &dyn Fn(&Comment) -> Option<&'a Drift>,
     collapsed: &HashSet<String>,
     width: usize,
 ) -> Plan<'a> {
@@ -152,6 +190,15 @@ pub fn plan<'a>(
                     });
                 }
             }
+            // Expanding an outdated comment is what the stored context is *for*
+            // (storage spec §4), so the block is part of the expanded box rather
+            // than a second thing to open. A folded box `continue`d above and
+            // never reaches here, which is what keeps the fold one row.
+            if comment.state == CommentState::Outdated
+                && let Some(drift) = drift_of(comment)
+            {
+                before_after_rows(&mut rows, index, comment, drift, width);
+            }
             rows.push(Row::BoxBottom {
                 line: index,
                 comment,
@@ -159,6 +206,55 @@ pub fn plan<'a>(
         }
     }
     Plan { rows }
+}
+
+/// The before/after block's rows: a divider, then the diff, then whatever note
+/// stands in for lines the diff could not give.
+///
+/// Two conditions leave the block with nothing to show on its own. An anchor
+/// that could not be placed at all is announced and the stored lines are printed
+/// under it. A difference that lives where no line can carry it —
+/// [`FileDiff::suppressed`] — prints the stored lines under
+/// [`NO_SEMANTIC_CHANGE`] rather than an empty frame; the fallback engine
+/// reports that case *with* a full set of `Context` lines, so the note goes above
+/// them rather than replacing them.
+fn before_after_rows<'a>(
+    rows: &mut Vec<Row<'a>>,
+    line: usize,
+    comment: &'a Comment,
+    drift: &'a Drift,
+    width: usize,
+) {
+    let Some(block) = drift.before_after.as_ref() else {
+        return;
+    };
+    rows.push(Row::BoxRule { line, comment });
+    let note = if drift.located {
+        block.suppressed.then_some(NO_SEMANTIC_CHANGE)
+    } else {
+        Some(ANCHOR_LOST)
+    };
+    if let Some(note) = note {
+        for text in wrap(note, width) {
+            rows.push(Row::BoxBody {
+                line,
+                comment,
+                text,
+                kind: BodyKind::Note,
+            });
+        }
+    }
+    // Clipped, not wrapped, for the reason a diff line is: a reviewer reading a
+    // before/after counts lines against the two versions, and one stored line
+    // becoming two rows breaks that correspondence. `clip` marks the cut.
+    for diff_line in &block.lines {
+        rows.push(Row::BoxDiff {
+            line,
+            comment,
+            text: diff_line.text.trim_end_matches(['\n', '\r']).to_owned(),
+            kind: diff_line.kind,
+        });
+    }
 }
 
 impl Plan<'_> {

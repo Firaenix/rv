@@ -60,21 +60,25 @@ fn jumping_to_any_comment_lands_on_a_line_that_shows_it() {
         let ids: Vec<String> = app.comments().iter().map(|c| c.id.clone()).collect();
         prop_assert!(!ids.is_empty(), "{:?} wrote nothing", writes);
 
-        for (row, id) in ids.iter().enumerate() {
+        for id in &ids {
             rewind(app);
             to_comments(app);
             press(app, KeyCode::Left);
-            press_n(app, KeyCode::Down, row);
-            prop_assert_eq!(
-                app.browsed_comment()
-                    .expect("a browsed comment")
-                    .id
-                    .as_str(),
-                id.as_str(),
-                "the browser's {}th row is not the {}th comment",
-                row,
-                row
-            );
+            // Walked to rather than indexed: the browser groups its comments
+            // under file headings and orders them by `(file, line)`, so a row
+            // number is an address in a list whose shape this property is not
+            // about. What it *is* about — that every comment in the browser is
+            // reachable, and jumps to a line that shows it — is stated by
+            // finding the row that browses this id and pressing Enter on it.
+            let mut found = false;
+            for _ in 0..=app.browser_rows().len() {
+                if app.browsed_comment().is_some_and(|c| &c.id == id) {
+                    found = true;
+                    break;
+                }
+                press(app, KeyCode::Down);
+            }
+            prop_assert!(found, "no browser row reaches the comment {}", id);
 
             let before = app.file_index();
             press(app, KeyCode::Enter);
@@ -88,8 +92,8 @@ fn jumping_to_any_comment_lands_on_a_line_that_shows_it() {
             let landed = app.comments_for_line(app.line_index());
             prop_assert!(
                 landed.iter().any(|comment| &comment.id == id),
-                "row {} jumped to {}:{} , which does not show it: {:?}",
-                row,
+                "the comment {} jumped to {}:{} , which does not show it: {:?}",
+                id,
                 app.file_index(),
                 app.line_index(),
                 app.status()

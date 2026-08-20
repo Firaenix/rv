@@ -5,11 +5,13 @@
 //! bare `<tempdir>/.git/info/` layout by hand instead of paying for a real
 //! `jj git init --colocate` via the [`fixture`] module — there is nothing
 //! here for jj itself to do.
+//!
+//! The v1.0.0 `comments.json` migration and the `session.toml` round trip it
+//! lands in are in [`migration`], which shares the fixtures below.
 
 use std::fs;
 
 use rv_core::model::Anchor;
-use rv_core::model::ChangeRef;
 use rv_core::model::Side;
 use rv_core::store::Comment;
 use rv_core::store::CommentState;
@@ -52,6 +54,8 @@ fn sample_comment(id: &str) -> Comment {
         settled_by: None,
     }
 }
+
+mod migration;
 
 /// First call appends the line and reports that it did; the second call is a
 /// no-op and reports that. Either way the file ends up with exactly one
@@ -153,24 +157,27 @@ fn distinct_ids_with_one_change_id_all_persist() {
     assert_eq!(comments[1], second, "second comment, in insertion order");
 }
 
-/// A save writes `comments.json` and nothing else — no `snapshots/<id>`.
-///
-/// Earlier versions wrote the anchor's context a second time under
-/// `.review/snapshots/`, and a review of the review asked the question that
-/// killed it: nothing ever read one back. `anchor.context` in `comments.json`
-/// is the copy every consumer uses, so the duplicate protected nothing
-/// (storage spec §1).
+/// A save writes `session.toml` and nothing else: one file is the whole
+/// store, so there is no second copy of an excerpt and no cross-file ordering
+/// rule (storage spec §2).
 #[test]
-fn a_save_writes_no_snapshot() {
+fn a_save_writes_only_session_toml() {
     let repo = repo_root();
     let store = Store::open(repo.path()).expect("open store");
     let comment = sample_comment("c1");
 
     store.append_comment(&comment).expect("append comment");
 
-    assert!(
-        !repo.path().join(".review/snapshots").exists(),
-        "a snapshot directory was created for bytes comments.json already holds"
+    let mut written: Vec<String> = fs::read_dir(repo.path().join(".review"))
+        .expect("read .review")
+        .filter_map(Result::ok)
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect();
+    written.sort();
+    assert_eq!(
+        written,
+        ["session.toml"],
+        "a save wrote something beside the one file rv maintains"
     );
     let stored = store.comments().expect("read back")[0].clone();
     assert_eq!(
@@ -204,14 +211,14 @@ fn append_comment_leaves_no_stray_temp_files() {
 
 /// Simulates a crash between "temp file written" and "temp file renamed
 /// into place": a stray, half-written temp file is dropped next to an
-/// already-good `comments.json`, without ever renaming it on top. This is
+/// already-good `session.toml`, without ever renaming it on top. This is
 /// exactly the write `write_atomic` would have been doing at the moment of
-/// an interruption. Because reads only ever look at `comments.json` itself
+/// an interruption. Because reads only ever look at `session.toml` itself
 /// — never at sibling temp files — the last good state must still be
 /// exactly what `comments()` returns: the interrupted write can strand a
 /// stray file, but it can never corrupt the file readers actually consult.
 #[test]
-fn interrupted_write_never_disturbs_last_good_comments_json() {
+fn interrupted_write_never_disturbs_the_last_good_session() {
     let repo = repo_root();
     let store = Store::open(repo.path()).expect("open store");
     let good = sample_comment("c1");
@@ -220,7 +227,7 @@ fn interrupted_write_never_disturbs_last_good_comments_json() {
     let stray_temp = repo.path().join(".review/.rv-store-crash-simulated.tmp");
     fs::write(
         &stray_temp,
-        b"not valid json: this is what a half-written\n",
+        b"not valid toml: this is what a half-written\n",
     )
     .expect("seed stray temp file simulating an interrupted write");
 
@@ -231,7 +238,7 @@ fn interrupted_write_never_disturbs_last_good_comments_json() {
 }
 
 /// Proves the write is a wholesale replacement, not an in-place patch: after
-/// shrinking a comment's body (so the freshly serialized `comments.json` is
+/// shrinking a comment's body (so the freshly serialized `session.toml` is
 /// shorter than what was on disk before), the file on disk is byte-for-byte
 /// exactly the new serialization — no trailing bytes surviving from the
 /// longer previous version, which a non-atomic in-place overwrite (write
@@ -252,33 +259,28 @@ fn append_comment_shrinking_body_leaves_no_residual_bytes() {
     store.append_comment(&short).expect("append shrunk comment");
 
     let on_disk =
-        fs::read_to_string(repo.path().join(".review/comments.json")).expect("read comments.json");
-    let expected = serde_json::to_string_pretty(&vec![short]).expect("serialize expected");
+        fs::read_to_string(repo.path().join(".review/session.toml")).expect("read session.toml");
+    let expected = toml::to_string_pretty(&Session {
+        comments: vec![short],
+        ..Session::default()
+    })
+    .expect("serialize expected");
     assert_eq!(on_disk, expected);
 }
 
-/// Deleting a comment takes both of the files that comment owns with it: its
-/// entry in `comments.json`, plus any legacy `snapshots/<id>` an earlier
-/// version left behind. The removal is
-/// write-through like every other store write, so a freshly opened `Store`
-/// over the same root sees the shortened list; and it is surgical, so the
-/// other comment keeps both its entry and its snapshot.
+/// Deleting a comment removes its entry from `session.toml` and nothing else.
+/// The removal is write-through like every other store write, so a freshly
+/// opened `Store` over the same root sees the shortened list; and it is
+/// surgical, so the other comment stays exactly as it was.
 #[test]
-fn removing_a_comment_drops_it_and_any_legacy_snapshot() {
+fn removing_a_comment_drops_only_that_comment() {
     let repo = repo_root();
     let store = Store::open(repo.path()).expect("open store");
+    let survivor = sample_comment("c2");
     store
         .append_comment(&sample_comment("c1"))
         .expect("append c1");
-    store
-        .append_comment(&sample_comment("c2"))
-        .expect("append c2");
-    // As an earlier version would have left them: one legacy snapshot per
-    // comment, which current versions never write.
-    let snapshots = repo.path().join(".review/snapshots");
-    fs::create_dir_all(&snapshots).expect("create the legacy dir");
-    fs::write(snapshots.join("c1"), "legacy").expect("file c1's legacy snapshot");
-    fs::write(snapshots.join("c2"), "legacy").expect("file c2's legacy snapshot");
+    store.append_comment(&survivor).expect("append c2");
 
     let removed = store.remove_comment("c1").expect("remove c1");
 
@@ -288,17 +290,9 @@ fn removing_a_comment_drops_it_and_any_legacy_snapshot() {
         .comments()
         .expect("read comments");
     assert_eq!(
-        left.iter().map(|c| c.id.as_str()).collect::<Vec<_>>(),
-        ["c2"],
-        "only the other comment survives, and a fresh Store sees it"
-    );
-    assert!(
-        !snapshots.join("c1").exists(),
-        "the removed comment's legacy snapshot is gone with it"
-    );
-    assert!(
-        snapshots.join("c2").exists(),
-        "the other comment's legacy file is not rv's to delete"
+        left,
+        vec![survivor],
+        "only the other comment survives, whole, and a fresh Store sees it"
     );
 }
 
@@ -324,10 +318,9 @@ fn removing_an_unknown_id_is_not_an_error() {
     );
 }
 
-/// Removal writes `comments.json` through the same temp-file-plus-rename
+/// Removal writes `session.toml` through the same temp-file-plus-rename
 /// helper as every other store write, so on the happy path it must leave no
-/// temp file behind in `.review/` — and the snapshot it deletes must leave
-/// nothing else behind.
+/// temp file behind in `.review/`.
 #[test]
 fn remove_comment_leaves_no_stray_temp_files() {
     let repo = repo_root();
@@ -359,30 +352,4 @@ fn assert_no_stray_temp_files(dir: &std::path::Path) {
         "stray temp files left in {}: {stray:?}",
         dir.display()
     );
-}
-
-/// `write_session` followed by `read_session` (even from a freshly opened
-/// `Store`) reproduces the exact `Session` that was written.
-#[test]
-fn session_toml_roundtrip() {
-    let repo = repo_root();
-    let store = Store::open(repo.path()).expect("open store");
-    let session = Session {
-        revset: "trunk()..@".to_owned(),
-        base_commit: "abc123def456".to_owned(),
-        head_commit: "def456abc123".to_owned(),
-        changes: vec![ChangeRef {
-            change_id: "nowwnlnmvkwo".to_owned(),
-            commit_id: "def456abc123".to_owned(),
-            description: "do the thing".to_owned(),
-        }],
-        started_at: "epoch:1755460770".to_owned(),
-    };
-
-    store.write_session(&session).expect("write session");
-
-    let reopened = Store::open(repo.path()).expect("reopen store");
-    let read_back = reopened.read_session().expect("read session");
-
-    assert_eq!(read_back, session);
 }

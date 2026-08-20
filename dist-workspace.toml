@@ -24,3 +24,10 @@ pr-run-mode = "plan"
 cargo-dist-version = "0.32.0"
 # Whether to install an updater program
 install-updater = false
+
+# rv shells out to `difft` for its structural diff and degrades to an
+# in-process fallback without it. The nix package wraps difftastic onto the
+# binary's PATH; `stage = ["run"]` is how the Homebrew formula says the same
+# thing, so a `brew install` does not silently ship the degraded engine.
+[dist.dependencies.homebrew]
+difftastic = { stage = ["run"] }

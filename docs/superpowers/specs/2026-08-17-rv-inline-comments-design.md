@@ -319,6 +319,32 @@ Implemented as specified, with these exceptions and later rulings:
   snapshot removal is legacy cleanup only.
 - **Replies** arrive via `rv reply` (CLI-loop amendment, 2026-08-19), not via
   the export.
-- **Open:** §4's expanded-outdated before/after block (the storage spec §4
-  view over `anchor.context`), and §3's comment browser grouping — the
-  browser lists comments flat in store order, without file heading rows.
+- **§4's expanded-outdated before/after block** (the storage spec §4 view over
+  `anchor.context`) — **shipped 2026-08-20**; storage §4's appendix entry holds
+  the detail.
+- **§3 comment browser grouping** — **shipped 2026-08-20**. Comments are drawn
+  under a bold heading naming their file, ordered by `(anchor.file,
+  anchor.line)`, and each comment row is indented two columns under its
+  heading — the file list's own indent, so the two lists read as one column of
+  one interface. Neither the heading nor the note takes a background: the
+  standing sidebar ruling is that selection is the only full-row background,
+  and it holds here.
+
+  **Ruling — the browser's cursor is a row, and the comment is derived from
+  it.** Heading rows are not selectable but they *are* rows, so a row index
+  and a comment index stop being the same number. `browser_index` is therefore
+  a row, `BrowserRow::Comment` carries the comment's **store** position, and
+  `browsed_comment` reads that position off the row under the cursor — so the
+  order rows are drawn in can change without the mapping drifting. This is the
+  same ruling the viewport spec makes for `cursor_rows` over the diff plan,
+  and for the same reason: two cursors kept in step is the defect, not the
+  fix. `clamp_browser` steps a cursor that lands on a heading forward onto the
+  first comment beneath it, `j`/`k` walk comments and step over headings, and
+  a **click lands on exactly the row that was drawn**, heading rows included —
+  `ui::list` counts browser rows for the Comments tab and is otherwise
+  untouched, so the Files and Commits tabs hit-test as they always did.
+
+  **Ruling — `Enter` on a heading opens the file it names**, at the top of its
+  diff, with the focus handed to the diff. A heading names a file and nothing
+  else; jumping to some comment under it would be choosing one the reviewer
+  did not point at, and refusing outright would leave a visible row inert.

@@ -393,10 +393,35 @@ its id is reused. `Store::open` no longer creates the directory.
 ## Implementation status (audited 2026-08-19)
 
 - **§2 single-file consolidation (`session.toml` absorbing `comments.json`)**
-  — approved, **not yet implemented**: `comments.json` is still the comment
-  store, and §6's migration, §7's `read_review`/`write_review` and the first
-  §8 test go with the consolidation when it lands. The CLI-loop amendment
-  (2026-08-19) §4 records the same status.
+  — **shipped 2026-08-20**: the comments are a `[[comments]]` array on
+  `Session`, `comments.json` and `snapshots/` are no longer written, and
+  `.review/` holds `session.toml` plus the on-request export and nothing
+  else. §6's migration and §7's `read_review`/`write_review` landed with it;
+  the first §8 test is `a_save_writes_only_session_toml`.
+- **§6 migration** — **shipped 2026-08-20**, and stricter than the section
+  described. `Store::open` folds a v1.0.0 `comments.json` into `session.toml`
+  and then **deletes** it, rather than leaving it beside the store: a legacy
+  file that is never removed is re-read on every open forever, and a stale
+  copy of a comment that has since been replied to or resolved is a live
+  hazard rather than a harmless artefact. A stored comment always wins over
+  its legacy twin, so a half-finished migration cannot roll a reply back. The
+  order — atomic rename of `session.toml`, then unlink — is safe at every
+  point: interrupted before the rename the JSON is untouched and the next open
+  retries; interrupted between the two both files hold the comments and the
+  re-fold is idempotent; the one ordering that could lose a comment (unlink
+  first) is the one not written. An unparseable `comments.json` is an error
+  naming the file, not a shrug. Covered by
+  `a_v1_review_migrates_every_comment_into_session_toml`,
+  `an_interrupted_migration_loses_no_comment_from_either_side`,
+  `a_stored_comment_is_not_overwritten_by_its_legacy_twin` and
+  `an_unreadable_legacy_file_is_reported_rather_than_skipped`.
+  `snapshots/` is still never read and never deleted, as the section says.
+- **§7 `read_review`/`write_review`** — **shipped 2026-08-20**, replacing
+  `read_session`/`write_session` outright: one read and one write over the one
+  file, with no alias left behind. `Store::comments`, `append_comment`,
+  `settle_comment` and `remove_comment` kept their exact signatures and
+  semantics; only the backing file changed. A `.review/` with no
+  `session.toml` reads as an empty review rather than an error.
 - **§3 `awaiting-verification` disappears** — still pending the milestone-2
   verification-flow decision; the state remains stored, counted and rendered
   until that work replaces it.
@@ -404,11 +429,35 @@ its id is reused. `Store::open` no longer creates the directory.
   omitting abandoned comments (no section matched them), which was exactly
   the "dropping a comment is never an acceptable outcome" failure. The
   document now carries an `## Abandoned` section, collapsed like resolved.
-- **§4 the outdated before/after block** — **open**; `context` and
-  `context_start` are stored and rendered into the export's fence, but the
-  TUI does not yet diff them against the current text.
+- **§4 the outdated before/after block** — **shipped 2026-08-20**, in the shape
+  this section sketches: expanding an outdated comment opens a `├─ when this
+  was written ──── now ─┤` rule inside its own box, and under it the stored
+  `anchor.context` diffed against the lines standing where the excerpt used to
+  be. `context_start` is what places that window — the offset from it to
+  `anchor.line` is where in the excerpt the anchored line sits, which the
+  `snapshot_of` clamp makes not always the middle one.
+
+  `compute_with(.., false)` as ruled, and asserted so: the block's `FileDiff`
+  must not be `DiffSource::Difftastic`, checked in a test whose *pane* diff is
+  difftastic's from the very same process and `PATH`, so the assertion is a
+  contrast rather than a claim about the environment. Both consequences the
+  section names are handled — a `suppressed` fragment prints its stored lines
+  under the existing `no semantic change` note rather than an empty frame (one
+  spelling, shared with the diff pane's own `SUPPRESSED_EMPTY`), and an anchor
+  that cannot be located at all says so and prints the stored lines alone.
+
+  The rows flow through `rows::plan` like every other interior row, not around
+  it, so `window`, `row_of_comment`, `line_of_row` and pointer hit-testing keep
+  agreeing about a plan that is now taller. Covered by
+  `an_expanded_outdated_comment_shows_the_stored_context_against_the_code_now`,
+  `the_before_after_block_never_spawns_difftastic` and
+  `a_comment_whose_anchor_cannot_be_placed_says_so_and_shows_what_it_was_written_against`.
 - **§5 (the export)** — superseded by the CLI-loop amendment: the markdown is
   a one-way view, `fold_replies` became the one-release `rescue_replies`
-  migration, and nothing writes the export as a side effect.
-- **§7/§10 details** — `snapshots_dir` survives only as legacy cleanup;
-  `read_review`/`write_review` await §2.
+  migration, and nothing writes the export as a side effect. That release has
+  now been and gone: `rescue_replies` and `markdown::parse_replies` were
+  deleted 2026-08-20 with the hostile-input corpus that defended them.
+- **§7/§10 details** — closed 2026-08-20 with §2. `snapshots_dir` and
+  `comments_path` are gone; `remove_comment` no longer reaches for a legacy
+  snapshot, and a `.review/` from milestone 1 keeps whatever is in its
+  `snapshots/` directory untouched.

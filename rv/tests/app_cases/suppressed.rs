@@ -7,6 +7,7 @@ use rv::app::Mode;
 use rv::session;
 use rv_core::anchor;
 use rv_core::diff::DiffSource;
+use rv_core::diff::FallbackReason;
 use rv_core::diff::LineKind;
 use rv_core::model::Side;
 use std::cell::RefCell;
@@ -42,7 +43,13 @@ fn a_suppressed_fallback_diff_shows_the_lines_it_lets_you_navigate() {
             let app = &mut *app.borrow_mut();
             select_path(app, path);
             let diff = app.selected_diff().expect("a loaded diff");
-            assert_eq!(diff.source, DiffSource::Similar, "{diff:?}");
+            assert_eq!(
+                diff.source,
+                DiffSource::Similar {
+                    reason: FallbackReason::NotAttempted
+                },
+                "{diff:?}"
+            );
             assert!(
                 diff.suppressed,
                 "{path} is not a suppressed diff, so this proves nothing: {diff:?}"

@@ -162,6 +162,8 @@ impl App {
             // costs a trip through the sidebar.
             Command::NextFile => self.select_file(self.file_index.saturating_add(1))?,
             Command::PreviousFile => self.select_file(self.file_index.saturating_sub(1))?,
+            Command::NextHunk => self.next_hunk(),
+            Command::PreviousHunk => self.previous_hunk(),
             Command::NextSymbol => self.next_symbol()?,
             Command::PreviousSymbol => self.previous_symbol()?,
             Command::ScrollLeft => self.hscroll_focused(-HSCROLL_STEP),
@@ -172,6 +174,7 @@ impl App {
             Command::Resolve => self.resolve_comment()?,
             Command::Abandon => self.abandon_comment()?,
             Command::Export => self.export()?,
+            Command::OpenEditor => return Ok(self.begin_edit()),
             Command::Fold => self.toggle_collapse(),
             // Focus-free, like `[` and `]`.
             Command::SwitchTab => self.switch_tab()?,

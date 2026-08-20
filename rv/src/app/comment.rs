@@ -129,7 +129,7 @@ impl App {
                 .comments()
                 .context("could not re-read the saved comments")?,
         );
-        crate::stale::mark_outdated(&self.review, &mut comments);
+        self.drift = crate::stale::survey(&self.review, &mut comments);
         self.comments = comments;
         // The browser indexes this vector, so it is clamped where the vector is
         // written.

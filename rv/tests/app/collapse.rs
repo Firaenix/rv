@@ -5,6 +5,7 @@ use rv::app::Focus;
 use rv::layout::Split;
 use rv::tree::NodeKind;
 use rv_core::diff::DiffSource;
+use rv_core::diff::FallbackReason;
 
 use crate::support::*;
 
@@ -209,7 +210,13 @@ fn a_selection_draws_before_difftastic_has_run() {
     // The lines are there immediately, from the in-process engine.
     assert!(app.refining(), "nothing was asked of difftastic");
     let early = app.selected_diff().expect("a diff").clone();
-    assert_eq!(early.source, DiffSource::Similar);
+    assert_eq!(
+        early.source,
+        DiffSource::Similar {
+            reason: FallbackReason::NotAttempted
+        },
+        "the fast diff claims difftastic was consulted and found wanting"
+    );
     assert!(
         buffer_text(&frame_at(&app, 100, 24)).contains("fn a()"),
         "the pane waited for the structural diff"

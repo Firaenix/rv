@@ -19,14 +19,31 @@ use serde_json::json;
 
 use crate::NO_DESCRIPTION;
 
+/// The path `rv` keeps its own state under, checked against the working-copy
+/// tree so that a `.review/` committed before `Store::ensure_excluded` ran —
+/// or forced in since — is reported rather than silently turning every comment
+/// into a diff of the change under review.
+const REVIEW_DIR: &str = ".review";
+
+/// What `rv status` says when it finds one.
+const TRACKED_WARNING: &str = ".review/ is tracked by jj: \
+     every comment you write becomes part of the change under review. \
+     Remove it with `jj file untrack .review` — it is already excluded.";
+
 /// Reports the review as text, or as the JSON the `--json` flag asks for.
 ///
 /// Returns whether any comment is still open, for `--check`: the worker's poll
 /// and a CI gate are both exit-code questions, and neither should need `jq` to
-/// ask one.
+/// ask one. A tracked `.review/` is reported alongside but deliberately does
+/// not move that answer: `--check` gates CI on open comments, and a workspace
+/// hygiene problem is not one.
 pub fn status(review: &Review, json: bool) -> Result<bool> {
     let comments = read_comments(review)?;
     let counts = Counts::of(&comments);
+    let review_tracked = review
+        .repo
+        .tracks(REVIEW_DIR)
+        .context("could not tell whether .review/ is tracked")?;
     let session = &review.session;
 
     if json {
@@ -35,6 +52,7 @@ pub fn status(review: &Review, json: bool) -> Result<bool> {
             "base": session.base_commit,
             "head": session.head_commit,
             "degraded_base": markdown::degraded_base(session).is_some(),
+            "review_tracked": review_tracked,
             "changes": session
                 .changes
                 .iter()
@@ -74,6 +92,9 @@ pub fn status(review: &Review, json: bool) -> Result<bool> {
     // the difference between a branch review and a whole-history dump.
     if markdown::degraded_base(session).is_some() {
         println!("\nnote    {}", markdown::DEGRADED);
+    }
+    if review_tracked {
+        println!("\nwarning {TRACKED_WARNING}");
     }
 
     println!("\nchanges ({})", session.changes.len());

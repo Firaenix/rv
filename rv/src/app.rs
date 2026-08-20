@@ -26,12 +26,15 @@ mod anchor;
 mod bindings;
 mod changes;
 mod comment;
+mod comments;
 mod commits;
 mod delete;
 mod diffs;
+mod editor;
 mod enabled;
 mod export;
 mod fold;
+mod hunks;
 mod keys;
 mod measure;
 mod mode;
@@ -50,6 +53,8 @@ mod zoom;
 
 pub use alerts::Alert;
 pub use changes::ChangeInfo;
+pub use sidebar::BrowserRow;
+pub use sidebar::Suppression;
 
 pub use anchor::anchored_side;
 pub use anchor::comment_id;
@@ -98,6 +103,10 @@ pub struct App {
     review: Review,
     diffs: Vec<Option<FileDiff>>,
     comments: Vec<Comment>,
+    /// What each comment's anchor has done since it was written, by id —
+    /// surveyed alongside `comments` and refreshed with them, because every
+    /// entry costs a blob read and the box that shows it is drawn per frame.
+    drift: HashMap<String, crate::stale::Drift>,
     file_index: usize,
     /// Where the cursor sits in each file, as a **row of that file's plan** —
     /// parallel to `review.files`.
@@ -114,9 +123,17 @@ pub struct App {
     cursor_rows: Vec<usize>,
     focus: Focus,
     sidebar_tab: SidebarTab,
-    /// Which row of the comment browser the cursor is on: an index into
-    /// `comments`, kept in range by `clamp_browser` so that deleting the
-    /// comment it was on leaves the cursor on the list.
+    /// Which **row** of the comment browser the cursor is on.
+    ///
+    /// A row and not a comment: the browser draws a heading above each file's
+    /// comments, so the two numbers differ. **This is the state; the comment is
+    /// derived from it** by [`App::browsed_comment`] — the same ruling
+    /// `cursor_rows` records for the diff pane, and for the same reason, that
+    /// two cursors kept in step is the defect rather than the fix.
+    ///
+    /// Kept on the list, and off a heading, by `clamp_browser`, so that
+    /// deleting the comment it was on leaves it somewhere `d` still means
+    /// something.
     browser_index: usize,
     /// Which comment of the selected line's stack the cursor is on, meaningful
     /// only while the focus is [`Focus::Stack`].
@@ -267,6 +284,10 @@ pub struct App {
     /// enumerating a stack's changes is a cost to pay once rather than a
     /// decision to make.
     commits: commits::Commits,
+    /// What `v` resolved to open, waiting for [`run`] to leave the terminal and
+    /// run it. `None` at every other moment: [`App::take_edit`] is the only
+    /// reader and it takes.
+    pending_edit: Option<editor::Edit>,
 }
 
 impl App {
@@ -296,8 +317,9 @@ impl App {
                 .context("could not read the saved comments")?,
         );
         // Derived, never stored: a comment whose anchor no longer resolves is
-        // outdated for as long as that stays true and no longer.
-        crate::stale::mark_outdated(&review, &mut comments);
+        // outdated for as long as that stays true and no longer. One pass, its
+        // findings kept — see the `drift` field.
+        let drift = crate::stale::survey(&review, &mut comments);
         let cursor_rows = vec![0; review.files.len()];
         // A comment that is no longer open starts folded: still exactly where
         // the reviewer left it, without competing for the screen with the ones
@@ -319,6 +341,7 @@ impl App {
             comments,
             file_index: 0,
             cursor_rows,
+            drift,
             focus: Focus::Diff,
             sidebar_tab: SidebarTab::Files,
             browser_index: 0,
@@ -364,6 +387,7 @@ impl App {
             info_scroll: 0,
             sidebar_hidden: false,
             commits: commits::Commits::default(),
+            pending_edit: None,
         };
         for message in unreadable {
             app.raise(message);

@@ -6,6 +6,7 @@ use rv::app::Mode;
 use rv::app::anchored_side;
 use rv_core::anchor;
 use rv_core::diff::DiffSource;
+use rv_core::diff::FallbackReason;
 use rv_core::diff::LineKind;
 use rv_core::model::Side;
 use std::cell::RefCell;
@@ -27,7 +28,12 @@ fn the_fallback_diff_is_labelled_and_carries_context_lines() {
     let app = fixture.fallback_app();
     let diff = app.selected_diff().expect("a loaded diff");
     assert_eq!(diff.path, "ctx.rs");
-    assert_eq!(diff.source, DiffSource::Similar);
+    assert_eq!(
+        diff.source,
+        DiffSource::Similar {
+            reason: FallbackReason::NotAttempted
+        }
+    );
     assert!(!diff.suppressed);
 
     let kinds = |kind: LineKind| diff.lines.iter().filter(|line| line.kind == kind).count();

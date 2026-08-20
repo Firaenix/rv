@@ -40,9 +40,15 @@ pub enum Focus {
     Stack,
 }
 
+/// What the event loop does next with the key it just handed over.
+///
+/// `Edit` is the one that needs the terminal: the state machine has resolved
+/// what to open and cannot open it, because nothing in it may touch a screen.
+/// [`crate::app::run`] answers it and hands the reviewer back afterwards.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action {
     Continue,
+    Edit,
     Quit,
 }
 

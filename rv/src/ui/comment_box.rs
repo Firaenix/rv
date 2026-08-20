@@ -14,6 +14,8 @@ use ratatui::style::Modifier;
 use ratatui::style::Style;
 use ratatui::text::Line;
 use ratatui::text::Span;
+use rv_core::diff::LineKind;
+use rv_core::model::Confidence;
 use rv_core::store::Comment;
 use rv_core::store::CommentState;
 use rv_core::store::SettledBy;
@@ -23,20 +25,63 @@ use super::GUTTER;
 use super::text::clip;
 use super::text::clip_spans;
 use crate::app::App;
+use crate::gradient;
 use crate::rows::BodyKind;
+use crate::theme;
+
+/// Columns a before/after row spends on its sigil and the space after it.
+const SIGIL: usize = 2;
+
+/// What the before/after block's divider says: which half of it is which.
+const WHEN_WRITTEN: &str = "when this was written";
+const NOW: &str = "now";
 
 /// A box's top: its heading, then a rule out to the right-hand corner.
 pub(super) fn box_top(app: &App, comment: &Comment, width: usize) -> Line<'static> {
     let style = box_style(app, comment);
     let heading = format!("─ {} ", label(comment));
-    let rule = "─".repeat(box_width(width).saturating_sub(2 + heading.chars().count()));
-    clip_spans(
-        vec![Span::styled(
-            format!("{}╭{heading}{rule}╮", indent(width)),
-            style,
-        )],
-        width,
-    )
+    let tag = drift_tag(app.confidence(comment));
+    let tagged = tag.map_or(0, |(text, _)| text.chars().count());
+    let rule = "─".repeat(box_width(width).saturating_sub(2 + tagged + heading.chars().count()));
+    let mut spans = vec![Span::styled(format!("{}╭{heading}", indent(width)), style)];
+    if let Some((text, tag_style)) = tag {
+        spans.push(Span::styled(text, tag_style));
+    }
+    spans.push(Span::styled(format!("{rule}╮"), style));
+    clip_spans(spans, width)
+}
+
+/// How confidently the comment's anchor was placed, where that is worth a
+/// reviewer's attention — and nothing at all where it is not.
+///
+/// [`Confidence::Exact`] is the common case, so naming it would put a word on
+/// every box in the review to report that nothing had happened. Only the two
+/// tiers that mean the comment may have drifted are named.
+///
+/// `Weak` is the one that matters, and it is drawn in [`theme::ALERT`] — the
+/// colour this interface already spends on a stale anchor. The commented
+/// *content* is gone and only the line number stands, so the box points at line
+/// 48 with nothing guaranteeing line 48 is what the remark was about. Acting on
+/// that as though it were an exact hit is the failure this tag exists to
+/// prevent, and a reviewer must not have to compare two boxes to see it.
+///
+/// `Moved` found its content, just somewhere else; worth saying, not worth
+/// shouting, so it stays grey.
+///
+/// [`Confidence::Outdated`] is unnamed here because the heading already says
+/// `outdated`, and the before/after block below it is the long form of the same
+/// fact.
+fn drift_tag(confidence: Confidence) -> Option<(&'static str, Style)> {
+    match confidence {
+        Confidence::Moved => Some(("· moved ", Style::default().fg(Color::Gray))),
+        Confidence::Weak => Some((
+            "· weak anchor ",
+            Style::default()
+                .fg(theme::ALERT)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Confidence::Exact | Confidence::Outdated => None,
+    }
 }
 
 /// One row of a box's text, padded out to its right-hand border.
@@ -69,6 +114,70 @@ pub(super) fn box_bottom(app: &App, comment: &Comment, width: usize) -> Line<'st
         vec![Span::styled(format!("{}╰{rule}╯", indent(width)), style)],
         width,
     )
+}
+
+/// The before/after block's divider: a `├`/`┤` rule naming its two halves, so
+/// the lines under it read as *then* against *now* rather than as an ordinary
+/// diff that happens to be indoors.
+pub(super) fn box_rule(app: &App, comment: &Comment, width: usize) -> Line<'static> {
+    let style = box_style(app, comment);
+    let heading = format!("─ {WHEN_WRITTEN} ──── {NOW} ");
+    let rule = "─".repeat(box_width(width).saturating_sub(2 + heading.chars().count()));
+    clip_spans(
+        vec![Span::styled(
+            format!("{}├{heading}{rule}┤", indent(width)),
+            style,
+        )],
+        width,
+    )
+}
+
+/// One line of the before/after block: the sigil for its side, then the text,
+/// inside the box's own border.
+///
+/// The sigil rather than a wash, which is what the diff pane uses: a wash is a
+/// background across the whole row, and a row that is four columns of border
+/// around a band of colour reads as a second pane rather than as part of a
+/// comment. The hue is [`gradient`]'s own, so this block and the pane above it
+/// cannot end up with two greens.
+pub(super) fn box_diff(
+    app: &App,
+    comment: &Comment,
+    text: &str,
+    kind: LineKind,
+    width: usize,
+) -> Line<'static> {
+    let style = box_style(app, comment);
+    let room = box_width(width).saturating_sub(BOX_PADDING + SIGIL);
+    let text = clip(text, room);
+    let pad = room.saturating_sub(text.chars().count());
+    clip_spans(
+        vec![
+            Span::styled(format!("{}│ ", indent(width)), style),
+            Span::styled(format!("{} {text}", sigil(kind)), diff_style(kind)),
+            Span::styled(format!("{} │", " ".repeat(pad)), style),
+        ],
+        width,
+    )
+}
+
+/// What marks which side of the before/after a line came from.
+fn sigil(kind: LineKind) -> char {
+    match kind {
+        LineKind::Added => '+',
+        LineKind::Removed => '-',
+        LineKind::Context => ' ',
+    }
+}
+
+/// Green for what is there now, red for what the comment was written against,
+/// and the terminal's own foreground for the lines both versions share.
+fn diff_style(kind: LineKind) -> Style {
+    match kind {
+        LineKind::Added => Style::default().fg(super::text::colour(gradient::ADDED)),
+        LineKind::Removed => Style::default().fg(super::text::colour(gradient::REMOVED)),
+        LineKind::Context => Style::default().add_modifier(Modifier::DIM),
+    }
 }
 
 /// A folded box: one row, its label and the first line of its body.
@@ -144,15 +253,20 @@ pub(super) fn comment_style(comment: &Comment) -> Style {
 }
 
 /// The reviewer's own words at full contrast, an answer folded in from the
-/// export dimmed.
+/// export dimmed, and the box's own remark about itself dimmed and italic.
 ///
 /// Dim rather than a colour, for the same reason focus is not a colour: blue
 /// means *comment* here and a second hue would be a second meaning for it. What
 /// a reply needs is to be *quieter* than the remark it answers.
+///
+/// A note is quieter still *and* slanted, because it is the only text in a box
+/// nobody wrote: "the anchor could not be located" is the tool speaking, and a
+/// reviewer must not read it as part of the comment.
 fn body_style(kind: BodyKind) -> Style {
     match kind {
         BodyKind::Body => Style::default(),
         BodyKind::Reply => Style::default().add_modifier(Modifier::DIM),
+        BodyKind::Note => Style::default().add_modifier(Modifier::DIM | Modifier::ITALIC),
     }
 }
 

@@ -4,6 +4,7 @@ use crossterm::event::KeyCode;
 use ratatui::style::Color;
 use ratatui::style::Modifier;
 use rstest::rstest;
+use rv_core::model::Confidence;
 use rv_core::store::CommentState;
 
 use crate::support::*;
@@ -52,6 +53,107 @@ fn an_outdated_comment_is_grey_and_folded() {
     assert!(
         text.contains("outdated"),
         "the row does not say why it is grey:\n{text}"
+    );
+
+    drop(app);
+}
+
+/// A weak anchor is visible on the box itself.
+///
+/// The `Weak` tier means the commented *content* is gone and only its line
+/// number survived — the box points at line 2 with nothing guaranteeing line 2
+/// is what the remark was about. The comment still reads `open`, so nothing else
+/// on the box distinguishes it from one whose code never moved, and a reviewer
+/// acting on it as though it were exact is the failure the tag exists to
+/// prevent. Asserted against an `Exact` box from the same fixture in the same
+/// assertion, because "it says something" is only a claim if the control says
+/// nothing.
+#[test]
+fn a_weak_anchor_is_marked_on_the_box_and_an_exact_one_is_not() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    write_comment(&mut app, "about this exact line");
+
+    let exact = buffer_text(&frame_at(&workspace.app(), 100, 24));
+    assert!(
+        !exact.contains("weak anchor"),
+        "a comment on live code is marked as drifted:\n{exact}"
+    );
+
+    // Rewritten in place: no content hash matches anywhere, but the file still
+    // has a line at that number, so the cascade lands on its third tier.
+    workspace.write("a.rs", "fn completely_different() {\n    let y = 9;\n}\n");
+    workspace.jj(&["describe", "-m", "rewrite the file"]);
+    workspace.jj(&["new"]);
+
+    let reopened = workspace.app();
+    let comment = &reopened.comments()[0];
+    assert_eq!(
+        reopened.confidence(comment),
+        Confidence::Weak,
+        "the fixture no longer produces a weak anchor: {comment:?}"
+    );
+    assert_eq!(
+        comment.state,
+        CommentState::Open,
+        "a weak anchor is a placed anchor, so the state cannot be what tells them apart"
+    );
+
+    let buffer = frame_at(&reopened, 100, 24);
+    let text = buffer_text(&buffer);
+    assert!(
+        text.contains("weak anchor"),
+        "a weak anchor renders exactly like an exact one:\n{text}"
+    );
+
+    // In the alert colour and bold, not merely present: this is the one tier a
+    // reviewer must not scan past.
+    let row = u16::try_from(row_holding(&buffer, "weak anchor")).expect("a small row");
+    let style = style_of_text(&buffer, row, "weak anchor");
+    assert_eq!(
+        style.fg,
+        Some(Color::Yellow),
+        "the weak-anchor mark is not drawn as an alert:\n{text}"
+    );
+    assert!(
+        style.add_modifier.contains(Modifier::BOLD),
+        "the weak-anchor mark is not emphasised:\n{text}"
+    );
+
+    drop(app);
+}
+
+/// A moved anchor says so too, and quietly: the content was found, just
+/// somewhere else, which is worth reporting and not worth an alert.
+#[test]
+fn a_moved_anchor_is_marked_without_the_alert_colour() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    write_comment(&mut app, "about this exact line");
+
+    // The commented line survives verbatim, pushed down by lines above it.
+    workspace.write("a.rs", "// one\n// two\nfn a() {\n    let x = 1;\n}\n");
+    workspace.jj(&["describe", "-m", "push the line down"]);
+    workspace.jj(&["new"]);
+
+    let reopened = workspace.app();
+    assert_eq!(
+        reopened.confidence(&reopened.comments()[0]),
+        Confidence::Moved,
+        "the fixture no longer produces a moved anchor"
+    );
+
+    let buffer = frame_at(&reopened, 100, 24);
+    let text = buffer_text(&buffer);
+    assert!(
+        text.contains("moved"),
+        "a moved anchor is silent about having moved:\n{text}"
+    );
+    let row = u16::try_from(row_holding(&buffer, "· moved")).expect("a small row");
+    assert_ne!(
+        style_of_text(&buffer, row, "· moved").fg,
+        Some(Color::Yellow),
+        "a moved anchor shouts as loudly as a weak one:\n{text}"
     );
 
     drop(app);
