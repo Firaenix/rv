@@ -10,7 +10,11 @@ homepage.workspace = true
 authors.workspace = true
 readme = "../README.md"
 keywords = ["jujutsu", "jj", "code-review", "tui", "diff"]
+publish = false
 categories = ["command-line-utilities", "development-tools"]
+
+[package.metadata.dist]
+dist = true
 
 # Both a library and a binary: the library is where `session`, `app` and `ui`
 # live so they can be unit tested, and the named binary target is what gives
