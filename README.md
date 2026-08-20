@@ -209,6 +209,8 @@ everywhere.
 | `↑` (`k`) | The previous one |
 | `←` (`h`) | Focus the pane to the left: the diff hands over to the sidebar, a comment stack to the diff |
 | `→` (`l`) | Focus the diff from the sidebar |
+| `J` | Next hunk: the first line of the next run of changes, skipping the context between them |
+| `K` | The previous one |
 | `n` | Jump to the next symbol in scope — every changed file, or one change's files from the Commits tab |
 | `N` | The previous one |
 | `/` | Find a symbol by name: type, `Enter` jumps to the best match, `Esc` cancels |
@@ -234,6 +236,7 @@ everywhere.
 | `e` | Export the review to `.review/REVIEW-FEEDBACK.md`, same as `rv render` |
 | `t` | Switch the file list between a flat list and a tree |
 | `o` | Cycle the file list's order: by path, by additions, by deletions |
+| `v` | Open the selected file at the cursor's line in `$EDITOR`, and come back to the review when it exits. Unset `$EDITOR` is reported in the status line rather than guessed at |
 | `g` | Tint the sidebar names by their change — each name runs green through a light seam to red, split where its additions end — or turn the tint off |
 | `#` | Show or hide the sidebar's `+n -n` counts |
 | `<` | Narrow the sidebar |
@@ -247,6 +250,12 @@ box is something the cursor walks through rather than over — see [Inline
 comments](#inline-comments). `<`, `>` and the fold state are preferences of the
 running session: nothing about how you arranged your screen is written to
 `.review/`.
+
+`J` and `K` walk *hunks* — a run of added or removed lines with unchanged
+context either side — so a long file with three edits in it is three presses
+rather than a scroll. Neither wraps: at the last hunk `J` says so in the status
+line and leaves the cursor where it is, because a jump back to the top would
+look exactly like a jump that did nothing.
 
 Which comment `d` and `s` act on follows the cursor: the box you are on inside a
 stack, the comment the browser is showing on the **Comments** tab, and otherwise

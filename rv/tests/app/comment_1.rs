@@ -1,7 +1,5 @@
 //! Saving a comment.
 
-use std::fs;
-
 use crossterm::event::KeyCode;
 use rv::app::Mode;
 use rv_core::anchor;
@@ -36,7 +34,7 @@ fn build_writes_session_toml() {
     let workspace = Fixture::new();
     let _ = workspace.app();
 
-    let session = workspace.store().read_session().expect("read session.toml");
+    let session = workspace.store().read_review().expect("read session.toml");
     assert_eq!(session.revset, "trunk()..@");
     assert!(
         session
@@ -247,46 +245,4 @@ fn escape_abandons() {
 
     let comments = workspace.store().comments().expect("read comments.json");
     assert!(comments.is_empty(), "{comments:?}");
-}
-
-#[test]
-fn a_reply_left_in_an_old_export_is_rescued_on_load() {
-    let workspace = Fixture::new();
-    let mut app = workspace.app();
-
-    write_comment(&mut app, "first");
-    app.on_key(KeyCode::Char('e')).expect("export");
-
-    // What a pre-amendment agent did to the document: append a reply under the
-    // entry it just addressed, leaving every marker alone. The CLI is the
-    // reply channel now, so this is the migration case (CLI-loop spec §5).
-    let replied = insert_reply(&workspace.markdown(), "fixed in the next change");
-    fs::write(
-        workspace.root().join(".review/REVIEW-FEEDBACK.md"),
-        &replied,
-    )
-    .expect("write the replied-to markdown");
-
-    // The next load rescues it, once: opening the review folds the reply into
-    // the store — and only into a comment that has no stored reply.
-    drop(app);
-    let app = workspace.app();
-    let comments = workspace.store().comments().expect("read comments.json");
-    let first = comments
-        .iter()
-        .find(|comment| comment.body == "first")
-        .expect("the first comment is still stored");
-    assert_eq!(first.reply.as_deref(), Some("fixed in the next change"));
-    // A reply is not a state transition.
-    assert_eq!(first.state, CommentState::Open);
-    // The export itself is not modified by the rescue: it goes stale
-    // harmlessly until the next explicit render.
-    assert!(
-        workspace
-            .markdown()
-            .contains("**Reply:** fixed in the next change"),
-        "the rescue rewrote the export it was reading:\n{}",
-        workspace.markdown()
-    );
-    drop(app);
 }

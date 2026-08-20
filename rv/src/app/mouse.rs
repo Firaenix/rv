@@ -122,6 +122,10 @@ impl App {
         };
         self.focus = Focus::Sidebar;
         match self.sidebar_tab {
+            // The cursor is a row, so this needs no translation: the reviewer
+            // gets the row they pointed at, heading rows included, and what a
+            // key does next is decided from that row exactly as it is for the
+            // keyboard's own cursor.
             SidebarTab::Comments => self.browser_index = index,
             SidebarTab::Files | SidebarTab::Commits => {
                 self.sidebar_row = index;
@@ -227,6 +231,8 @@ fn comment_of_row(row: &Row<'_>) -> Option<String> {
         Row::Diff { .. } => None,
         Row::BoxTop { comment, .. }
         | Row::BoxBody { comment, .. }
+        | Row::BoxRule { comment, .. }
+        | Row::BoxDiff { comment, .. }
         | Row::BoxBottom { comment, .. }
         | Row::BoxCollapsed { comment, .. } => Some(comment.id.clone()),
     }

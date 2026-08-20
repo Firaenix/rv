@@ -118,10 +118,47 @@ impl App {
                 // focus change, a paste — is not something this reviewer binds.
                 _ => Action::Continue,
             };
-            if action == Action::Quit {
-                return Ok(());
+            match action {
+                Action::Quit => return Ok(()),
+                Action::Edit => self.run_editor(terminal)?,
+                Action::Continue => {}
             }
         }
+    }
+
+    /// Hands the terminal to `$EDITOR`, waits for it, and takes it back.
+    ///
+    /// The whole of the handover, in the one place that owns the screen. Raw
+    /// mode and the alternate screen go **before** the child starts, because an
+    /// editor drawing into rv's alternate screen would paint over the review
+    /// and leave the shell wherever it exited, and mouse reporting goes with
+    /// them: a child that does not consume the reports would have them printed
+    /// into its own buffer as text.
+    ///
+    /// The restore is unconditional and comes before the outcome is read, so an
+    /// editor that failed to start, exited non-zero or was killed by a signal
+    /// all hand the same working terminal back.
+    ///
+    /// The screen is taken back by **replacing** the terminal rather than by
+    /// clearing the old one. ratatui draws by diffing against the buffer it
+    /// last painted, and the child wrote over the screen without telling it —
+    /// so the old terminal's idea of what is on screen has to go. A fresh one
+    /// starts with an empty previous buffer and repaints every cell on its
+    /// first `draw`, which is the same outcome `clear` would give without
+    /// asking the terminal where its cursor is: that query blocks on a reply
+    /// some terminals do not send promptly after a child has had the screen,
+    /// and a review that dies on the way back from `$EDITOR` is exactly the
+    /// failure this whole path exists to avoid.
+    fn run_editor(&mut self, terminal: &mut DefaultTerminal) -> Result<()> {
+        release_mouse();
+        ratatui::restore();
+
+        self.run_pending_edit();
+
+        // Failing to get the terminal back is the one error here worth
+        // returning: everything after it would draw into a shell.
+        *terminal = ratatui::try_init().context("could not take the terminal back")?;
+        capture_mouse()
     }
 }
 

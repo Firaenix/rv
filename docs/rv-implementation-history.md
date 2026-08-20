@@ -370,12 +370,132 @@ shared working copy, the same trap this document already records. Final state:
 
 ---
 
+## Closing the appendices — everything the specs still called open
+
+v1.0.0 shipped on 2026-08-19 with five specs each ending in an
+implementation-status appendix, and each appendix naming what had not been
+built. This stretch closed all of them, six agents in parallel over one working
+copy, and the release pipeline that v1.0.0 had quietly failed to complete.
+
+**The release had not actually released.** The tag, the binaries and the GitHub
+release were all fine; the Homebrew job had failed and nobody had looked.
+`Firaenix/homebrew-tap` was an empty repository — no branches at all — so
+`actions/checkout` died on `couldn't find remote ref refs/heads/main`. The
+formula had been built correctly and attached to the release as `rv.rb`; it had
+simply never been pushed anywhere a `brew install` could find it. Seeding the
+tap and backfilling that same formula was the whole fix. The second failure was
+the same shape: `RELEASE_PLZ_TOKEN` did not exist, and release-plz reports a
+missing secret as `environment variable GITHUB_TOKEN is empty`, which reads like
+a bug in the action rather than an unset secret. Both jobs now fail with a
+sentence naming the secret. **A green CI badge on the repository's default
+branch says nothing about whether the release job that runs only on a tag
+succeeded.**
+
+Third, found only by installing the shipped artefact: the nix package wraps
+difftastic onto rv's PATH and the Homebrew formula did not, so `brew install`
+shipped a binary that silently degraded to the in-process engine. One
+`stage = ["run"]` dependency. The lesson is the general one — the flake and the
+formula are two declarations of the same runtime, and the second was never
+checked against the first.
+
+### What the agents built
+
+**The anchor's confidence reached the screen.** `Weak` means the content is gone
+and only the line number is still standing; acting on it as though it were an
+exact hit is precisely the mistake the tier exists to name, and until now the
+TUI showed no difference. Only the drifting tiers are labelled — `Exact` is the
+common case, and a word on every box to report that nothing happened is noise.
+The cascade was not duplicated: `stale::survey` runs the existing one once per
+load and `mark_outdated` became a wrapper over it, because a second cascade
+would be a second answer to one question.
+
+**The outdated before/after block.** Expanding an outdated comment now diffs the
+stored `anchor.context` against whatever stands there now, in-process only — the
+paint path must never pay difftastic's ~26 ms spawn. The test that proves it
+does so by contrast: it first asserts the *pane's* diff is genuinely difftastic
+in the same process on the same PATH, so it cannot pass vacuously on a machine
+where difft is missing.
+
+**`difft --version`, and a fallback that says why.** The JSON-parse fallback
+covered malformed output but not a silently incompatible schema. The probe runs
+once per process and the minimum was pinned by reading difftastic's own
+`display/json.rs` across tags 0.50–0.70 rather than by picking a tested version:
+0.51.0 introduced `--display json`, and the field set rv reads is byte-stable
+from there to 0.70. `DiffSource::Similar` gained a reason, so "rv was told not to
+run difft" and "difft is too old" stopped rendering as the same word.
+
+**Comments moved into `session.toml`.** One file, one atomic rename, and the
+cross-file ordering rule that a comment and its scope could disagree is simply
+gone. The migration deviates from the storage spec deliberately: §6 said leave
+`comments.json` alone, and it is deleted instead, because a legacy file never
+removed is re-read on every open forever and a stale copy of a since-resolved
+comment is a live hazard rather than an inert artefact. The deviation is written
+into the appendix rather than made silently.
+
+**`parse_replies` and its corpus are gone**, exactly one release after the
+CLI-loop amendment said they would be.
+
+### Two rulings that came from measuring instead of arguing
+
+The "N files with no semantic change" note had a real tension behind it:
+suppression is known only from a computed `FileDiff`, and the lazy-blob rule
+exists on purpose. Rather than pick a side, the agent measured — difftastic is a
+flat ~26.7 ms per file (n=40, median 26.7, total 1069 ms), so an eager pass would
+cost a 40-file review a full second of dead time before the first frame, every
+run, to print one sentence. So the note states what it knows and carries its own
+denominator until it knows everything: `2/7 · no semantic change` while partial,
+`2 · no semantic change` once settled. The ratio leads, so a narrow border clips
+a partial answer into a shorter partial answer and never into the complete one.
+
+Hunk boundaries went the same way. difftastic 0.70 emits **no context lines at
+all**, so three edits a dozen lines apart arrive as one unbroken run of changed
+lines: a rule reading only `LineKind` would call that a single hunk and leave `J`
+with nowhere to go in exactly the file it exists for. Boundaries are derived from
+line-number contiguity instead, which is engine-independent and survives a diff
+read back out of the store.
+
+### The bug no test would have found
+
+The editor key (`v`, the letter `less`, `ranger`, `lf` and `mutt` all use for it)
+first restored the screen with `terminal.clear()`. Every test passed. The real
+binary died with *"the cursor position could not be read within a normal
+duration"* — ratatui's clear issues a cursor-position query, and a terminal that
+has just handed the screen back from a child does not always answer it promptly.
+Replacing the terminal outright repaints every cell with no query. It was found
+by running the program in a pty, which is the only thing that could have found
+it, and it is the argument for smoke-testing the binary rather than the suite.
+
+### What running six agents over one working copy cost
+
+Three collisions, all caught by agents talking to each other rather than by the
+suite. A shared `rv/tests/cli.rs` was split while another agent had nine pending
+edits to it — resolved by doing the split as a *pure move* first, byte-identical
+bodies, so the concurrent edits landed as small conflicts in named modules
+instead of a scramble across a rewritten 981-line file. Two agents nearly
+declared the same "no semantic change" sentence twice, which is the
+second-detection-table mistake this document already records, wearing yet another
+hat. And one agent misattributed 30 failing tests to another's migration; the
+failures were a single `assert_eq!(browser_index(), 0)` in a shared rewind
+helper, and **every one of them named line 99 of the same file**, which is what
+one shared cause looks like when it is mistaken for a wide blast radius.
+
+That last one is worth keeping. Adding heading rows to the comment browser broke
+every test that had asserted a literal browser index as a proxy for "the Nth
+comment". None of those assertions were weakened to make them pass; each was
+rewritten to state the invariant its own name had always claimed — walk to the
+row that browses this comment id, rather than trusting that row *n* is comment
+*n*. A test that asserts a position which happens to be right is the weaker test
+even while it is green.
+
+---
+
 ## In progress
 
-**Three source files remain over the 400-line rule**: `rv-core`'s markdown, diff
-and vcs modules, none of them touched since the rule was written. Everything else
-is under it — every file in the `rv` crate, and `rv-core`'s highlight and store —
-split as it was touched, which is the ruling this session was given.
+**Every source file is now under the 400-line rule.** The three that had been
+left — `rv-core`'s markdown, diff and vcs modules — were split on 2026-08-20 as
+the v1.1 work touched them: `markdown.rs` by deleting its parse half outright,
+`diff.rs` into a six-module directory, `vcs.rs` into `vcs.rs` plus `vcs/`. What
+remains over the line is test files, which are a separate debt.
 
 One thing that split found rather than fixed: a `language_of` had been written
 twice, once as a free function for the symbol index and once as a method for the
@@ -451,7 +571,7 @@ every query word against name-then-file (`store write` finds
 `write_markdown` in `store.rs`) and shows each match's kind; the bar's
 position segment carries `path:line`, plus the enclosing symbol whenever the
 index is already warm. Every spec gained a dated implementation-status
-appendix naming what was superseded by later rulings and what remains open:
-single-file storage consolidation, the outdated before/after block, browser
-grouping by file, file-scoped comments, hunk navigation, an editor key, the
-difft version probe, the tracked-`.review/` warning.
+appendix naming what was superseded by later rulings and what remains open.
+Every item on that list was closed on 2026-08-20 except one: **file-scoped
+comments** (§9 `Scope::File`, and with them commenting on binary files) is
+still unbuilt and still the only thing the five appendices call open.

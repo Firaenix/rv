@@ -139,3 +139,50 @@ fn binary_files_are_flagged_not_decoded() {
         Some(vec![0, 159, 146, 150])
     );
 }
+
+/// `.review/` is a *directory*, and a tree lookup for one comes back as a
+/// `Tree` entry rather than a `File` — the check that answers "is this
+/// tracked?" must not filter to files the way `read_blob` does, or a committed
+/// `.review/` would report clean forever.
+#[test]
+fn tracks_sees_a_committed_directory_and_not_an_absent_one() {
+    let workspace = Fixture::new();
+    workspace.write(".review/comments.json", "[]\n");
+    workspace.write("a.rs", "fn a() {}\n");
+    workspace.commit("commit the review notes by mistake");
+
+    let repo = Repository::open(workspace.root()).expect("open workspace");
+
+    assert!(
+        repo.tracks(".review").expect("look up .review"),
+        "the directory itself is tracked"
+    );
+    assert!(
+        repo.tracks(".review/comments.json")
+            .expect("look up the comments file"),
+        "so is the file under it"
+    );
+    assert!(
+        !repo.tracks(".notes").expect("look up an absent path"),
+        "a path no commit carries is untracked"
+    );
+}
+
+#[test]
+fn tracks_reports_an_excluded_directory_as_untracked() {
+    let workspace = Fixture::new();
+    workspace.write("a.rs", "fn a() {}\n");
+    workspace.commit("first change");
+    // Written after the commit and excluded the way `Store::ensure_excluded`
+    // does it, so jj's next snapshot leaves it out of the working-copy commit.
+    fs::write(workspace.root().join(".git/info/exclude"), "/.review/\n")
+        .expect("write the exclude file");
+    workspace.write(".review/comments.json", "[]\n");
+    workspace.jj(&["status"]);
+
+    let repo = Repository::open(workspace.root()).expect("open workspace");
+    assert!(
+        !repo.tracks(".review").expect("look up .review"),
+        "an excluded directory never reaches the tree"
+    );
+}

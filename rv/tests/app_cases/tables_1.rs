@@ -27,12 +27,15 @@ use crate::support::*;
 /// `BINDINGS` would fail one of the `unbound_*` rows here; a row in `BINDINGS`
 /// that reached nothing would fail its own row.
 ///
-/// README's table carries one row more than this one: `Ctrl+C`, which
-/// `on_key_event` answers before the mode is dispatched at all and which the
-/// page lists beside the rest because a reviewer looking for the way out does
-/// not care which function answers them. It is pinned in `rv/tests/app.rs`
+/// README's table carries two rows more than this one. `Ctrl+C` is answered by
+/// `on_key_event` before the mode is dispatched at all, and the page lists it
+/// beside the rest because a reviewer looking for the way out does not care
+/// which function answers them; it is pinned in `rv/tests/app.rs`
 /// (`ctrl_c_quits_instead_of_opening_a_comment`), where a `KeyEvent` with
-/// modifiers can be built; every row here is a bare `KeyCode`.
+/// modifiers can be built, and every row here is a bare `KeyCode`. `v` spawns a
+/// process and reads `$EDITOR`, which is a fact about this binary's
+/// environment rather than about a key: it is pinned in
+/// `rv/tests/app/editor.rs`, which re-execs itself to set one safely.
 ///
 /// That README table is itself held to this key set by
 /// `rv/tests/app.rs::the_readme_documents_every_browse_binding`, in both
@@ -86,10 +89,16 @@ use crate::support::*;
 // says anything in the bar. What each of them moved is asserted in the body.
 #[case::list_or_tree(KeyCode::Char('t'), Action::Continue, Mode::Browse, Focus::Diff, (0, 0), None)]
 #[case::order_the_files(KeyCode::Char('o'), Action::Continue, Mode::Browse, Focus::Diff, (0, 0), None)]
+// `J`/`K` walk hunks. `alpha.rs` carries two — the inserted header, then the
+// rewritten line below it — so `J` from the top has exactly one to reach and
+// `K` from the top has none, which is where the no-wrap ruling is visible: the
+// refusal speaks rather than jumping to the far end.
+#[case::next_hunk(KeyCode::Char('J'), Action::Continue, Mode::Browse, Focus::Diff, (0, 1), None)]
+#[case::previous_hunk_at_the_first(KeyCode::Char('K'), Action::Continue, Mode::Browse, Focus::Diff, (0, 0), Some("the first hunk in this file"))]
 #[case::open_the_help(KeyCode::Char('?'), Action::Continue, Mode::Browse, Focus::Diff, (0, 0), None)]
 // Not in the table, and therefore inert.
 #[case::unbound_letter(KeyCode::Char('x'), Action::Continue, Mode::Browse, Focus::Diff, (0, 0), None)]
-#[case::unbound_uppercase(KeyCode::Char('J'), Action::Continue, Mode::Browse, Focus::Diff, (0, 0), None)]
+// `J` and `K` used to be inert and are now the hunk keys, above.
 #[case::unbound_backspace(KeyCode::Backspace, Action::Continue, Mode::Browse, Focus::Diff, (0, 0), None)]
 #[case::unbound_backtab(KeyCode::BackTab, Action::Continue, Mode::Browse, Focus::Diff, (0, 0), None)]
 #[case::unbound_function(KeyCode::F(1), Action::Continue, Mode::Browse, Focus::Diff, (0, 0), None)]

@@ -1,6 +1,6 @@
 # rv — jj-native branch reviewer
 
-**Status:** design approved, not yet implemented
+**Status:** shipped — see the implementation-status appendix at the end
 **Date:** 2026-08-17
 
 ## 1. Purpose
@@ -161,14 +161,20 @@ diff, and a comment records which view and change it came from.
 Blobs are read in-process from jj-lib merged trees, then written to a temp dir
 because difft takes file paths, not stdin. Per file pair:
 
+0. Once per process, run `difft --version`. Below **0.51.0** — the release that
+   introduced `--display json`, and the oldest whose field set the parser reads
+   — or with no version this crate can parse, or with no `difft` at all,
+   difftastic is refused for every file in the run and step 3 is taken directly.
 1. Run `DFT_UNSTABLE=yes difft --display json <old> <new>`.
 2. On success, use `aligned_lines` for line pairing and `chunks[].changes[]` for
    intra-line highlight ranges. `status == "unchanged"` marks the file
    **suppressed** — reindentation and pure moves are not shown as diffs; they are
    reported collectively as "N files with no semantic change".
-3. On non-zero exit, unparseable JSON, or a `difft --version` outside the tested
-   range, fall back to a `similar` unified diff and label the file `fallback` in
-   the UI. `RV_NO_DIFFT=1` forces this path.
+3. On non-zero exit, unparseable JSON, or a refusal from step 0, fall back to a
+   `similar` unified diff and label the file `fallback` in the UI. The label
+   carries the reason, so a difftastic that is present but unreadable is never
+   shown as the same thing as one rv was told not to run: `RV_NO_DIFFT=1`
+   forces the bare `fallback`, everything else names its cause.
 4. Binary files produce a single "binary changed" block. They are not commentable
    by line; a file-scoped comment is still allowed.
 
@@ -427,7 +433,7 @@ are built through jj-lib rather than by shelling out, which keeps the suite fast
 | jj-cli defaults such as `trunk()` are absent from jj-lib | `rv` ships its own alias defaults, layered under user and repo config |
 | difft JSON is explicitly unstable | Version check at startup, schema-tolerant parse, `similar` fallback always present, `RV_NO_DIFFT=1` escape hatch |
 | Anchor cascade silently mis-resolves | Confidence surfaced in UI and markdown; snapshots always retained; fixture suite covers each rewrite kind |
-| `.review/` accidentally committed or left unexcluded | Exclude written on first run and verified every run; `rv status` warns if tracked |
+| `.review/` accidentally committed or left unexcluded | Exclude written on first run and verified every run; a `.review/` already in the working-copy commit is past saving by an exclude, so `rv status` reports it — `review_tracked` in `--json`, a `warning` line in the text — and names `jj file untrack .review` |
 | tree-sitter grammar breadth becomes a maintenance tax | Degradation is specified and labelled; grammars are additive one-liners |
 | Scope creep into a forge client | Non-goals are explicit; no network dependency is ever added |
 
@@ -463,8 +469,48 @@ Where the code deliberately went another way, the later ruling wins:
   `Tab`.
 - **§11 `a` accept / `r` reopen** — superseded by storage spec §3: `r` is
   resolve/reopen, `a` abandon/reopen, each recording who.
-- **§11 `o` open in `$EDITOR`** — `o` was reassigned to file-list ordering
-  (viewport §7); an editor key is unassigned, **open**.
+- **§11 `o` open in `$EDITOR`** — shipped 2026-08-20 as **`v`**. `o` had been
+  reassigned to file-list ordering (viewport §7), so the spec's key was gone
+  and one had to be chosen. `v` is the key `less`, `ranger`, `lf`, `nnn` and
+  `mutt` all bind to "open what I am looking at in `$EDITOR`", which is the
+  same question a reviewer is asking here, and it was the only letter of that
+  convention still free: `e` is export, `c` comment, `d` delete, `i` change
+  details. It opens the **selected file at the cursor's line**, passing `+N`
+  before the path — the convention `vi`, `emacs`, `nano` and `kak` share and
+  the one `git` itself passes. `$EDITOR` is whitespace-split into a program
+  and its arguments rather than handed to a shell, so `EDITOR="code -w"` works
+  and a file name with a space in it is not a command injection. An unset
+  `$EDITOR` is **named in the status line, never guessed at**: a default of
+  `vi` would strand a reviewer who has never used it in a modal editor they
+  cannot leave. It sits in its own `Edit` group in the `?` popup, which is
+  where a fifth heading came from.
+
+  The terminal handover is `Action::Edit`: the state machine resolves the edit
+  and refuses to touch a screen, and `app::run` leaves raw mode, the alternate
+  screen and mouse reporting, runs the child in the foreground, then
+  unconditionally re-enters and clears — so a spawn failure, a non-zero exit
+  and a killed editor all hand back the same working terminal. A failure is an
+  alert, a clean exit a status.
+- **§11 `J`/`K` hunk** — shipped 2026-08-20. **Hunk boundaries are derived,
+  not carried.** `difftastic::parse` flattens `chunks[]` into a flat
+  `Vec<DiffLine>` — it has to, since one entry can appear in two chunks and
+  the chunks arrive out of reading order — and `similar` is flat to begin
+  with, so difftastic's own chunking is gone by the time the TUI sees a
+  `FileDiff` and cannot be recovered. `app::hunks` derives it instead: a hunk
+  is a run of changed lines, continuing while they stay adjacent *in the file*
+  by whichever side numbers both of them. Line kinds alone would not do,
+  because difftastic emits no context at all — three edits a dozen lines apart
+  arrive as one unbroken run of changed lines, exactly the file `J` is for.
+  The rule is engine-independent and works on a diff read back out of the
+  store, which chasing chunk indices never could.
+
+  Both keys write through `navigate::set_cursor_row`, the one place the row
+  cursor is written and clamped, so comment boxes, scrolling and the bar stay
+  in step. Neither wraps, per the ruling `n`/`N` already follow: at the last
+  hunk `J` says "the last hunk in this file" and stays put, since a jump to
+  the top and a jump that failed look identical. A file with no changed lines
+  — a pure rename — says "no hunks in this file", which is a different fact
+  from having reached the end of them.
 - **§5/§10 `snapshots/` and `.review/.lock`** — snapshots were removed as a
   copy nothing read (storage §11); the lock was never built, and the
   single-writer story is the store's atomic whole-file rewrites, **open** as a
@@ -475,11 +521,87 @@ Where the code deliberately went another way, the later ruling wins:
 - **§9 anchor cascade** — the `Weak` line tier and rename-following on
   re-anchor shipped 2026-08-19; confidence and the resolved line are surfaced
   through `rv comments --json` (`confidence`, `resolved_line`) rather than
-  through markdown markers, per the CLI-loop amendment. The TUI does not yet
-  show confidence: **open**.
+  through markdown markers, per the CLI-loop amendment. The TUI shows it as of
+  **2026-08-20**, on the comment box's own heading.
+
+  **Only the tiers that mean the comment may have drifted are named.** `Exact`
+  is the common case, so labelling it would put a word on every box in the
+  review to report that nothing had happened — the review would carry the noise
+  and none of the signal. `Weak` reads `· weak anchor` in `theme::ALERT` and
+  bold, the colour this interface already spends on a stale anchor: the
+  commented *content* is gone and only its line number survived, so the box
+  points at a line with nothing guaranteeing that line is what the remark was
+  about, and acting on it as though it were an exact hit is the failure the tag
+  exists to prevent. `Moved` reads `· moved` in grey — its content was found,
+  just elsewhere, which is worth saying and not worth shouting. `Outdated` is
+  unnamed here because the heading already says `outdated` and the before/after
+  block below it (storage §4) is the long form of the same fact.
+
+  Derived through `stale::survey`, which is `stale::resolution`'s single
+  cascade run once per load with its findings kept, rather than a second
+  cascade or a per-frame blob read: `App` holds the result and the box reads
+  it, because a comment box is drawn on the paint path. Covered by
+  `a_weak_anchor_is_marked_on_the_box_and_an_exact_one_is_not`, which asserts
+  the marked box against an unmarked one in the same test, and
+  `a_moved_anchor_is_marked_without_the_alert_colour`.
+- **§13 tracked `.review/` warning** — shipped 2026-08-20. jj has no index, so
+  "tracked" means present in the working-copy commit's tree:
+  `Repository::tracks` answers that with a `path_value` lookup that accepts
+  *any* tree entry, because `.review/` is a directory and the `TreeValue::File`
+  filter `read_blob` uses would report it clean forever. `rv status` reports it
+  as `review_tracked` in `--json` and as a `warning` line in the text form,
+  naming `jj file untrack .review` as the remedy. `--check` is untouched: it
+  still gates only on open comments, so a hygiene problem never fails CI.
+  Splitting `vcs.rs` under the 400-line rule kept jj-lib confinement intact
+  without touching the constraint test — `errors.rs` and `revsets.rs` sit under
+  `src/vcs/`, which `is_vcs_module` already counts as the vcs module.
+- **§7.3 `difft --version` probe** — shipped 2026-08-20. `difft --version` is
+  run once per process behind a `LazyLock` and its verdict decides whether
+  difftastic is consulted at all, so an incompatible difftastic is refused
+  before a diff rather than after a failed parse. The floor is **0.51.0**, the
+  release that introduced `--display json`; the field set the parser reads
+  (`status`, `language`, `chunks[][].lhs`/`.rhs.line_number`) is unchanged from
+  it through 0.70, so the pin is the schema rather than a tested-version range.
+  `DiffSource::Similar` now carries a `FallbackReason`, so the pane title
+  distinguishes "no difft on PATH", "difft version unreadable", "difft 0.40.0
+  predates 0.51.0" and "difft output unreadable" from the bare `fallback` a
+  reviewer sees when they asked for it — the honest-fallback rule applied to
+  the label itself. The hermetic seam holds: `compute_with(.., false)` still
+  spawns nothing, probe included, which `the_fallback_path_spawns_nothing`
+  pins by counting processes rather than by reading the label. An unusable
+  difftastic is tested by injecting a verdict through `compute_with_verdict`,
+  not by mutating `PATH`. `diff.rs` split into `src/diff/{model, probe,
+  difftastic, ordering, fallback}.rs` under the 400-line rule, public API
+  unchanged.
+- **§7.2 "N files with no semantic change"** — shipped 2026-08-20, on the
+  comment browser's bottom border.
+
+  **Ruling — the note is lazy, and says so.** Suppression is known only from a
+  computed `FileDiff`, and §7 loads blobs lazily for the file being viewed, so
+  a bare "N files with no semantic change" would be a claim about the whole
+  review made from whichever part of it the reviewer happened to open — a
+  number that changed as they browsed, which is worse than no note. The
+  alternative is computing every file's diff before the first frame, and it
+  was measured rather than guessed at: difftastic costs a **flat ~26.7 ms per
+  file** whatever the file's size (n=40 over rv's own sources, median 26.7 ms,
+  total 1069 ms) — that is process spawn, not diff work — so a 40-file review
+  would pay about **one second of dead time before the first frame, on every
+  run, to print one sentence**. §7's lazy rule stands.
+
+  So the note states what it actually knows. While files remain unread it
+  carries its own denominator — `2/7 · no semantic change`, two of the seven
+  files rv has an answer for — and only once every file has been checked does
+  it speak plainly about the review: `2 · no semantic change`. The ratio
+  **leads**, so a border too narrow for the whole note clips a partial answer
+  into a shorter partial answer and never into the complete one; at 100
+  columns the sidebar's border is 27 columns, which is why the wording is
+  terse. Nothing is said at all until something has been suppressed: a
+  permanent `0/7` would spend the border on a fact about the loader.
+
+  **Only settled diffs are counted.** Under `DiffEngine::Auto` the in-process
+  engine answers first and difftastic replaces it, and the two disagree about
+  precisely this flag — a reindentation is `Added`/`Removed` lines to
+  `similar` and `unchanged` to difftastic. Counting the fast answer would
+  print a number that moved without the reviewer doing anything.
 - **Still open, unassigned to a milestone:** file-scoped comments (§9
-  `Scope::File`, and with them commenting on binary files, §7.4); `J`/`K`
-  hunk navigation (§11); a `difft --version` probe (§7.3 — the JSON-parse
-  fallback covers malformed output, not a silently incompatible schema); an
-  "N files with no semantic change" collective note (§7.2); an `rv status`
-  warning when `.review/` is tracked (§13).
+  `Scope::File`, and with them commenting on binary files, §7.4).

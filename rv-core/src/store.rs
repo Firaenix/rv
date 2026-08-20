@@ -8,28 +8,29 @@
 //! affect every clone) so that writing review notes never mutates the change
 //! under review.
 //!
-//! [`Store::append_comment`] is write-through: it persists to
-//! `.review/comments.json` before returning, with no in-memory cache in
-//! front of it. Every write this module makes — that one, plus
-//! `session.toml`, `REVIEW-FEEDBACK.md` and the `.git/info/exclude` update —
-//! goes through [`write_atomic`]: new content is written to a fresh temp file
-//! in the destination's own directory, fsynced, then renamed into place.
-//! `rename` on POSIX either completes wholly or not at all, so a reader can
-//! never observe a half-written file; a crash mid-write leaves the *previous*
-//! complete contents exactly as they were. `comments.json` is the authority
-//! on which comments exist, and it is the only comment file: earlier versions
-//! also wrote each anchor's context to `.review/snapshots/<id>`, a
-//! byte-for-byte second copy that nothing ever read back (storage spec §1).
-//! A `.review/` from those versions still loads; its leftover snapshots are
-//! removed one by one as their comments are deleted and never otherwise
-//! touched.
+//! **`session.toml` is the one file `rv` maintains** (storage spec §2): the
+//! range under review, the changes in it, and the comments, as a
+//! `[[comments]]` array on [`Session`]. [`Store::append_comment`] is
+//! write-through — it persists before returning, with no in-memory cache in
+//! front of it — and every write this module makes goes through
+//! [`write_atomic`]: new content to a fresh temp file in the destination's
+//! own directory, fsynced, then renamed into place. `rename` on POSIX either
+//! completes wholly or not at all, so a reader can never observe a
+//! half-written file and a crash mid-write leaves the *previous* complete
+//! contents exactly as they were. One file means no cross-file ordering rule
+//! to get right: a comment and the scope it was made against are updated by
+//! the same rename or by neither.
 //!
-//! On-disk formats are chosen to be readable by a human poking around
-//! `.review/`, not just by `rv` itself: `comments.json` is pretty-printed,
-//! `session.toml` uses the `toml` crate, and [`CommentState`] serializes in
-//! kebab-case (`"awaiting-verification"`, not `"AwaitingVerification"` or
-//! `"awaiting_verification"`) to match the vocabulary the markdown export
-//! (a later task) uses.
+//! A `.review/` written by v1.0.0 has its comments in a sibling
+//! `comments.json`. [`Store::open`] folds those into `session.toml` and then
+//! removes the JSON file; see [`Store::absorb_legacy_comments`] for why that
+//! order cannot lose a comment.
+//!
+//! On-disk format is chosen to be readable and hand-fixable by a human poking
+//! around `.review/`, not just by `rv` itself: `session.toml` goes through the
+//! `toml` crate, and [`CommentState`] serializes in kebab-case
+//! (`"awaiting-verification"`, not `"AwaitingVerification"`) to match the
+//! vocabulary the markdown view uses.
 
 use std::fs;
 use std::io::ErrorKind;
@@ -64,7 +65,7 @@ pub enum Error {
         #[source]
         source: std::io::Error,
     },
-    #[error("{path} is not valid comments.json: {source}")]
+    #[error("{path} is not valid v1.0.0 comments.json: {source}")]
     InvalidComments {
         path: PathBuf,
         #[source]
@@ -76,8 +77,6 @@ pub enum Error {
         #[source]
         source: Box<toml::de::Error>,
     },
-    #[error("could not serialize comments.json: {0}")]
-    SerializeComments(#[source] serde_json::Error),
     #[error("could not serialize session.toml: {0}")]
     SerializeSession(#[source] Box<toml::ser::Error>),
 }
@@ -137,18 +136,27 @@ pub enum SettledBy {
     Agent,
 }
 
-/// The revset and stack a review session covers.
+/// The whole of `session.toml`: the revset and stack a review covers, and the
+/// comments made against it (storage spec §2).
 ///
 /// `started_at` is opaque to this module — later tasks fill it with
 /// `"epoch:<unix_secs>"` — so it is stored and round-tripped as a plain
 /// `String` rather than a parsed timestamp type.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+///
+/// `comments` is the whole comment list, and [`Store::write_review`] replaces
+/// it wholesale. A caller updating only the scope must therefore carry the
+/// comments it read across, or write them away.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Session {
     pub revset: String,
     pub base_commit: String,
     pub head_commit: String,
     pub changes: Vec<ChangeRef>,
     pub started_at: String,
+    /// Defaulted on read so that a `session.toml` written before the
+    /// consolidation — or hand-trimmed to its scope — still loads.
+    #[serde(default)]
+    pub comments: Vec<Comment>,
 }
 
 /// A handle on the `.review/` directory under a repo root.
@@ -162,7 +170,8 @@ pub struct Store {
 
 impl Store {
     /// Opens the store rooted at `root` (the repo root, holding `.jj/` and
-    /// `.git/`), creating `.review/` if it does not already exist.
+    /// `.git/`), creating `.review/` if it does not already exist and folding
+    /// a v1.0.0 `comments.json` into `session.toml` if one is there.
     pub fn open(root: &Path) -> Result<Self, Error> {
         let store = Self {
             root: root.to_owned(),
@@ -172,6 +181,7 @@ impl Store {
             path: review_dir,
             source,
         })?;
+        store.absorb_legacy_comments()?;
         Ok(store)
     }
 
@@ -219,20 +229,30 @@ impl Store {
         Ok(true)
     }
 
-    /// Overwrites `session.toml` with `session`.
-    pub fn write_session(&self, session: &Session) -> Result<(), Error> {
-        let serialized = toml::to_string_pretty(session)
+    /// Overwrites `session.toml` with `review`: scope and comments together,
+    /// in one atomic rename.
+    pub fn write_review(&self, review: &Session) -> Result<(), Error> {
+        let serialized = toml::to_string_pretty(review)
             .map_err(|source| Error::SerializeSession(Box::new(source)))?;
         write_atomic(&self.session_path(), serialized.as_bytes())
     }
 
     /// Reads and parses `session.toml`.
-    pub fn read_session(&self) -> Result<Session, Error> {
+    ///
+    /// A `.review/` with no `session.toml` reads as [`Session::default`]:
+    /// [`Store::open`] creates the directory and writes nothing, so a review
+    /// nobody has recorded yet is empty rather than an error. Every read of
+    /// the store goes through here, so there is one parse and one absence
+    /// rule.
+    pub fn read_review(&self) -> Result<Session, Error> {
         let path = self.session_path();
-        let contents = fs::read_to_string(&path).map_err(|source| Error::Io {
-            path: path.clone(),
-            source,
-        })?;
+        let contents = match fs::read_to_string(&path) {
+            Ok(contents) => contents,
+            Err(source) if source.kind() == ErrorKind::NotFound => {
+                return Ok(Session::default());
+            }
+            Err(source) => return Err(Error::Io { path, source }),
+        };
         toml::from_str(&contents).map_err(|source| Error::InvalidSession {
             path,
             source: Box::new(source),
@@ -262,11 +282,9 @@ impl Store {
         self.root.join(".review")
     }
 
-    pub(super) fn snapshots_dir(&self) -> PathBuf {
-        self.review_dir().join("snapshots")
-    }
-
-    pub(super) fn comments_path(&self) -> PathBuf {
+    /// Where a v1.0.0 `.review/` kept its comments, read once by
+    /// [`Store::absorb_legacy_comments`] and then deleted.
+    pub(super) fn legacy_comments_path(&self) -> PathBuf {
         self.review_dir().join("comments.json")
     }
 

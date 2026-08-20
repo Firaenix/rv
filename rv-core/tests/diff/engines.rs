@@ -1,7 +1,6 @@
-use rv_core::diff::DiffSource;
-use rv_core::diff::LineKind;
-use rv_core::diff::compute;
-use rv_core::diff::compute_with;
+//! What each engine produces for a given pair of blobs.
+
+use crate::support::*;
 
 /// difftastic must be on `PATH` for this test: it exercises the real JSON
 /// shape difftastic returns for a one-line semantic change, per the sample
@@ -233,7 +232,7 @@ fn fallback() {
 
     let diff = compute_with(Some(old), Some(new), "notes.txt", false);
 
-    assert_eq!(diff.source, DiffSource::Similar, "{diff:?}");
+    assert_eq!(diff.source, NOT_ATTEMPTED, "{diff:?}");
     assert!(!diff.suppressed, "{diff:?}");
     let added: Vec<&rv_core::diff::DiffLine> = diff
         .lines
@@ -315,7 +314,7 @@ fn all_additions_without_difft() {
 
     let diff = compute_with(None, Some(new), "new.txt", false);
 
-    assert_eq!(diff.source, DiffSource::Similar, "{diff:?}");
+    assert_eq!(diff.source, NOT_ATTEMPTED, "{diff:?}");
     assert!(!diff.suppressed, "{diff:?}");
     assert_eq!(diff.lines.len(), 2, "{diff:?}");
     for line in &diff.lines {

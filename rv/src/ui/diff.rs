@@ -21,7 +21,9 @@ use ratatui::text::Line;
 use ratatui::text::Text;
 use ratatui::widgets::Paragraph;
 use rv_core::diff::DiffSource;
+use rv_core::diff::FallbackReason;
 use rv_core::diff::FileDiff;
+use rv_core::diff::MINIMUM_DIFFT;
 use rv_core::highlight;
 
 use super::BORDER_ROWS;
@@ -39,7 +41,10 @@ use crate::rows::window;
 
 /// What the pane says about a diff [`rv_core::diff`] suppressed and gave no
 /// lines: difftastic's `unchanged` status, which emits no chunks.
-const SUPPRESSED_EMPTY: &str = "no semantic change";
+///
+/// One spelling, shared with the before/after block inside an outdated comment's
+/// box, which reports the same condition about a fragment.
+const SUPPRESSED_EMPTY: &str = crate::rows::NO_SEMANTIC_CHANGE;
 
 /// The same, as a header over a suppressed diff that *does* have lines — the
 /// `similar` fallback's terminator-only change.
@@ -162,13 +167,23 @@ fn parked(natural: Range<usize>, rows: usize, scroll: Option<usize>) -> Range<us
 }
 
 /// What the pane calls itself: the path, where its lines came from — so a
-/// fallback diff is never mistaken for difftastic's structural one — and, where
-/// rv ships no grammar, that its code is plain because of that rather than
-/// because there was nothing to colour.
-fn title(diff: &FileDiff, language: Option<&'static str>) -> String {
+/// fallback diff is never mistaken for difftastic's structural one, and a
+/// fallback rv *chose* is never mistaken for one forced on it by a difftastic
+/// it cannot read — and, where rv ships no grammar, that its code is plain
+/// because of that rather than because there was nothing to colour.
+///
+/// Public for the same reason [`visible`] is: this is the one place the claim
+/// the pane makes about its own contents is decided, and the claim is
+/// load-bearing — it is what tells a reviewer whether they are reading
+/// difftastic's structural diff or a line diff standing in for it, and why.
+#[must_use]
+pub fn title(diff: &FileDiff, language: Option<&'static str>) -> String {
     let source = match &diff.source {
         DiffSource::Difftastic { language } => format!("{} — difftastic ({language})", diff.path),
-        DiffSource::Similar => format!("{} — fallback", diff.path),
+        DiffSource::Similar { reason } => match fallback_cause(*reason) {
+            Some(cause) => format!("{} — fallback ({cause})", diff.path),
+            None => format!("{} — fallback", diff.path),
+        },
         DiffSource::Binary => format!("{} — binary", diff.path),
     };
     match language {
@@ -177,6 +192,22 @@ fn title(diff: &FileDiff, language: Option<&'static str>) -> String {
         Some(_) => source,
         None if diff.source == DiffSource::Binary => source,
         None => format!("{source}{NO_GRAMMAR}"),
+    }
+}
+
+/// Why the pane is showing a line diff, where that is something a reviewer can
+/// act on. `None` where it is not: rv was told not to run difftastic, so the
+/// plain word "fallback" is already the whole truth and a parenthetical would
+/// only restate the flag the reviewer just passed.
+fn fallback_cause(reason: FallbackReason) -> Option<String> {
+    match reason {
+        FallbackReason::NotAttempted => None,
+        FallbackReason::NotInstalled => Some("no difft on PATH".to_owned()),
+        FallbackReason::UnreadableVersion => Some("difft version unreadable".to_owned()),
+        FallbackReason::TooOld(version) => {
+            Some(format!("difft {version} predates {MINIMUM_DIFFT}"))
+        }
+        FallbackReason::UnreadableOutput => Some("difft output unreadable".to_owned()),
     }
 }
 
@@ -261,6 +292,13 @@ fn draw_row(
             kind,
             ..
         } => comment_box::box_body(app, comment, text, *kind, width),
+        Row::BoxRule { comment, .. } => comment_box::box_rule(app, comment, width),
+        Row::BoxDiff {
+            comment,
+            text,
+            kind,
+            ..
+        } => comment_box::box_diff(app, comment, text, *kind, width),
         Row::BoxBottom { comment, .. } => comment_box::box_bottom(app, comment, width),
         Row::BoxCollapsed { comment, .. } => comment_box::box_collapsed(app, comment, width),
     }

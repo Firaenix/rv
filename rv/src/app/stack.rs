@@ -7,6 +7,7 @@ use rv_core::model::Anchor;
 use super::App;
 use super::Focus;
 use super::SidebarTab;
+use super::sidebar::BrowserRow;
 use super::status::NO_COMMENTS;
 
 impl App {
@@ -17,13 +18,55 @@ impl App {
     pub(super) fn on_enter(&mut self) -> Result<()> {
         if self.focus == Focus::Sidebar {
             if self.sidebar_tab == SidebarTab::Comments {
-                return self.jump_to_comment(self.browser_index);
+                return self.enter_browser_row();
             }
             if self.zoom_under_cursor() {
                 return Ok(());
             }
         }
         self.enter_stack();
+        Ok(())
+    }
+
+    /// `Enter` in the comment browser: to the browsed comment's code, or — on
+    /// a file heading — to the top of that file's diff.
+    ///
+    /// A heading names a file and nothing else, so opening that file is the one
+    /// thing it can defensibly mean. Jumping to some comment under it would be
+    /// picking one the reviewer did not point at; refusing outright would make
+    /// a visible row inert.
+    fn enter_browser_row(&mut self) -> Result<()> {
+        match self.browser_rows().get(self.browser_index) {
+            Some(BrowserRow::Comment(index)) => self.jump_to_comment(*index),
+            Some(BrowserRow::File(path)) => self.open_file_named(&path.clone()),
+            None => Ok(()),
+        }
+    }
+
+    /// Opens the review's file at `path`, at its top, with the focus on the
+    /// diff — the heading row's half of a jump.
+    ///
+    /// Either side's path, like [`App::jump_to_comment`]: a comment on a
+    /// removed line is filed under the base-side path, which for a rename is
+    /// not the path the file is listed under.
+    fn open_file_named(&mut self, path: &str) -> Result<()> {
+        let found = self
+            .review
+            .files
+            .iter()
+            .position(|file| file.path == path || file.source_path.as_deref() == Some(path));
+        let Some(index) = found else {
+            let message = format!("{path} is not in this review's range any more");
+            self.status = message.clone();
+            self.raise(message);
+            return Ok(());
+        };
+        self.file_index = index;
+        self.load_selected()?;
+        self.set_cursor_row(0);
+        self.focus = Focus::Diff;
+        self.status = format!("opened {path}");
+        self.resettle_sidebar();
         Ok(())
     }
 

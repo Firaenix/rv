@@ -11,12 +11,8 @@
 //! [`render_markdown`] is the other shared entry point: the markdown is a
 //! **one-way view** of the store — rendered on request by `rv render` and the
 //! TUI's `e`, and never read back (CLI-loop spec §2). Agents read the review
-//! with `rv comments --json` and answer it with `rv reply`; the one remaining
-//! read of the document is [`rescue_replies`], the migration that folds a
-//! pre-amendment reply into the store once, on load.
+//! with `rv comments --json` and answer it with `rv reply`.
 
-use std::fs;
-use std::io::ErrorKind;
 use std::path::Path;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
@@ -105,18 +101,11 @@ pub struct Review {
 /// mislabelling any.
 pub fn build(repo_root: &Path, base: Option<&str>, head: Option<&str>) -> Result<Review> {
     let review = resolve(repo_root, base, head)?;
-    // The moment the review began, kept across re-openings of the same range:
-    // `started_at` says when the reviewer started, and re-stamping it on every
-    // command would make it say when they last ran one.
-    let session = Session {
-        started_at: existing_start(&review).unwrap_or_else(started_at),
-        ..review.session.clone()
-    };
     review
         .store
-        .write_session(&session)
+        .write_review(&review.session)
         .context("could not write .review/session.toml")?;
-    Ok(Review { session, ..review })
+    Ok(review)
 }
 
 /// The same range, resolved and **not** written down.
@@ -124,31 +113,20 @@ pub fn build(repo_root: &Path, base: Option<&str>, head: Option<&str>) -> Result
 /// What `rv status` and `rv render` use: a query that rewrote the record it is
 /// querying would be reporting on itself.
 pub fn read(repo_root: &Path, base: Option<&str>, head: Option<&str>) -> Result<Review> {
-    let review = resolve(repo_root, base, head)?;
-    // The stored `started_at` where the range matches, so a rendered export is
-    // headed with when the review began rather than with now.
-    let session = Session {
-        started_at: existing_start(&review).unwrap_or_else(|| review.session.started_at.clone()),
-        ..review.session.clone()
-    };
-    Ok(Review { session, ..review })
-}
-
-/// `started_at` from the stored session, where it describes this same range.
-fn existing_start(review: &Review) -> Option<String> {
-    review
-        .store
-        .read_session()
-        .ok()
-        .filter(|stored| stored.revset == review.session.revset)
-        .map(|stored| stored.started_at)
+    resolve(repo_root, base, head)
 }
 
 /// Resolves `base..head` without writing `session.toml`.
 ///
-/// Opening the store still creates `.review/` and the exclude entry: those are
-/// what keep review notes out of the change under review, and a query that left
-/// them undone would have the next write do it at a less predictable moment.
+/// Opening the store still creates `.review/` and the exclude entry — those
+/// are what keep review notes out of the change under review, and a query
+/// that left them undone would have the next write do it at a less
+/// predictable moment — and it is where a v1.0.0 `comments.json` is folded
+/// into `session.toml`.
+///
+/// The stored review is read once here, so the `Session` this returns carries
+/// the comments already on disk. [`build`] writes that whole value back, and
+/// a scope update that dropped the array would erase the review.
 fn resolve(repo_root: &Path, base: Option<&str>, head: Option<&str>) -> Result<Review> {
     // `vcs::Error` already names the path in every open failure, so wrapping
     // this one in more context would only repeat it.
@@ -165,20 +143,32 @@ fn resolve(repo_root: &Path, base: Option<&str>, head: Option<&str>) -> Result<R
     store
         .ensure_excluded()
         .context("could not add /.review/ to .git/info/exclude")?;
-    // The last rescue: a reply an agent wrote into a pre-amendment export is
-    // folded into the store here, once, before anything reads the comments.
-    rescue_replies(&store)?;
+    let stored = store
+        .read_review()
+        .context("could not read .review/session.toml")?;
+
+    let revset = format!(
+        "{}..{}",
+        base.unwrap_or(DEFAULT_BASE),
+        head.unwrap_or(DEFAULT_HEAD)
+    );
+    // `started_at` says when the reviewer started, so it is kept across
+    // re-openings of the same range: re-stamping it on every command would
+    // make it say when they last ran one. A different range is a different
+    // question, and gets now.
+    let started_at = if stored.revset == revset {
+        stored.started_at
+    } else {
+        started_at()
+    };
 
     let session = Session {
-        revset: format!(
-            "{}..{}",
-            base.unwrap_or(DEFAULT_BASE),
-            head.unwrap_or(DEFAULT_HEAD)
-        ),
+        revset,
         base_commit,
         head_commit,
         changes,
-        started_at: started_at(),
+        started_at,
+        comments: stored.comments,
     };
 
     Ok(Review {
@@ -228,48 +218,6 @@ pub fn write_markdown(review: &Review) -> Result<()> {
         .store
         .write_markdown(&document)
         .with_context(|| format!("could not write {}", review.store.markdown_path().display()))
-}
-
-/// The migration (CLI-loop spec §5): folds a `**Reply:**` block a pre-amendment
-/// agent wrote into `REVIEW-FEEDBACK.md` back into the stored comment, once.
-///
-/// This is the parser's one remaining caller, kept for exactly one release so
-/// that a reply sitting in an old export when this version lands is rescued
-/// rather than orphaned. The rules are the old ingest's, narrowed:
-///
-/// - Only a comment that has **no stored reply** takes one from the document —
-///   the store is the authority, and the CLI is its only writer now.
-/// - A reply whose id matches no stored comment is ignored.
-/// - No state transitions, and the export itself is not modified: it goes
-///   stale harmlessly until the next explicit `rv render` replaces it.
-///
-/// A missing document is not an error: there is nothing to rescue.
-fn rescue_replies(store: &Store) -> Result<()> {
-    let path = store.markdown_path();
-    let document = match fs::read_to_string(&path) {
-        Ok(document) => document,
-        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
-        Err(error) => {
-            return Err(error).with_context(|| format!("could not read {}", path.display()));
-        }
-    };
-
-    let mut comments = store
-        .comments()
-        .context("could not read the review's comments")?;
-    for (id, reply) in markdown::parse_replies(&document) {
-        let Some(comment) = comments.iter_mut().find(|comment| comment.id == id) else {
-            continue;
-        };
-        if comment.reply.is_some() {
-            continue;
-        }
-        comment.reply = Some(reply);
-        store
-            .append_comment(comment)
-            .with_context(|| format!("could not store the rescued reply to comment {id}"))?;
-    }
-    Ok(())
 }
 
 /// Now, as `"epoch:<unix_secs>"`.

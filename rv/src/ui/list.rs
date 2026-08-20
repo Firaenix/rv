@@ -49,11 +49,16 @@ pub fn sidebar_scrolled(app: &App, pane: Rect, delta: isize) -> usize {
 
 /// What the sidebar is showing: how many rows its list has, how many of them
 /// fit, and which one is on top.
+///
+/// The Comments tab counts **rows** rather than comments: the browser draws a
+/// heading above each file's comments, so the two numbers differ and hit-
+/// testing has to agree with what was painted. The Files and Commits tabs are
+/// untouched — a node list has always been one row per node.
 fn list_view(app: &App, pane: Rect) -> (usize, usize, usize) {
     let height = usize::from(pane.height.saturating_sub(BORDER_ROWS));
     let (count, selected) = match app.sidebar_tab() {
         SidebarTab::Files | SidebarTab::Commits => (app.nodes().len(), app.sidebar_row()),
-        SidebarTab::Comments => (app.comments().len(), app.browser_index()),
+        SidebarTab::Comments => (app.browser_rows().len(), app.browser_index()),
     };
     (
         count,

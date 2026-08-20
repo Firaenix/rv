@@ -1,9 +1,9 @@
 # rv — the agent loop is the CLI, and the markdown is a view
 
-**Status:** implemented 2026-08-19. One deliberate deferral: §2's "mangled-input
-test corpus goes" waits for the release after — the parser it defends still runs
-on every load as §5's migration, and tests defending live code stay while it
-lives. They are deleted together.
+**Status:** implemented 2026-08-19. Its one deferral — §5's migration and the
+mangled-input corpus that defended the parser it ran on — closed 2026-08-20:
+v1.0.0 shipped, so `parse_replies`, `rescue_replies` and the corpus were
+deleted together, as §5 said they would be.
 **Date:** 2026-08-19
 **Amends:** `2026-08-17-rv-branch-reviewer-design.md` §2.5 (the handoff), §10 (round-trip surface);
 `2026-08-17-rv-storage-model-design.md` §5 (the export)
@@ -262,15 +262,36 @@ EOF
 
 ## 5. Migration
 
-One version knows both worlds:
+**Shipped 2026-08-20 — and now retired.**
 
-- On any command that loads the review, if `REVIEW-FEEDBACK.md` exists and
-  contains a parseable `**Reply:**` whose id matches a stored comment that has
-  no reply, fold it in — the last rescue, using the parser one final time
-  before it is deleted in the release after.
-- Nothing deletes the user's existing export. It stops being rewritten as a
-  side effect and goes stale harmlessly; the next explicit `rv render`
-  replaces it with the view-only form.
+One version knew both worlds:
+
+- On any command that loaded the review, if `REVIEW-FEEDBACK.md` existed and
+  contained a parseable `**Reply:**` whose id matched a stored comment that
+  had no reply, it was folded in — the last rescue, using the parser one final
+  time before it was deleted in the release after.
+- Nothing deleted the user's existing export. It stopped being rewritten as a
+  side effect and went stale harmlessly; the next explicit `rv render`
+  replaced it with the view-only form.
+
+That release was v1.0.0, and it has shipped. `session::rescue_replies`,
+`markdown::parse_replies` and its private helpers (`anchor_id`,
+`is_entry_boundary`, `is_section_heading`, `is_structural`,
+`is_entry_heading`, `fence_open`, `balanced_fence`, `bounds_fence`,
+`longest_backtick_run`) are **deleted as of 2026-08-20**, together with the
+hostile-input corpus that defended them: the parse half of
+`rv-core/tests/markdown.rs`, and `prop_markdown.rs`'s round-trip, misbinding,
+tolerated-mangling and totality blocks. What stayed is the render's own
+defence — `every_comment_renders_exactly_once`,
+`sections_are_ordered_counted_and_correctly_collapsed`,
+`only_render_writes_at_column_zero`,
+`the_header_and_protocol_survive_any_content`,
+`the_document_is_a_fixpoint_from_the_second_pass` and
+`entries_that_tie_on_every_sort_key_keep_their_stored_order` — because the
+column-0 rule outlives the parser: a body that reaches column 0 is a body
+that has become a section heading, whether or not anything ever reads it back.
+A reply left in an export written before v1.0.0 is now past its rescue; the
+reply channel is `rv reply`, and has been for a release.
 
 ## 6. Testing
 

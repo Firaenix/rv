@@ -6,6 +6,7 @@ use crossterm::event::KeyModifiers;
 use rstest::rstest;
 use rv::app::Action;
 use rv::app::App;
+use rv::app::BrowserRow;
 use rv::app::Focus;
 use rv::app::Mode;
 use rv::app::SidebarTab;
@@ -28,7 +29,7 @@ use crate::support::*;
     Mode::Browse,
     Focus::Sidebar,
     SidebarTab::Comments,
-    (1, 0)
+    ("second finding", 0)
 )]
 #[case::next_comment_arrow(
     KeyCode::Down,
@@ -36,7 +37,7 @@ use crate::support::*;
     Mode::Browse,
     Focus::Sidebar,
     SidebarTab::Comments,
-    (1, 0)
+    ("second finding", 0)
 )]
 #[case::previous_comment_letter(
     KeyCode::Char('k'),
@@ -44,7 +45,7 @@ use crate::support::*;
     Mode::Browse,
     Focus::Sidebar,
     SidebarTab::Comments,
-    (0, 0)
+    ("first finding", 0)
 )]
 #[case::previous_comment_arrow(
     KeyCode::Up,
@@ -52,7 +53,7 @@ use crate::support::*;
     Mode::Browse,
     Focus::Sidebar,
     SidebarTab::Comments,
-    (0, 0)
+    ("first finding", 0)
 )]
 // `Enter` jumps to the code, which hands the focus to the diff.
 #[case::jump(
@@ -61,17 +62,17 @@ use crate::support::*;
     Mode::Browse,
     Focus::Diff,
     SidebarTab::Comments,
-    (0, 0)
+    ("first finding", 0)
 )]
 // `d` asks about the *browsed* comment, and stays in the browser to be answered.
-#[case::delete_asks(KeyCode::Char('d'), Action::Continue, Mode::ConfirmDelete { id: String::new(), label: String::new() }, Focus::Sidebar, SidebarTab::Comments, (0, 0))]
+#[case::delete_asks(KeyCode::Char('d'), Action::Continue, Mode::ConfirmDelete { id: String::new(), label: String::new() }, Focus::Sidebar, SidebarTab::Comments, ("first finding", 0))]
 #[case::back_to_files(
     KeyCode::Tab,
     Action::Continue,
     Mode::Browse,
     Focus::Sidebar,
     SidebarTab::Files,
-    (0, 0)
+    ("first finding", 0)
 )]
 #[case::nothing_further_left(
     KeyCode::Left,
@@ -79,7 +80,7 @@ use crate::support::*;
     Mode::Browse,
     Focus::Sidebar,
     SidebarTab::Comments,
-    (0, 0)
+    ("first finding", 0)
 )]
 #[case::out_to_the_diff(
     KeyCode::Right,
@@ -87,7 +88,7 @@ use crate::support::*;
     Mode::Browse,
     Focus::Diff,
     SidebarTab::Comments,
-    (0, 0)
+    ("first finding", 0)
 )]
 // File navigation still means files, from here as from everywhere.
 #[case::next_file(
@@ -96,7 +97,7 @@ use crate::support::*;
     Mode::Browse,
     Focus::Sidebar,
     SidebarTab::Comments,
-    (0, 1)
+    ("first finding", 1)
 )]
 #[case::previous_file(
     KeyCode::Char('['),
@@ -104,7 +105,7 @@ use crate::support::*;
     Mode::Browse,
     Focus::Sidebar,
     SidebarTab::Comments,
-    (0, 0)
+    ("first finding", 0)
 )]
 #[case::comment(
     KeyCode::Char('c'),
@@ -112,7 +113,7 @@ use crate::support::*;
     Mode::Comment,
     Focus::Sidebar,
     SidebarTab::Comments,
-    (0, 0)
+    ("first finding", 0)
 )]
 #[case::quit(
     KeyCode::Char('q'),
@@ -120,7 +121,7 @@ use crate::support::*;
     Mode::Browse,
     Focus::Sidebar,
     SidebarTab::Comments,
-    (0, 0)
+    ("first finding", 0)
 )]
 #[case::escape_is_inert(
     KeyCode::Esc,
@@ -128,7 +129,7 @@ use crate::support::*;
     Mode::Browse,
     Focus::Sidebar,
     SidebarTab::Comments,
-    (0, 0)
+    ("first finding", 0)
 )]
 #[case::unbound_function(
     KeyCode::F(1),
@@ -136,7 +137,7 @@ use crate::support::*;
     Mode::Browse,
     Focus::Sidebar,
     SidebarTab::Comments,
-    (0, 0)
+    ("first finding", 0)
 )]
 #[case::unbound_home(
     KeyCode::Home,
@@ -144,7 +145,7 @@ use crate::support::*;
     Mode::Browse,
     Focus::Sidebar,
     SidebarTab::Comments,
-    (0, 0)
+    ("first finding", 0)
 )]
 #[case::unbound_backspace(
     KeyCode::Backspace,
@@ -152,7 +153,7 @@ use crate::support::*;
     Mode::Browse,
     Focus::Sidebar,
     SidebarTab::Comments,
-    (0, 0)
+    ("first finding", 0)
 )]
 fn comment_browser_keybindings(
     mut browser_app: App,
@@ -161,9 +162,13 @@ fn comment_browser_keybindings(
     #[case] mode: Mode,
     #[case] focus: Focus,
     #[case] tab: SidebarTab,
-    // The selection the key should leave behind, as `(browsed row, file)`: one
-    // column rather than two, so a row still reads as a row.
-    #[case] selection: (usize, usize),
+    // The selection the key should leave behind, as `(browsed comment, file)`.
+    //
+    // The comment is named by its body rather than by a row number: the browser
+    // groups its comments under file headings, so a row index is an address in
+    // a list whose shape is not what this table is about — and a literal index
+    // that happens to be right is the weaker assertion either way.
+    #[case] selection: (&str, usize),
 ) {
     let app = &mut browser_app;
     assert_eq!(app.comments().len(), 2, "the browser has nothing to walk");
@@ -183,8 +188,15 @@ fn comment_browser_keybindings(
         "{key:?} left the cursor in the wrong pane"
     );
     assert_eq!(app.sidebar_tab(), tab);
+    // Read off the browser's own row rather than through `browsed_comment`,
+    // which is deliberately `None` off the Comments tab: `Tab` is one of the
+    // keys under test, and its case still has a browser cursor to assert about.
+    let browsed = match &app.browser_rows()[app.browser_index()] {
+        BrowserRow::Comment(index) => app.comments()[*index].body.clone(),
+        BrowserRow::File(path) => panic!("{key:?} left the cursor on the {path} heading"),
+    };
     assert_eq!(
-        (app.browser_index(), app.file_index()),
+        (browsed.as_str(), app.file_index()),
         selection,
         "{key:?} left the browser or the file list somewhere else"
     );

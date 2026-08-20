@@ -69,6 +69,7 @@ pub use code::capture_colour;
 pub use code::line_background;
 pub use diff::diff_row_at;
 pub use diff::diff_scrolled;
+pub use diff::title;
 pub use diff::visible;
 pub use list::sidebar_index_at;
 pub use list::sidebar_scrolled;

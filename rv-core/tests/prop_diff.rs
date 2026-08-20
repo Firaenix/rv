@@ -37,10 +37,18 @@ use proptest::prelude::*;
 use rstest::rstest;
 use rv_core::diff::DiffLine;
 use rv_core::diff::DiffSource;
+use rv_core::diff::DifftVersion;
+use rv_core::diff::FallbackReason;
 use rv_core::diff::FileDiff;
 use rv_core::diff::LineKind;
 use rv_core::diff::compute;
 use rv_core::diff::compute_with;
+
+/// What `compute_with(.., false)` labels its diffs: difftastic was not asked,
+/// so nothing is claimed about it.
+const NOT_ATTEMPTED: DiffSource = DiffSource::Similar {
+    reason: FallbackReason::NotAttempted,
+};
 
 const EMPTY: &[u8] = &[];
 
@@ -531,15 +539,31 @@ fn edited_pair() -> impl Strategy<Value = (Vec<u8>, Vec<u8>)> {
 }
 
 /// Every `DiffSource` the module can produce, including the two the fallback
-/// path never returns.
+/// path never returns and the fallback reasons a machine with a working
+/// difftastic never reaches — `TooOld` in particular carries a payload, so a
+/// round trip that never saw it would not be testing the enum at all.
 fn diff_source() -> impl Strategy<Value = DiffSource> {
     prop_oneof![
-        1 => Just(DiffSource::Similar),
+        1 => fallback_reason().prop_map(|reason| DiffSource::Similar { reason }),
         1 => Just(DiffSource::Binary),
         // The languages difftastic reports, plus the shapes a language name
         // could take that JSON escaping would have to survive.
         2 => prop::sample::select(vec!["Text", "Rust", "C++", "", "\"quoted\"", "ünïcøde"])
             .prop_map(|language| DiffSource::Difftastic { language: language.to_owned() }),
+    ]
+}
+
+fn fallback_reason() -> impl Strategy<Value = FallbackReason> {
+    prop_oneof![
+        4 => prop::sample::select(vec![
+            FallbackReason::NotAttempted,
+            FallbackReason::NotInstalled,
+            FallbackReason::UnreadableVersion,
+            FallbackReason::UnreadableOutput,
+        ]),
+        1 => (0u32..=u32::MAX, 0u32..=u32::MAX, 0u32..=u32::MAX).prop_map(
+            |(major, minor, patch)| FallbackReason::TooOld(DifftVersion { major, minor, patch })
+        ),
     ]
 }
 
@@ -767,7 +791,7 @@ proptest! {
     ) {
         let diff = compute_with(old.as_deref(), new.as_deref(), path, false);
 
-        prop_assert_eq!(&diff.source, &DiffSource::Similar, "{:#?}", diff);
+        prop_assert_eq!(&diff.source, &NOT_ATTEMPTED, "{:#?}", diff);
         prop_assert_eq!(
             diff.suppressed,
             only_terminators_differ(old.as_deref().unwrap_or(EMPTY), new.as_deref().unwrap_or(EMPTY)),
@@ -1022,7 +1046,7 @@ fn a_computed_diff_of_every_shape_survives_a_json_round_trip(
 
     let reached = match diff.source {
         DiffSource::Difftastic { .. } => "difftastic",
-        DiffSource::Similar => "similar",
+        DiffSource::Similar { .. } => "similar",
         DiffSource::Binary => "binary",
     };
     assert_eq!(reached, source, "{diff:#?}");
@@ -1360,7 +1384,7 @@ proptest! {
         let mut problems = Vec::new();
         match diff.source {
             DiffSource::Binary => problems.push("NUL-free text reported as binary".to_owned()),
-            DiffSource::Similar => {
+            DiffSource::Similar { .. } => {
                 for line in &diff.lines {
                     let present = (line.left.is_some(), line.right.is_some());
                     let want = match line.kind {
@@ -1522,7 +1546,7 @@ fn fallback_renderings(
         false,
     );
 
-    assert_eq!(diff.source, DiffSource::Similar, "{diff:?}");
+    assert_eq!(diff.source, NOT_ATTEMPTED, "{diff:?}");
     assert!(!diff.suppressed, "{diff:?}");
     assert_eq!(render(&diff), owned(expected), "{diff:#?}");
 }
@@ -1560,7 +1584,7 @@ fn a_terminator_only_change_renders_as_context_and_is_suppressed(
         false,
     );
 
-    assert_eq!(diff.source, DiffSource::Similar, "{diff:?}");
+    assert_eq!(diff.source, NOT_ATTEMPTED, "{diff:?}");
     assert_eq!(render(&diff), owned(expected), "{diff:#?}");
     assert!(
         diff.suppressed,
@@ -1622,7 +1646,7 @@ fn binary_rule(#[case] old: Option<&[u8]>, #[case] new: Option<&[u8]>, #[case] b
         assert!(diff.lines.is_empty(), "{diff:#?}");
         assert!(!diff.suppressed, "{diff:#?}");
     } else {
-        assert_eq!(diff.source, DiffSource::Similar, "{diff:#?}");
+        assert_eq!(diff.source, NOT_ATTEMPTED, "{diff:#?}");
         assert!(!diff.lines.is_empty(), "{diff:#?}");
     }
 }

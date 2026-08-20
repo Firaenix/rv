@@ -1,11 +1,14 @@
 //! Whether a binding would do anything from where the cursor is: what dims a
 //! row of the `?` popup and the tip.
 
+use rv_core::model::ChangeKind;
+
 use super::App;
 use super::Focus;
 use super::SidebarTab;
 use super::bindings::Binding;
 use super::bindings::Command;
+use super::hunks;
 use crate::tree::NodeKind;
 
 impl App {
@@ -41,6 +44,18 @@ impl App {
                 self.indexed_scope.is_none() || !self.symbol_index.is_empty()
             }
             Command::PreviousFile => self.file_index > 0,
+            // Live wherever the file has a hunk to reach from where the cursor
+            // is; the key itself says which end it has run out at.
+            Command::NextHunk => self.hunk_ahead(true),
+            Command::PreviousHunk => self.hunk_ahead(false),
+            // A file that exists at the head is one an editor can open. Whether
+            // `$EDITOR` is set is not asked here: the popup is drawn every
+            // frame, and dimming a key over an environment variable would teach
+            // that the key does not exist rather than that the variable is
+            // unset — which is what the key says when it is pressed.
+            Command::OpenEditor => self
+                .selected_file()
+                .is_some_and(|file| file.kind != ChangeKind::Removed),
             // Rightwards is always live — only the renderer knows how long the
             // longest line is — and leftwards has somewhere to go once it is.
             Command::ScrollRight => true,
@@ -51,7 +66,9 @@ impl App {
             Command::FocusLeft => self.focus != Focus::Sidebar,
             Command::FocusRight => self.focus == Focus::Sidebar,
             Command::Enter => match (self.focus, self.sidebar_tab) {
-                (Focus::Sidebar, SidebarTab::Comments) => self.browsed_comment().is_some(),
+                // Every browser row leads somewhere: a comment to its code, a
+                // heading to the top of the file it names.
+                (Focus::Sidebar, SidebarTab::Comments) => !self.browser_rows().is_empty(),
                 // A row that holds things can be zoomed into, and the Up row
                 // zoomed back out of; only a file row leaves `Enter` nothing.
                 (Focus::Sidebar, _) => matches!(
@@ -89,10 +106,24 @@ impl App {
                 SidebarTab::Files | SidebarTab::Commits => {
                     self.sidebar_row + 1 < self.nodes().len()
                 }
-                SidebarTab::Comments => self.browser_index + 1 < self.comments.len(),
+                SidebarTab::Comments => self.browser_index + 1 < self.browser_rows().len(),
             },
             Focus::Diff => self.cursor_row() + 1 < self.row_count(),
             Focus::Stack => self.comment_index + 1 < self.stack_len(),
+        }
+    }
+
+    /// Whether `J` or `K` has a hunk to reach from the line the cursor is on.
+    fn hunk_ahead(&self, forward: bool) -> bool {
+        let Some(diff) = self.selected_diff() else {
+            return false;
+        };
+        let line = self.line_index();
+        let mut starts = hunks::hunk_starts(&diff.lines);
+        if forward {
+            starts.any(|start| start > line)
+        } else {
+            starts.any(|start| start < line)
         }
     }
 

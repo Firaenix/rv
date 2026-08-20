@@ -8,6 +8,7 @@ use rv::app::Focus;
 use rv::app::SidebarTab;
 use rv::session;
 use rv_core::store::Comment;
+use rv_core::store::Session;
 use rv_core::store::Store;
 use std::fs;
 use std::path::Path;
@@ -216,7 +217,7 @@ impl Fixture {
     }
 
     pub fn comments(&self) -> Vec<Comment> {
-        self.store().comments().expect("read comments.json")
+        self.store().comments().expect("read the stored comments")
     }
 
     pub fn markdown(&self) -> String {
@@ -224,10 +225,20 @@ impl Fixture {
     }
 
     /// Forgets every stored comment, so the next case starts from an empty
-    /// store. Snapshots are left behind: nothing reads one except by an id
-    /// `comments.json` still lists.
+    /// store.
+    ///
+    /// The comments live inside `session.toml` beside the scope, so this
+    /// empties the array rather than deleting the file: removing the file
+    /// would take the range the next case is opened against with it.
     pub fn clear_comments(&self) {
-        let _ = fs::remove_file(self.root().join(".review/comments.json"));
+        let store = self.store();
+        let review = store.read_review().expect("read the review");
+        store
+            .write_review(&Session {
+                comments: Vec::new(),
+                ..review
+            })
+            .expect("clear the stored comments");
         let _ = fs::remove_file(self.root().join(".review/REVIEW-FEEDBACK.md"));
     }
 }
@@ -304,6 +315,11 @@ pub fn browser_app() -> App {
     press(&mut app, KeyCode::Left);
     assert_eq!(app.sidebar_tab(), SidebarTab::Comments);
     assert_eq!(app.focus(), Focus::Sidebar);
-    assert_eq!(app.browser_index(), 0);
+    // The browser's first *row* is a file heading, so "at the top" is said as
+    // the thing it means: the cursor is on the first comment.
+    assert_eq!(
+        app.browsed_comment().expect("a browsed comment").body,
+        "first finding"
+    );
     app
 }

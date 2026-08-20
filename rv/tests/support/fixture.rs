@@ -169,6 +169,29 @@ impl Fixture {
         fixture
     }
 
+    /// Two files reindented and nothing else, beside one with a real change.
+    ///
+    /// Reindentation is difftastic's `unchanged` status, which is what
+    /// `suppressed` means — so this is a review where the "no semantic change"
+    /// note has something true to say, and one file it must not count.
+    /// Reviewed from `@--`, like every fixture whose point is the second change.
+    pub fn reindented() -> Self {
+        let fixture = Self::empty();
+        fixture.write("moved.rs", SOURCE);
+        fixture.write("shifted.rs", SOURCE);
+        fixture.write("real.rs", SOURCE);
+        fixture.jj(&["describe", "-m", "first change"]);
+        fixture.jj(&["new"]);
+
+        let deeper = SOURCE.replace("\n    ", "\n        ");
+        fixture.write("moved.rs", &deeper);
+        fixture.write("shifted.rs", &deeper);
+        fixture.write("real.rs", "fn a() {\n    let x = 2;\n}\n");
+        fixture.jj(&["describe", "-m", "reindent two, rewrite one"]);
+        fixture.jj(&["new"]);
+        fixture
+    }
+
     /// One change adding a file whose first line is far wider than any pane.
     pub fn wide() -> Self {
         let fixture = Self::empty();

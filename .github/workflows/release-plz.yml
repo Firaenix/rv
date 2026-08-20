@@ -27,6 +27,14 @@ jobs:
       # Detect the release PR and its commits.
       pull-requests: read
     steps:
+      - name: Require the release token
+        env:
+          RELEASE_PLZ_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+        run: |
+          if [ -z "${RELEASE_PLZ_TOKEN}" ]; then
+            echo "::error::RELEASE_PLZ_TOKEN is not set. release-plz reports this as an empty GITHUB_TOKEN, which reads like a bug in the action rather than a missing secret. Add a fine-grained PAT scoped to this repository with Contents and Pull requests read/write." >&2
+            exit 1
+          fi
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
@@ -55,6 +63,14 @@ jobs:
       group: release-plz-${{ github.ref }}
       cancel-in-progress: false
     steps:
+      - name: Require the release token
+        env:
+          RELEASE_PLZ_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+        run: |
+          if [ -z "${RELEASE_PLZ_TOKEN}" ]; then
+            echo "::error::RELEASE_PLZ_TOKEN is not set. release-plz reports this as an empty GITHUB_TOKEN, which reads like a bug in the action rather than a missing secret. Add a fine-grained PAT scoped to this repository with Contents and Pull requests read/write." >&2
+            exit 1
+          fi
       - name: Checkout repository
         uses: actions/checkout@v4
         with:

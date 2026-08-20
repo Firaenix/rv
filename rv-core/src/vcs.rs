@@ -3,13 +3,16 @@
 //! This is the only module in `rv` allowed to import `jj_lib`; everything else
 //! consumes the plain types in [`crate::model`]. Two rules shape the code here:
 //!
-//! * **Nothing is read from the user's jj config.** `settings` builds a
-//!   [`StackedConfig`] from jj-lib's compiled-in defaults plus one literal layer,
+//! * **Nothing is read from the user's jj config.** [`revsets::settings`] builds
+//!   a `StackedConfig` from jj-lib's compiled-in defaults plus one literal layer,
 //!   so `rv` resolves the same revsets on every machine. `trunk()` is a jj-*cli*
-//!   alias that jj-lib does not ship, so `trunk_expression` rebuilds vanilla jj's
-//!   definition with typed constructors instead of an alias table.
+//!   alias that jj-lib does not ship, so [`revsets::trunk_expression`] rebuilds
+//!   vanilla jj's definition with typed constructors instead of an alias table.
 //! * **Nothing is mutated.** No transaction is started, no working copy is
 //!   snapshotted, nothing under `.jj/` is written.
+
+mod errors;
+mod revsets;
 
 use std::path::Path;
 use std::sync::Arc;
@@ -21,9 +24,6 @@ use jj_lib::backend::CommitId;
 use jj_lib::backend::FileId;
 use jj_lib::backend::TreeValue;
 use jj_lib::commit::Commit;
-use jj_lib::config::ConfigLayer;
-use jj_lib::config::ConfigSource;
-use jj_lib::config::StackedConfig;
 use jj_lib::copies::CopyRecords;
 use jj_lib::default_backend_factories::default_backend_factories;
 use jj_lib::default_backend_factories::default_working_copy_factories;
@@ -34,27 +34,26 @@ use jj_lib::object_id::ObjectId as _;
 use jj_lib::ref_name::WorkspaceNameBuf;
 use jj_lib::repo::ReadonlyRepo;
 use jj_lib::repo::Repo as _;
-use jj_lib::repo::StoreLoadError;
 use jj_lib::repo_path::RepoPath;
 use jj_lib::repo_path::RepoPathBuf;
-use jj_lib::revset::RemoteRefSymbolExpression;
 use jj_lib::revset::Revset;
 use jj_lib::revset::RevsetExpression;
 use jj_lib::revset::SymbolResolver;
 use jj_lib::revset::SymbolResolverExtension;
 use jj_lib::revset::UserRevsetExpression;
-use jj_lib::settings::UserSettings;
-use jj_lib::str_util::StringExpression;
 use jj_lib::workspace::Workspace;
-use jj_lib::workspace::WorkspaceLoadError;
+
+pub use errors::Error;
+pub use errors::LINKED_JJ_LIB;
+use errors::chain;
+use errors::load_error;
+use revsets::settings;
+use revsets::trunk_expression;
+use revsets::working_copy_generations;
 
 use crate::model::ChangeKind;
 use crate::model::ChangeRef;
 use crate::model::FileChange;
-
-/// The jj-lib version `rv` is built against. Reported when a repository turns out
-/// to be written in a format this build cannot read.
-pub const LINKED_JJ_LIB: &str = "0.44";
 
 /// The revision a caller gets when it does not name a base.
 const DEFAULT_BASE: &str = "trunk()";
@@ -64,27 +63,6 @@ const WORKING_COPY: &str = "@";
 /// How much of a file is inspected before calling it binary. Matches git's own
 /// sniffing window.
 const BINARY_SNIFF_BYTES: u64 = 8192;
-
-/// Errors from talking to jj.
-#[derive(Debug, thiserror::Error)]
-pub enum Error {
-    #[error("no jj workspace at {0} (run `jj git init --colocate` there?)")]
-    NotAWorkspace(String),
-    #[error(
-        "this repository is not readable by jj-lib {linked}, which rv is built against: \
-         {source_message}"
-    )]
-    Incompatible {
-        linked: String,
-        source_message: String,
-    },
-    #[error("unresolved revset: {0}")]
-    Unresolved(String),
-    #[error("revset {base}..{head} is empty: there is nothing to review")]
-    EmptyRange { base: String, head: String },
-    #[error("jj: {0}")]
-    Jj(String),
-}
 
 /// A read-only handle on a jj workspace.
 pub struct Repository {
@@ -231,6 +209,26 @@ impl Repository {
         self.read_file(&repo_path, id, u64::MAX).map(Some)
     }
 
+    /// Whether `path` is tracked: present in the working-copy commit's tree.
+    ///
+    /// jj has no index, so a path is tracked exactly when the working copy's
+    /// commit carries it. `path` may name a directory as readily as a file —
+    /// which is the point, since the caller asking is `rv status` about
+    /// `.review/` — so this deliberately accepts every kind of tree entry,
+    /// including a conflicted one. Only absence is untracked.
+    pub fn tracks(&self, path: &str) -> Result<bool, Error> {
+        let Some(commit_id) = self.repo.view().get_wc_commit_id(&self.workspace_name) else {
+            return Ok(false);
+        };
+        let commit = pollster::block_on(self.repo.store().get_commit_async(commit_id))
+            .map_err(|error| Error::Jj(chain(&error)))?;
+        let repo_path =
+            RepoPathBuf::from_internal_string(path).map_err(|error| Error::Jj(chain(&error)))?;
+        let value = pollster::block_on(commit.tree().path_value(&repo_path))
+            .map_err(|error| Error::Jj(chain(&error)))?;
+        Ok(!value.is_absent())
+    }
+
     /// Resolves and evaluates `expression`, newest change first.
     fn evaluate(&self, expression: &Arc<UserRevsetExpression>) -> Result<Vec<ChangeRef>, Error> {
         let revset = self.evaluate_revset(expression)?;
@@ -353,87 +351,4 @@ impl Repository {
     fn working_copy_expression(&self) -> Arc<UserRevsetExpression> {
         RevsetExpression::working_copy(self.workspace_name.clone())
     }
-}
-
-/// How many generations back from the working copy a revision points, for the one
-/// piece of revset *syntax* `rv` accepts: `@` is `Some(0)`, `@-` is `Some(1)`,
-/// `@--` is `Some(2)`. Everything else is `None` and is looked up as a symbol.
-///
-/// `rv` resolves revisions itself instead of running jj's parser, which would need
-/// the user's alias table; `@-` is idiomatic enough in jj to be worth the four
-/// lines.
-fn working_copy_generations(revision: &str) -> Option<usize> {
-    let ancestors = revision.strip_prefix(WORKING_COPY)?;
-    if ancestors.bytes().all(|byte| byte == b'-') {
-        Some(ancestors.len())
-    } else {
-        None
-    }
-}
-
-/// Settings built entirely in process. Deliberately never reads a config file.
-fn settings() -> Result<UserSettings, Error> {
-    let mut config = StackedConfig::with_defaults();
-    let layer = ConfigLayer::parse(
-        ConfigSource::Default,
-        "user.name = \"rv\"\nuser.email = \"rv@localhost\"\n",
-    )
-    .map_err(|error| Error::Jj(chain(&error)))?;
-    config.add_layer(layer);
-    UserSettings::from_config(config).map_err(|error| Error::Jj(chain(&error)))
-}
-
-/// Vanilla jj's `trunk()`, built with typed constructors — no alias table and no
-/// config. It always resolves, degrading to `root()` when no remote is present.
-fn trunk_expression() -> Arc<UserRevsetExpression> {
-    let mut candidates = Vec::new();
-    for remote in ["origin", "upstream"] {
-        for name in ["main", "master", "trunk"] {
-            candidates.push(RevsetExpression::remote_bookmarks(
-                RemoteRefSymbolExpression {
-                    name: StringExpression::exact(name),
-                    remote: StringExpression::exact(remote),
-                },
-                None,
-            ));
-        }
-    }
-    candidates.push(RevsetExpression::root());
-    RevsetExpression::union_all(&candidates).latest(1)
-}
-
-fn load_error(path: &Path, error: WorkspaceLoadError) -> Error {
-    match &error {
-        WorkspaceLoadError::NoWorkspaceHere(at) | WorkspaceLoadError::RepoDoesNotExist(at) => {
-            Error::NotAWorkspace(at.display().to_string())
-        }
-        // An unknown backend or op-store type means the repo was written by a jj
-        // that knows a format this build does not.
-        WorkspaceLoadError::StoreLoadError(StoreLoadError::UnsupportedType { .. }) => {
-            Error::Incompatible {
-                linked: LINKED_JJ_LIB.to_owned(),
-                source_message: chain(&error),
-            }
-        }
-        _ => Error::Jj(format!("{}: {}", path.display(), chain(&error))),
-    }
-}
-
-/// Renders an error together with its `source` chain: jj-lib's outer messages are
-/// often generic ("Cannot read the repo") and the cause carries the detail.
-fn chain(error: &dyn std::error::Error) -> String {
-    let mut message = error.to_string();
-    let mut previous = message.clone();
-    let mut source = error.source();
-    while let Some(cause) = source {
-        let text = cause.to_string();
-        // Skip `#[error(transparent)]` links, which repeat their cause verbatim.
-        if text != previous {
-            message.push_str(": ");
-            message.push_str(&text);
-        }
-        previous = text;
-        source = cause.source();
-    }
-    message
 }

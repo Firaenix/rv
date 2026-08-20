@@ -81,7 +81,7 @@ fn compute(review: &Review, file: &FileChange, no_difft: bool) -> Result<FileDif
 fn file_json(computed: &FileDiff) -> serde_json::Value {
     let (engine, language) = match &computed.source {
         DiffSource::Difftastic { language } => ("difftastic", Some(language.as_str())),
-        DiffSource::Similar => ("fallback", None),
+        DiffSource::Similar { .. } => ("fallback", None),
         DiffSource::Binary => ("binary", None),
     };
     json!({
@@ -107,7 +107,7 @@ fn file_json(computed: &FileDiff) -> serde_json::Value {
 fn print_plain(computed: &FileDiff) {
     let engine = match &computed.source {
         DiffSource::Difftastic { language } => format!("difftastic ({language})"),
-        DiffSource::Similar => "fallback".to_owned(),
+        DiffSource::Similar { .. } => "fallback".to_owned(),
         DiffSource::Binary => "binary".to_owned(),
     };
     let suppressed = if computed.suppressed {

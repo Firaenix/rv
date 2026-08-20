@@ -45,7 +45,7 @@ pub fn rewind(app: &mut App) {
     app.on_key(KeyCode::Left).expect("out of the stack");
     app.on_key(KeyCode::Left).expect("onto the sidebar");
     to_comments(app);
-    for _ in 0..=app.comments().len() {
+    for _ in 0..=app.browser_rows().len() {
         // Bounded for the same reason the line loop below is: this presses the
         // very key the browser's clamp is about.
         app.on_key(KeyCode::Up).expect("first comment");
@@ -96,7 +96,17 @@ pub fn rewind(app: &mut App) {
     assert_eq!(app.mode(), Mode::Browse);
     assert_eq!(app.buffer(), "");
     assert_eq!(app.sidebar_tab(), SidebarTab::Files);
-    assert_eq!(app.browser_index(), 0);
+    // The browser's cursor is back at the top of its list. Said as "on the
+    // first comment" rather than as a literal row: the browser groups its
+    // comments under file headings, so row 0 is a heading and the first
+    // *comment* is row 1 — and what the next case needs reset is which comment
+    // `j` steps from, not which number holds it. A review with no comments has
+    // no first comment, and parks at 0.
+    assert_eq!(
+        app.browser_index(),
+        usize::from(!app.comments().is_empty()),
+        "the comment browser's cursor is not on its first comment"
+    );
     assert!(!app.tree_view());
     assert_eq!(app.sort(), Sort::Natural);
     assert_eq!(app.sidebar_row(), 0);

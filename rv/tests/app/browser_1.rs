@@ -11,15 +11,27 @@ use rv_core::model::Side;
 
 use crate::support::*;
 
-/// Walks the sidebar's comment browser to row `index` and presses `Enter`,
-/// exactly the way a reviewer does — no test-only entry point into the jump.
-fn jump_to_row(app: &mut App, index: usize) {
+/// Walks the sidebar's comment browser to the comment anchored at
+/// `file`:`line` and presses `Enter`, exactly the way a reviewer does — no
+/// test-only entry point into the jump.
+///
+/// By anchor rather than by row number: the browser groups comments under file
+/// headings and orders them by `(file, line)`, so a row number is an address in
+/// a list whose shape is what these tests are least interested in pinning.
+fn jump_to(app: &mut App, file: &str, line: u32) {
     to_comments(app);
     app.on_key(KeyCode::Left).expect("focus the sidebar");
-    for _ in 0..index {
-        app.on_key(KeyCode::Down).expect("next row");
+    for _ in 0..=app.browser_rows().len() {
+        let found = app
+            .browsed_comment()
+            .is_some_and(|comment| comment.anchor.file == file && comment.anchor.line == line);
+        if found {
+            app.on_key(KeyCode::Enter).expect("jump");
+            return;
+        }
+        app.on_key(KeyCode::Down).expect("next comment");
     }
-    app.on_key(KeyCode::Enter).expect("jump");
+    panic!("no browser row holds the comment at {file}:{line}");
 }
 
 #[test]
@@ -123,7 +135,8 @@ fn enter_on_a_comment_row_jumps_to_its_code() {
         "the walk away did nothing"
     );
 
-    jump_to_row(&mut app, 0);
+    let anchor = app.comments()[0].anchor.clone();
+    jump_to(&mut app, &anchor.file, anchor.line);
 
     assert_eq!(app.file_index(), commented_file, "landed on the right file");
     assert_eq!(app.line_index(), commented_line, "and the right line");
@@ -166,7 +179,7 @@ fn a_jump_lands_on_the_line_the_comment_is_anchored_to() {
     // Walk away, then come back through the browser.
     app.on_key(KeyCode::Char('k')).expect("up");
     app.on_key(KeyCode::Char('k')).expect("up");
-    jump_to_row(&mut app, 0);
+    jump_to(&mut app, "a.rs", 2);
 
     assert_eq!(
         app.line_index(),
@@ -239,7 +252,7 @@ fn a_jump_to_a_missing_line_opens_the_file_anyway() {
 
     let mut reopened = workspace.app();
     reopened.on_key(KeyCode::Char(']')).expect("open b.rs");
-    jump_to_row(&mut reopened, 1);
+    jump_to(&mut reopened, "a.rs", 99);
 
     assert_eq!(
         reopened.selected_file().expect("a file").path,
@@ -273,84 +286,6 @@ fn store_variant(workspace: &Fixture, id: &str, file: &str, line: u32) {
         .store()
         .append_comment(&comment)
         .expect("store the variant");
-}
-
-/// `d` from the browser deletes the comment the browser has selected, behind
-/// the same confirmation as everywhere else.
-#[test]
-fn d_from_the_comment_browser_deletes_behind_the_same_confirmation() {
-    let workspace = Fixture::new();
-    let mut app = workspace.app();
-    write_comment(&mut app, "first finding");
-    app.on_key(KeyCode::Char('j')).expect("next line");
-    write_comment(&mut app, "second finding");
-
-    to_comments(&mut app);
-    app.on_key(KeyCode::Left).expect("focus the sidebar");
-    app.on_key(KeyCode::Down).expect("select the second");
-    app.on_key(KeyCode::Char('d')).expect("ask");
-    assert!(
-        matches!(app.mode(), Mode::ConfirmDelete { .. }),
-        "it deleted without asking: {:?}",
-        app.mode()
-    );
-    app.on_key(KeyCode::Char('y')).expect("confirm");
-
-    let left = workspace.store().comments().expect("read");
-    assert_eq!(left.len(), 1, "{left:?}");
-    assert_eq!(left[0].body, "first finding", "the browsed comment went");
-    assert_eq!(
-        app.browsed_comment().expect("a row").body,
-        "first finding",
-        "the browser's cursor was left past the end of the list"
-    );
-}
-
-/// ...and `n` still cancels, from here as from anywhere.
-#[test]
-fn d_from_the_comment_browser_can_be_declined() {
-    let workspace = Fixture::new();
-    let mut app = workspace.app();
-    write_comment(&mut app, "needs a doc");
-
-    to_comments(&mut app);
-    app.on_key(KeyCode::Left).expect("focus the sidebar");
-    app.on_key(KeyCode::Char('d')).expect("ask");
-    app.on_key(KeyCode::Char('n')).expect("decline");
-
-    assert_eq!(app.mode(), Mode::Browse);
-    assert_eq!(workspace.store().comments().expect("read").len(), 1);
-}
-
-/// The Files tab stays inert: it selects files, and a destructive key aimed
-/// into it would be aimed at a comment the reviewer cannot see.
-#[test]
-fn d_from_the_files_tab_still_deletes_nothing() {
-    let workspace = Fixture::new();
-    let mut app = workspace.app();
-    write_comment(&mut app, "needs a doc");
-
-    app.on_key(KeyCode::Left).expect("focus the file list");
-    assert_eq!(app.sidebar_tab(), SidebarTab::Files);
-    app.on_key(KeyCode::Char('d')).expect("d");
-
-    assert_eq!(app.mode(), Mode::Browse);
-    assert!(app.status().contains("not comments"), "{:?}", app.status());
-    assert_eq!(workspace.store().comments().expect("read").len(), 1);
-}
-
-/// `d` with an empty browser asks nothing and says why.
-#[test]
-fn d_from_an_empty_comment_browser_says_so() {
-    let workspace = Fixture::new();
-    let mut app = workspace.app();
-
-    to_comments(&mut app);
-    app.on_key(KeyCode::Left).expect("focus the sidebar");
-    app.on_key(KeyCode::Char('d')).expect("d");
-
-    assert_eq!(app.mode(), Mode::Browse);
-    assert!(app.status().contains("no comments"), "{:?}", app.status());
 }
 
 #[test]

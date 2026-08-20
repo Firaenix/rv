@@ -56,8 +56,8 @@ fn the_status_line_names_the_file() {
 }
 
 /// `e` renders the store and only the store: the document is a view, so an
-/// edit made to the file is overwritten, not ingested — the reply channel is
-/// `rv reply`, and a pre-amendment reply is rescued at *load*, not at export.
+/// edit made to the file is overwritten, never ingested — the reply channel
+/// is `rv reply`, and nothing reads this document back at all.
 #[test]
 fn exporting_overwrites_the_document_without_reading_it_back() {
     let workspace = Fixture::new();
