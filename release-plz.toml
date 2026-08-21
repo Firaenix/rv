@@ -30,6 +30,20 @@ name = "rv-core"
 # no tag of its own. Both crates take `version.workspace`, so they cannot
 # drift regardless.
 git_tag_enable = false
+# Explicit at the package level, not just the workspace level: release-plz
+# 0.3.160's PackageConfig -> ReleaseConfig conversion at
+# `crates/release-plz/src/config.rs:331` computes `is_publish_enabled =
+# value.publish != Some(false)` and consults `publish` only — never `git_only`
+# — when deciding whether to run `cargo publish`. So workspace `git_only =
+# true` correctly merges into rv-core's PackageConfig, but with `publish`
+# unset (None) the boolean resolves to `true` and release-plz runs `cargo
+# publish rv-core` anyway. This blocked the v1.1.0 release on 2026-08-21
+# ("no token found, please run cargo login") because rv-core has never been
+# published and there is no CARGO_REGISTRY_TOKEN. `publish = false` is the
+# load-bearing line; `git_only = true` is defensive redundancy in case the
+# conversion bug is patched upstream and the field is finally consulted.
+publish = false
+git_only = true
 
 [changelog]
 # A commit whose body says it breaks something is never dropped from the
