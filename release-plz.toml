@@ -19,10 +19,17 @@ git_tag_name = "v{{ version }}"
 # it.
 git_release_enable = false
 
-# Release when the release PR is merged, not on every push to master. The
-# alternative publishes whatever is on master the moment it lands, which is
-# the wrong default for a tool whose tag triggers a five-platform build.
-release_always = false
+# Release when Cargo.toml's version differs from the last git tag on any
+# push to master, not only when the automated release PR merges. That
+# matters after a failed release: without this, the retry has to route
+# through another release PR (there is nothing to bump, so there is nothing
+# for release-plz PR mode to open), and the tag stays unpushed until the
+# next real version bump. `release_always = true` still only cuts a tag
+# when the version has actually moved forward — release-plz refuses to
+# re-tag the current version — so it does not cause spam. `dist`'s release
+# workflow still owns the binaries/formula/GitHub release and is triggered
+# by the tag alone, so the source of truth is unchanged.
+release_always = true
 
 [[package]]
 name = "rv-core"
