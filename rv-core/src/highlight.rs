@@ -131,6 +131,21 @@ impl Highlights {
         };
 
         let language = Some(grammar.name);
+        if grammar.name == "bash" && bash_input_would_crash_tree_sitter(source) {
+            // tree-sitter-bash 0.25.1 crashes with SIGSEGV on Linux when its
+            // internal error-recovery path meets a `{` followed later by any
+            // four-byte UTF-8 codepoint (upstream tree-sitter/tree-sitter-bash#337).
+            // rv promises `Highlights::of` never fails for any bytes, so a
+            // reviewer opening a `.sh` file that happens to hit the pattern
+            // must not be the thing that kills the process. Report the
+            // language and no spans, the same shape as a grammar that gave up
+            // mid-parse.
+            return Highlights {
+                spans: Vec::new(),
+                language,
+            };
+        }
+
         let lines = LineIndex::of(source);
         let mut highlighter = Highlighter::new();
         let injection = grammar.injection;
@@ -185,6 +200,35 @@ impl Highlights {
         let end = self.spans.partition_point(|span| span.line <= line);
         &self.spans[start..end]
     }
+}
+
+/// True when `source` matches the pattern that segfaults
+/// `tree-sitter-bash 0.25.1` on Linux
+/// ([tree-sitter/tree-sitter-bash#337][1]): an ASCII `{` followed anywhere
+/// later by a byte in `0xF0..=0xF7`, which is the lead byte of any four-byte
+/// UTF-8 codepoint. The grammar's error-recovery path enters a broken state
+/// after the `{` and dereferences an OOB pointer at the four-byte lead; the
+/// intervening bytes do not matter, so a linear scan with a `bool` flag is
+/// enough.
+///
+/// This is a real crash a `.sh` file in a repository could hit — the
+/// discovery route in the upstream report is exactly rv's own property
+/// fuzzer — so the guard has to be in [`Highlights::of`] rather than
+/// confined to the tests. macOS is unaffected in practice, but the check is
+/// unconditional: the file that opens rv on Linux is often the same file a
+/// contributor read on macOS.
+///
+/// [1]: https://github.com/tree-sitter/tree-sitter-bash/issues/337
+fn bash_input_would_crash_tree_sitter(source: &[u8]) -> bool {
+    let mut after_open_brace = false;
+    for &byte in source {
+        if byte == b'{' {
+            after_open_brace = true;
+        } else if after_open_brace && (0xF0..=0xF7).contains(&byte) {
+            return true;
+        }
+    }
+    false
 }
 
 /// Sorts spans into (line, column) order, drops any that overlap the one
