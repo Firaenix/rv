@@ -52,6 +52,18 @@ git_tag_enable = false
 publish = false
 git_only = true
 
+[[package]]
+name = "rv"
+# Same story as `rv-core` immediately above: release-plz 0.3.160 ignores
+# `git_only` when deciding whether to run `cargo publish`, so `publish = false`
+# has to be explicit at the package level or the release job crashes on
+# `cargo publish rv` with "no token found". `rv` on crates.io is an unrelated
+# project (promised-ai/rv, 0.20.1) so publishing here would be wrong even if
+# a token were configured; the ship path is binaries + Homebrew + Nix, driven
+# by the tag release-plz pushes and picked up by dist's `release.yml`.
+publish = false
+git_only = true
+
 [changelog]
 # A commit whose body says it breaks something is never dropped from the
 # changelog by a filter above it.
