@@ -16,7 +16,8 @@ fn changed_line() {
     assert_eq!(
         diff.source,
         DiffSource::Difftastic {
-            language: "Rust".to_owned()
+            language: "Rust".to_owned(),
+            line_oriented: false,
         },
         "{diff:?}"
     );
@@ -45,7 +46,8 @@ fn reindentation_only_suppressed() {
     assert_eq!(
         diff.source,
         DiffSource::Difftastic {
-            language: "Rust".to_owned()
+            language: "Rust".to_owned(),
+            line_oriented: false,
         },
         "{diff:?}"
     );
@@ -259,7 +261,8 @@ fn all_additions() {
     assert_eq!(
         diff.source,
         DiffSource::Difftastic {
-            language: "Text".to_owned()
+            language: "Text".to_owned(),
+            line_oriented: false,
         },
         "{diff:?}"
     );
@@ -288,7 +291,8 @@ fn all_removals() {
     assert_eq!(
         diff.source,
         DiffSource::Difftastic {
-            language: "Text".to_owned()
+            language: "Text".to_owned(),
+            line_oriented: false,
         },
         "{diff:?}"
     );

@@ -18,7 +18,6 @@ use std::collections::HashSet;
 use std::ops::Range;
 
 use rv_core::diff::DiffLine;
-use rv_core::diff::FileDiff;
 use rv_core::diff::LineKind;
 use rv_core::store::Comment;
 use rv_core::store::CommentState;
@@ -73,8 +72,13 @@ pub enum BodyKind {
 /// about and what the cursor is expressed in.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Row<'a> {
-    /// A line of the diff. `index` is its position in [`FileDiff::lines`].
-    Diff { index: usize, line: &'a DiffLine },
+    /// A line of the diff. `index` is its position in the line stream `plan`
+    /// was built from. Owned rather than borrowed: `plan`'s caller
+    /// ([`crate::app::App::plan`]) builds that stream fresh from
+    /// [`crate::app::App::displayed_lines`] every call, so there is no
+    /// borrow of the app's own state for this row to hold past `plan`'s
+    /// return — the same reason `BoxBody`'s `text` is already owned.
+    Diff { index: usize, line: DiffLine },
     /// The top border of an expanded comment box.
     BoxTop { line: usize, comment: &'a Comment },
     /// One wrapped line of a comment's body or reply. `text` is the row's
@@ -134,7 +138,7 @@ pub struct Plan<'a> {
     pub rows: Vec<Row<'a>>,
 }
 
-/// Flattens `diff` and its comments into rows.
+/// Flattens `lines` and its comments into rows.
 ///
 /// `comments_for` is asked for each diff line's comments in the order they
 /// should stack, oldest first — a closure rather than a borrowed map so the
@@ -150,16 +154,25 @@ pub struct Plan<'a> {
 /// asked per comment rather than computed here: it costs a blob read, and this
 /// function runs once a frame. `None` means there is nothing to show, which is
 /// the answer for every comment whose code is still where it was.
+///
+/// `lines` is a slice rather than a borrowed `FileDiff` because the caller
+/// ([`crate::app::App::plan`]) builds it fresh from
+/// [`crate::app::App::displayed_lines`] every call — full-file context where
+/// that can be built honestly, the engine's own lines otherwise — so there is
+/// no `FileDiff` this function could hold a matching-lifetime borrow of.
 pub fn plan<'a>(
-    diff: &'a FileDiff,
+    lines: &[DiffLine],
     comments_for: &dyn Fn(usize) -> Vec<&'a Comment>,
     drift_of: &dyn Fn(&Comment) -> Option<&'a Drift>,
     collapsed: &HashSet<String>,
     width: usize,
 ) -> Plan<'a> {
-    let mut rows = Vec::with_capacity(diff.lines.len());
-    for (index, line) in diff.lines.iter().enumerate() {
-        rows.push(Row::Diff { index, line });
+    let mut rows = Vec::with_capacity(lines.len());
+    for (index, line) in lines.iter().enumerate() {
+        rows.push(Row::Diff {
+            index,
+            line: line.clone(),
+        });
         for comment in comments_for(index) {
             if collapsed.contains(&comment.id) {
                 rows.push(Row::BoxCollapsed {

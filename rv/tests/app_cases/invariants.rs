@@ -15,8 +15,9 @@ use crate::support::*;
 /// The invariants, none of which any keystroke may break:
 ///
 /// 1. `on_key` never returns `Err` and never panics.
-/// 2. `line_index` indexes the selected diff's lines, or is `0` when that diff
-///    has none.
+/// 2. `line_index` indexes [`App::displayed_lines`]'s lines — full-file
+///    context where that can be built honestly, the selected diff's own lines
+///    otherwise — or is `0` when there are none.
 /// 3. The comment buffer is empty whenever the mode is `Browse`.
 /// 4. A selected file always has a loaded diff (the lazy-load invariant
 ///    `ui::draw`'s "no diff loaded" branch documents as unreachable), that diff
@@ -88,7 +89,7 @@ fn state_invariants_survive_any_key_sequence() {
                 step
             );
             // Invariant 2.
-            let total = diff.lines.len();
+            let total = app.displayed_lines().len();
             if total == 0 {
                 prop_assert_eq!(
                     app.line_index(),

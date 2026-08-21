@@ -155,18 +155,17 @@ impl App {
         // The whole answer computed against the borrowed diff and the borrow
         // released before anything is written: `(where to go, is there a hunk
         // at all)`, which is the pair the two failure sentences need to tell
-        // "you have reached the end" from "there is no end to reach".
-        let (found, any) = match self.selected_diff() {
-            Some(diff) => {
-                let mut starts = hunks::hunk_starts(&diff.lines);
-                let found = if forward {
-                    starts.find(|start| *start > line)
-                } else {
-                    starts.take_while(|start| *start < line).last()
-                };
-                (found, hunks::hunk_starts(&diff.lines).next().is_some())
-            }
-            None => (None, false),
+        let (found, any) = if self.selected_diff().is_some() {
+            let lines = self.displayed();
+            let mut starts = hunks::hunk_starts(lines);
+            let found = if forward {
+                starts.find(|start| *start > line)
+            } else {
+                starts.take_while(|start| *start < line).last()
+            };
+            (found, hunks::hunk_starts(lines).next().is_some())
+        } else {
+            (None, false)
         };
 
         let Some(start) = found else {
@@ -295,11 +294,26 @@ impl App {
             }
             DiffEngine::Structural => diff::compute(old.as_deref(), new.as_deref(), &head_path),
         });
+        // Cloned rather than moved: `refine` below takes the originals for the
+        // background structural pass, and the bytes stored here are what
+        // `crate::app::merges` reads to synthesize full-file context
+        // — the same blobs regardless of which engine ends up answering, so
+        // there is nothing to update when the structural diff later replaces
+        // the fast one.
+        self.blobs[self.file_index] = Some((
+            old.clone().unwrap_or_default(),
+            new.clone().unwrap_or_default(),
+        ));
         // Parsed from the very blobs the diff was computed from, so the spans a
         // line is painted with describe the text that line came from — and parsed
         // *off* this thread, so a large file draws now and colours in a moment.
         self.parse_highlights(base_commit, base_path, old.as_deref());
         self.parse_highlights(head_commit, head_path, new.as_deref());
+        // Kick the full-file merge in the background, off the very blobs the
+        // diff was computed from — the pane draws the fallback view (the
+        // diff's own changed-only lines) until it lands. When difftastic
+        // later replaces the fast diff, `apply_refined` requeues the merge.
+        self.start_merge(self.file_index);
         if self.engine == DiffEngine::Auto {
             self.refine(self.file_index, old, new);
         }

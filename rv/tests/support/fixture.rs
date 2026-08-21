@@ -126,6 +126,28 @@ impl Fixture {
         fixture
     }
 
+    /// A real change (`fn tail`'s body) flanking a region reformatted into a
+    /// different line count on each side — the §3 gap-mismatch shape
+    /// `rv_core::diff::merge_context` must bail on rather than guess across.
+    /// Reviewed from `@--`.
+    pub fn reformatted_gap() -> Self {
+        let fixture = Self::empty();
+        fixture.write(
+            "gap.rs",
+            "fn header() {}\n\nfn a() { let x = foo(1, 2, 3); }\n\nfn tail() {\n    let z = 1;\n}\n",
+        );
+        fixture.jj(&["describe", "-m", "first change"]);
+        fixture.jj(&["new"]);
+
+        fixture.write(
+            "gap.rs",
+            "fn header() {}\n\nfn a() {\n    let x = foo(\n        1,\n        2,\n        3,\n    );\n}\n\nfn tail() {\n    let z = 99;\n}\n",
+        );
+        fixture.jj(&["describe", "-m", "reformat and a real change"]);
+        fixture.jj(&["new"]);
+        fixture
+    }
+
     /// Nothing but additions in one file and nothing but removals in another —
     /// the two ends of the change gradient. Reviewed from `@--`.
     pub fn mixed() -> Self {
@@ -222,13 +244,19 @@ impl Fixture {
         fixture
     }
 
-    /// Five lines of `a.rs`, then a second change that rewrites only the first
-    /// of them.
+    /// Five lines of `a.rs`, then a second change that rewrites the first
+    /// line and drops the fourth.
     ///
     /// Reviewed from `@-`, the range holds `a.rs` — so a comment on it is in
-    /// range — but its diff carries only line 1, so a comment anchored to line 4
-    /// cannot be jumped to. That is the stale-anchor alert with the file-left-the-
-    /// range case filtered out from under it.
+    /// range — but the line it is anchored to (the fourth) no longer exists in
+    /// the file at all, changed-only or full-context alike, so a comment
+    /// anchored there cannot be jumped to. That is the stale-anchor alert with
+    /// the file-left-the-range case filtered out from under it.
+    ///
+    /// Dropping the line outright, rather than leaving it untouched, is what
+    /// full-file context requires here: an untouched line is still reachable
+    /// once the pane shows the whole file, so only a line the file no longer
+    /// has at all can still prove "not in this diff any more."
     pub fn stale_line() -> Self {
         let fixture = Self::empty();
         fixture.write(
@@ -240,13 +268,11 @@ impl Fixture {
         fixture
     }
 
-    /// Rewrites `a.rs`'s first line and closes the change, so the range from
-    /// `@-` holds the file with a diff that does not carry line 4.
+    /// Rewrites `a.rs`'s first line and drops it to three lines total, then
+    /// closes the change, so the range from `@-` holds the file with a diff —
+    /// full context included — that does not carry a fourth line at all.
     pub fn rewrite_first_line(&self) {
-        self.write(
-            "a.rs",
-            "fn renamed_a() {\n    let w = 1;\n    let x = 2;\n    let y = 3;\n}\n",
-        );
+        self.write("a.rs", "fn renamed_a() {\n    let w = 1;\n}\n");
         self.jj(&["describe", "-m", "second change"]);
         self.jj(&["new"]);
     }
@@ -293,16 +319,25 @@ impl Fixture {
         fs::write(&path, contents).expect("write file");
     }
 
-    /// The reviewer, opened over `trunk()..@` of this workspace.
+    /// The reviewer, opened over `trunk()..@` of this workspace, with the
+    /// selected file's diff and full-file merge already settled — so a test
+    /// asserts against the state the reviewer sees after the sub-second wait
+    /// the event loop hides.
     pub fn app(&self) -> App {
         let review = session::build(self.root(), None, None).expect("build the review");
-        App::open(review, DiffEngine::Structural).expect("open the reviewer")
+        let mut app = App::open(review, DiffEngine::Structural).expect("open the reviewer");
+        app.finish_loading();
+        app.finish_merging();
+        app
     }
 
-    /// The reviewer, opened over `base..@` of this workspace.
+    /// As [`Fixture::app`], but the range starts at `base`.
     pub fn app_from(&self, base: &str) -> App {
         let review = session::build(self.root(), Some(base), None).expect("build the review");
-        App::open(review, DiffEngine::Structural).expect("open the reviewer")
+        let mut app = App::open(review, DiffEngine::Structural).expect("open the reviewer");
+        app.finish_loading();
+        app.finish_merging();
+        app
     }
 
     /// A handle on `.review/` that shares nothing with the app's own.

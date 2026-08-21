@@ -131,6 +131,20 @@ impl App {
         };
     }
 
+    /// Flips the full-file-context toggle. Full context is the default (spec
+    /// §5, walked back), and this is what turns it off — a reviewer who
+    /// wants to see less on a big file, or who has hit a "context
+    /// unavailable" file where the merge legitimately declined and wants
+    /// the changed-only view without the title suffix.
+    fn toggle_full_context(&mut self) {
+        self.set_full_context(!self.full_context());
+        self.status = if self.full_context() {
+            "full-file context — f shows only the changes".to_owned()
+        } else {
+            "changes only — f shows the whole file".to_owned()
+        };
+    }
+
     /// Moves the keymap by `delta` rows, which only ever moves anything on a
     /// terminal too small to show the whole table.
     pub(super) fn scroll_help(&mut self, delta: isize) {
@@ -191,6 +205,7 @@ impl App {
             Command::CycleSort => self.cycle_sort(),
             Command::ToggleTint => self.toggle_tint(),
             Command::ToggleCounts => self.toggle_counts(),
+            Command::ToggleFullContext => self.toggle_full_context(),
             Command::Info => self.toggle_info(),
             Command::Refresh => self.refresh()?,
             Command::Help => {

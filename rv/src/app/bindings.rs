@@ -117,6 +117,7 @@ pub(super) enum Command {
     CycleSort,
     ToggleTint,
     ToggleCounts,
+    ToggleFullContext,
     Info,
     Refresh,
     Help,

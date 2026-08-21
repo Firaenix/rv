@@ -202,6 +202,9 @@ impl App {
         if let Some(slot) = self.diffs.get_mut(refined.file) {
             *slot = Some(refined.diff);
         }
+        // A refined diff replaces the fast one; the full-file merge must be
+        // re-built off it, because the two engines emit different lines.
+        self.start_merge(refined.file);
         self.refining.remove(&refined.file);
         // Even when the structural engine fell back internally: `refined` is
         // "the question was answered", not "the answer was difftastic's", so a

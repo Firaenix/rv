@@ -238,6 +238,7 @@ everywhere.
 | `o` | Cycle the file list's order: by path, by additions, by deletions |
 | `v` | Open the selected file at the cursor's line in `$EDITOR`, and come back to the review when it exits. Unset `$EDITOR` is reported in the status line rather than guessed at |
 | `g` | Tint the sidebar names by their change — each name runs green through a light seam to red, split where its additions end — or turn the tint off |
+| `f` | Toggle full-file context on and off. Default on: the pane shows the whole file with the changed lines highlighted. Off restores the difftastic-only view of just the changes |
 | `#` | Show or hide the sidebar's `+n -n` counts |
 | `<` | Narrow the sidebar |
 | `>` | Widen it |

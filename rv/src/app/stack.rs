@@ -215,14 +215,14 @@ impl App {
     /// lands on is by construction the line the comment was stored against,
     /// rename, side rule and all.
     fn line_of_anchor(&self, anchor: &Anchor) -> Option<usize> {
-        let diff = self.selected_diff()?;
-        (0..diff.lines.len()).find(|index| {
-            self.anchor_target(&diff.lines[*index])
-                .is_some_and(|target| {
-                    target.path == anchor.file
-                        && target.side == anchor.side
-                        && target.number == anchor.line
-                })
+        self.selected_diff()?;
+        let lines = self.displayed();
+        (0..lines.len()).find(|index| {
+            self.anchor_target(&lines[*index]).is_some_and(|target| {
+                target.path == anchor.file
+                    && target.side == anchor.side
+                    && target.number == anchor.line
+            })
         })
     }
 }

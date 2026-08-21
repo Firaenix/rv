@@ -576,6 +576,27 @@ fn bash_keywords_and_comments_are_captured() {
     assert_capture(source, "run.sh", 5, "fi", Capture::Keyword);
 }
 
+/// The exact bytes that
+/// [tree-sitter/tree-sitter-bash#337][1] segfaults on: an ASCII `{` followed
+/// later by a four-byte UTF-8 codepoint. Under 0.25.1 on Linux this crashes
+/// the process; the guard in [`Highlights::of`] catches the pattern and
+/// reports the language with no spans, the same shape as a grammar that
+/// gave up mid-parse.
+///
+/// [1]: https://github.com/tree-sitter/tree-sitter-bash/issues/337
+#[test]
+fn bash_guards_against_tree_sitter_bash_337_crash() {
+    let source = "{\u{31860}".as_bytes();
+    let highlights = Highlights::of(source, "run.sh");
+
+    assert_eq!(highlights.language(), Some("bash"));
+    assert!(
+        highlights.line(1).is_empty(),
+        "the guard yields no spans, got {:?}",
+        highlights.line(1)
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Language detection: extension only
 // ---------------------------------------------------------------------------

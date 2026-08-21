@@ -71,6 +71,7 @@ fn sample_view() -> View<'static> {
         change: "ytskpxpw close the alias bypass".to_owned(),
         open_comments: 4,
         status: "saved comment at app.rs:42",
+        busy: false,
     }
 }
 

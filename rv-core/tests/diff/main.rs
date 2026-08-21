@@ -6,5 +6,6 @@
 
 mod support;
 
+mod context;
 mod engines;
 mod probe;

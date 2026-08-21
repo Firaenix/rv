@@ -95,6 +95,7 @@ impl App {
             | Command::CycleSort
             | Command::ToggleTint
             | Command::ToggleCounts => self.sidebar_tab != SidebarTab::Comments,
+            Command::ToggleFullContext => true,
             Command::Info => self.sidebar_tab == SidebarTab::Commits,
         }
     }
@@ -112,14 +113,12 @@ impl App {
             Focus::Stack => self.comment_index + 1 < self.stack_len(),
         }
     }
-
-    /// Whether `J` or `K` has a hunk to reach from the line the cursor is on.
     fn hunk_ahead(&self, forward: bool) -> bool {
-        let Some(diff) = self.selected_diff() else {
+        if self.selected_diff().is_none() {
             return false;
-        };
+        }
         let line = self.line_index();
-        let mut starts = hunks::hunk_starts(&diff.lines);
+        let mut starts = hunks::hunk_starts(self.displayed());
         if forward {
             starts.any(|start| start > line)
         } else {

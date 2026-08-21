@@ -21,7 +21,7 @@ use rv_core::diff::FileDiff;
 /// restate the flag the reviewer just passed.
 #[test]
 fn a_degraded_pane_says_why_it_is_degraded() {
-    let labelled = |reason| rv::ui::title(&fallback(reason), Some("Rust"));
+    let labelled = |reason| rv::ui::title(&fallback(reason), Some("Rust"), false);
 
     assert_eq!(
         labelled(FallbackReason::NotAttempted),
@@ -57,7 +57,7 @@ fn a_degraded_pane_says_why_it_is_degraded() {
 /// guess as a fact would look like on screen.
 #[test]
 fn an_unusable_difft_is_not_labelled_like_a_chosen_fallback() {
-    let chosen = rv::ui::title(&fallback(FallbackReason::NotAttempted), Some("Rust"));
+    let chosen = rv::ui::title(&fallback(FallbackReason::NotAttempted), Some("Rust"), false);
 
     for reason in [
         FallbackReason::NotInstalled,
@@ -70,7 +70,7 @@ fn an_unusable_difft_is_not_labelled_like_a_chosen_fallback() {
         FallbackReason::UnreadableOutput,
     ] {
         assert_ne!(
-            rv::ui::title(&fallback(reason), Some("Rust")),
+            rv::ui::title(&fallback(reason), Some("Rust"), false),
             chosen,
             "{reason:?} reads exactly like a fallback the reviewer asked for"
         );
@@ -86,15 +86,16 @@ fn the_other_titles_are_unchanged() {
     let structural = FileDiff {
         source: DiffSource::Difftastic {
             language: "Rust".to_owned(),
+            line_oriented: false,
         },
         ..fallback(FallbackReason::NotAttempted)
     };
     assert_eq!(
-        rv::ui::title(&structural, Some("Rust")),
+        rv::ui::title(&structural, Some("Rust"), false),
         "ctx.rs — difftastic (Rust)"
     );
     assert_eq!(
-        rv::ui::title(&structural, None),
+        rv::ui::title(&structural, None, false),
         "ctx.rs — difftastic (Rust) — no highlighting"
     );
 
@@ -102,12 +103,36 @@ fn the_other_titles_are_unchanged() {
         source: DiffSource::Binary,
         ..fallback(FallbackReason::NotAttempted)
     };
-    assert_eq!(rv::ui::title(&binary, None), "ctx.rs — binary");
+    assert_eq!(rv::ui::title(&binary, None, false), "ctx.rs — binary");
 
     assert_eq!(
-        rv::ui::title(&fallback(FallbackReason::NotInstalled), None),
+        rv::ui::title(&fallback(FallbackReason::NotInstalled), None, false),
         "ctx.rs — fallback (no difft on PATH) — no highlighting",
         "the grammar note stopped following a reason-bearing fallback"
+    );
+}
+
+/// §4.4's title suffix, appended last: a reviewer reads what the pane is
+/// showing (the engine, the grammar note) before what it could not show.
+#[test]
+fn a_bailed_merge_adds_its_own_suffix_after_every_other_note() {
+    let structural = FileDiff {
+        source: DiffSource::Difftastic {
+            language: "Rust".to_owned(),
+            line_oriented: false,
+        },
+        ..fallback(FallbackReason::NotAttempted)
+    };
+    assert_eq!(
+        rv::ui::title(&structural, Some("Rust"), true),
+        "ctx.rs — difftastic (Rust) — full context unavailable \
+         (a reformatted region difftastic did not report)"
+    );
+    assert_eq!(
+        rv::ui::title(&structural, None, true),
+        "ctx.rs — difftastic (Rust) — no highlighting — full context unavailable \
+         (a reformatted region difftastic did not report)",
+        "the bailed suffix must follow the grammar note, not replace it"
     );
 }
 

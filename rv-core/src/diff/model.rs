@@ -41,9 +41,24 @@ pub enum LineKind {
 /// Where the lines of a [`FileDiff`] came from.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum DiffSource {
-    /// Produced from difftastic's JSON output; `language` is whatever
-    /// difftastic detected (it always reports one, defaulting to `"Text"`).
-    Difftastic { language: String },
+    /// Produced from difftastic's JSON output. `language` is whatever
+    /// difftastic detected on the *first* invocation (it always reports one,
+    /// defaulting to `"Text"`).
+    ///
+    /// `line_oriented` records that rv had to re-invoke difftastic with
+    /// `--byte-limit 0` — its line-oriented engine — before the merge could
+    /// build honest full context, per the design spec's §4.6. The
+    /// invocation that carried it always reports its own language as
+    /// `"Text (N B exceeded DFT_BYTE_LIMIT)"`, describing the engine's
+    /// choice rather than the file; that string is deliberately discarded
+    /// and the first invocation's language is kept, because the enum
+    /// records what happened to the file, not what the fallback engine
+    /// reported. `false` is the ordinary case: the syntax-aware answer
+    /// stood on its own.
+    Difftastic {
+        language: String,
+        line_oriented: bool,
+    },
     /// Produced by the `similar` crate's line diff, for the stated reason.
     Similar { reason: FallbackReason },
     /// Neither side was diffed: a NUL byte was found on at least one side.

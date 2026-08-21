@@ -66,6 +66,24 @@ const SUPPRESSED_NOTE: &str = "no semantic change — the difference is not visi
 /// merely still being parsed is the same guess in the other direction.
 const NO_GRAMMAR: &str = " — no highlighting";
 
+/// What the title adds when full-file context was attempted and declined —
+/// §3/§4.4 of the design spec: difftastic elided a region (a reformat with
+/// a different line count on each side) so there is no honest line-for-line
+/// pairing to fill it with, and the pane fell back to the changed-only view
+/// rather than guess.
+const CONTEXT_BAILED: &str =
+    " — full context unavailable (a reformatted region difftastic did not report)";
+
+/// What the title adds when the syntax-aware merge declined and rv's §4.6
+/// `--byte-limit 0` retry supplied the merged full-context result instead.
+/// Composed after the ordinary engine label so the reviewer reads
+/// `difftastic (Rust) — full context (line diff)` — the file's language is
+/// still Rust and the syntax highlighting is unchanged (highlighting reads
+/// from `highlight::language_of(&diff.path)`, not from `DiffSource`), but
+/// the pairings the merge walked come from difftastic's line-oriented
+/// engine rather than its tree-diff.
+const LINE_DIFF_CONTEXT: &str = " — full context (line diff)";
+
 pub(super) fn draw_diff(frame: &mut Frame, app: &App, area: Rect) {
     // The stack is drawn *inside* this pane, so it marks this pane as the one
     // the next keystroke lands in.
@@ -90,7 +108,14 @@ pub(super) fn draw_diff(frame: &mut Frame, app: &App, area: Rect) {
 
     let highlighting = Highlighting::of(app);
     // The path's own answer, not the cache's: see `NO_GRAMMAR`.
-    let block = pane(title(diff, highlight::language_of(&diff.path)), focused);
+    let block = pane(
+        title(
+            diff,
+            highlight::language_of(&diff.path),
+            app.context_bailed(),
+        ),
+        focused,
+    );
     let text = body(app, highlighting, diff, area);
     frame.render_widget(Paragraph::new(text).block(block), area);
 }
@@ -176,22 +201,43 @@ fn parked(natural: Range<usize>, rows: usize, scroll: Option<usize>) -> Range<us
 /// the pane makes about its own contents is decided, and the claim is
 /// load-bearing — it is what tells a reviewer whether they are reading
 /// difftastic's structural diff or a line diff standing in for it, and why.
+/// `bailed` is [`App::context_bailed`]'s answer for this file — appended
+/// last, after the grammar note, so a reviewer reads "what this pane is
+/// showing" before "what it could not show".
 #[must_use]
-pub fn title(diff: &FileDiff, language: Option<&'static str>) -> String {
+pub fn title(diff: &FileDiff, language: Option<&'static str>, bailed: bool) -> String {
     let source = match &diff.source {
-        DiffSource::Difftastic { language } => format!("{} — difftastic ({language})", diff.path),
+        DiffSource::Difftastic { language, .. } => {
+            format!("{} — difftastic ({language})", diff.path)
+        }
         DiffSource::Similar { reason } => match fallback_cause(*reason) {
             Some(cause) => format!("{} — fallback ({cause})", diff.path),
             None => format!("{} — fallback", diff.path),
         },
         DiffSource::Binary => format!("{} — binary", diff.path),
     };
-    match language {
+    let with_grammar = match language {
         // A binary file needs no second sentence about why it is not coloured:
         // it is not shown by line at all, and the title already says so.
         Some(_) => source,
         None if diff.source == DiffSource::Binary => source,
         None => format!("{source}{NO_GRAMMAR}"),
+    };
+    let with_line_diff = if matches!(
+        &diff.source,
+        DiffSource::Difftastic {
+            line_oriented: true,
+            ..
+        }
+    ) {
+        format!("{with_grammar}{LINE_DIFF_CONTEXT}")
+    } else {
+        with_grammar
+    };
+    if bailed {
+        format!("{with_line_diff}{CONTEXT_BAILED}")
+    } else {
+        with_line_diff
     }
 }
 
@@ -231,7 +277,7 @@ fn body<'a>(
     if diff.source == DiffSource::Binary {
         return Text::from("binary file, not shown by line");
     }
-    if diff.lines.is_empty() {
+    if app.displayed().is_empty() {
         return Text::from(if diff.suppressed {
             SUPPRESSED_EMPTY
         } else {
