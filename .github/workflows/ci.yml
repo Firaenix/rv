@@ -35,7 +35,28 @@ jobs:
 
       - run: nix develop --command cargo fmt --all --check
       - run: nix develop --command cargo clippy --workspace --all-targets -- -D warnings
-      - run: nix develop --command cargo test --workspace
+      - name: build tests
+        run: nix develop --command cargo test --workspace --no-run
+      - name: run highlight test 15x (parallel) with log
+        shell: bash
+        run: |
+          set +e
+          fails=0
+          for i in $(seq 1 15); do
+            echo "=== iter $i parallel ==="
+            rm -f /tmp/highlight-segv.log
+            nix develop --command cargo test -p rv-core --test highlight 2>&1 | tail -5
+            rc=${PIPESTATUS[0]}
+            if [ "$rc" -ne 0 ]; then
+              fails=$((fails+1))
+              echo "iter $i FAILED rc=$rc; log tail:"
+              tail -n 30 /tmp/highlight-segv.log
+              echo "--- log tail end ---"
+            fi
+          done
+          echo "parallel failures: $fails / 15"
+      - name: run rest of tests
+        run: nix develop --command cargo test --workspace
 
   package:
     name: nix build

@@ -1060,7 +1060,17 @@ proptest! {
     #[test]
     fn every_grammar_is_total_over_arbitrary_bytes(source in source_bytes()) {
         for (path, language) in GRAMMAR_PATHS {
+            use std::io::Write as _;
+            let mut log = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open("/tmp/highlight-segv.log")
+                .expect("open log");
+            writeln!(log, "start path={} bytes={:02x?}", path, source).ok();
+            log.flush().ok();
             let highlights = Highlights::of(&source, path);
+            writeln!(log, "done  path={}", path).ok();
+            log.flush().ok();
             prop_assert_eq!(highlights.language(), Some(*language), "path {}", path);
 
             let starts = ref_line_starts(&source);
