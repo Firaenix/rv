@@ -2894,7 +2894,7 @@ dependencies = [
 
 [[package]]
 name = "rv"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "anyhow",
  "blake3",
@@ -2910,7 +2910,7 @@ dependencies = [
 
 [[package]]
 name = "rv-core"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "blake3",
  "futures",
