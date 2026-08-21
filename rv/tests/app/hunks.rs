@@ -63,15 +63,15 @@ fn on_wide() -> (Fixture, App) {
 /// under one number, and which of the two a jump lands on is the row model's
 /// business rather than this test's.
 fn cursor_line(app: &App) -> u32 {
-    app.selected_diff()
-        .and_then(|diff| diff.lines.get(app.line_index()))
+    app.displayed_lines()
+        .get(app.line_index())
         .and_then(|line| line.right.or(line.left))
         .expect("the cursor is on a numbered line")
 }
 
 /// Presses `key` until the cursor stops moving, collecting every line it
-/// rested on — the one it started on included, since a reviewer opens already
-/// standing on the first hunk.
+/// rested on — the one it started on included, since with full-file context
+/// the reviewer opens on the file's first line, not on a hunk at all.
 fn walk(app: &mut App, key: char) -> Vec<u32> {
     let mut seen = vec![cursor_line(app)];
     let mut previous = app.line_index();
@@ -91,17 +91,19 @@ fn walk(app: &mut App, key: char) -> Vec<u32> {
 /// them and nothing but their numbers says there are three edits rather than
 /// one.
 ///
-/// A reviewer opens on the file's first changed line, so `J` is asked for the
-/// two hunks *after* the one they are already standing on.
+/// With full-file context shown, a reviewer opens on the file's first line
+/// (line 1), not on a changed one — so `J` is asked for all three hunks,
+/// the first included, unlike before this feature when opening the diff
+/// alone put the cursor on the first changed line already.
 #[test]
 fn j_steps_forward_through_every_hunk_and_stops_at_the_last() {
     let (_workspace, mut app) = on_wide();
     assert_eq!(
         cursor_line(&app),
-        EDITED[0],
-        "a reviewer opens on the first hunk"
+        1,
+        "a reviewer opens on the file's first line"
     );
-    assert_eq!(walk(&mut app, 'J'), EDITED);
+    assert_eq!(walk(&mut app, 'J'), [1, EDITED[0], EDITED[1], EDITED[2]]);
 }
 
 /// No wrap at the far end: a jump from the last hunk to the first would look
@@ -176,7 +178,7 @@ fn a_hunk_jump_from_the_sidebar_lands_in_the_diff() {
 
     app.on_key(KeyCode::Char('J')).expect("J");
     assert_eq!(app.focus(), Focus::Diff);
-    assert_eq!(cursor_line(&app), EDITED[1]);
+    assert_eq!(cursor_line(&app), EDITED[0]);
 }
 
 /// A file the change only renamed has no hunk at all. That is a different fact

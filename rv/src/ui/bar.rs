@@ -149,5 +149,6 @@ fn status_view(app: &App, now: Instant) -> statusbar::View<'_> {
         // The last thing that happened — empty once it has expired, which is
         // the eight-second rule the viewport spec asks for.
         status: app.status_line(now),
+        busy: app.merging(),
     }
 }

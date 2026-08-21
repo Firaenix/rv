@@ -69,7 +69,8 @@ fn a_usable_verdict_lets_difftastic_answer() {
     assert_eq!(
         diff.source,
         DiffSource::Difftastic {
-            language: "Rust".to_owned()
+            language: "Rust".to_owned(),
+            line_oriented: false,
         },
         "is difft on PATH? {diff:?}"
     );

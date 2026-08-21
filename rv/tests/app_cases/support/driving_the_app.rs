@@ -173,11 +173,11 @@ pub fn type_text(app: &mut App, text: &str) {
     }
 }
 
-/// The lines of the selected file's diff.
+/// The lines the selected file's diff pane actually draws — full-file
+/// context where the merge can build it, the engine's own lines otherwise —
+/// which is what [`App::line_index`] indexes.
 pub fn lines(app: &App) -> Vec<DiffLine> {
-    app.selected_diff()
-        .map(|diff| diff.lines.clone())
-        .unwrap_or_default()
+    app.displayed_lines()
 }
 
 /// Rewinds and then walks the sidebar to `path` with `]`, the way a reviewer

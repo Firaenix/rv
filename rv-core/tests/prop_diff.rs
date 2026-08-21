@@ -549,7 +549,7 @@ fn diff_source() -> impl Strategy<Value = DiffSource> {
         // The languages difftastic reports, plus the shapes a language name
         // could take that JSON escaping would have to survive.
         2 => prop::sample::select(vec!["Text", "Rust", "C++", "", "\"quoted\"", "ünïcøde"])
-            .prop_map(|language| DiffSource::Difftastic { language: language.to_owned() }),
+            .prop_map(|language| DiffSource::Difftastic { language: language.to_owned(), line_oriented: false }),
     ]
 }
 
@@ -1350,6 +1350,71 @@ proptest! {
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(96))]
+    /// CONSERVATION, over the **merged full-context stream** rather than
+    /// difftastic's changed-only one: wherever `merge_context` succeeds, its
+    /// old side (`Removed` + `Context`) is the old file exactly and its new
+    /// side (`Added` + `Context`) is the new file exactly, both numbered
+    /// `1..=n` with no gaps or repeats — literally, not merely in aggregate
+    /// the way `diff_lines_are_in_file_order_and_never_repeated` proves for
+    /// difftastic's own changed-only output.
+    ///
+    /// Driven by the same [`ordering_pair`] generator as the property above,
+    /// which reaches files with several separated hunks — the shape where a
+    /// merge actually has gaps to fill, not just the two at the file's ends.
+    /// A `None` from `merge_context` (a difftastic-elided reformatted region,
+    /// see `context.rs`'s dedicated cases) is skipped rather than treated as
+    /// a failure: this property is about what a *successful* merge conserves,
+    /// not about when one is possible.
+    #[test]
+    fn full_context_merge_conserves_both_files_when_it_succeeds((old, new) in ordering_pair()) {
+        let old_text = old.iter().map(|line| format!("{line}\n")).collect::<String>();
+        let new_text = new.iter().map(|line| format!("{line}\n")).collect::<String>();
+        let diff =
+            compute_with(Some(old_text.as_bytes()), Some(new_text.as_bytes()), "x.txt", true);
+
+        let Some(merged) = rv_core::diff::merge_context(&diff.lines, &old_text, &new_text) else {
+            return Ok(());
+        };
+
+        let old_side: Vec<String> = merged
+            .iter()
+            .filter(|line| line.kind != LineKind::Added)
+            .map(|line| line.text.clone())
+            .collect();
+        let new_side: Vec<String> = merged
+            .iter()
+            .filter(|line| line.kind != LineKind::Removed)
+            .map(|line| line.text.clone())
+            .collect();
+        let old_numbers: Vec<Option<u32>> = merged
+            .iter()
+            .filter(|line| line.kind != LineKind::Added)
+            .map(|line| line.left)
+            .collect();
+        let new_numbers: Vec<Option<u32>> = merged
+            .iter()
+            .filter(|line| line.kind != LineKind::Removed)
+            .map(|line| line.right)
+            .collect();
+
+        prop_assert_eq!(&old_side, &old, "old side of merged {:#?}", merged);
+        prop_assert_eq!(&new_side, &new, "new side of merged {:#?}", merged);
+        prop_assert_eq!(old_numbers, one_based(old.len()), "left numbering of {:#?}", merged);
+        prop_assert_eq!(new_numbers, one_based(new.len()), "right numbering of {:#?}", merged);
+
+        // Every changed line difftastic reported is still present, unchanged,
+        // in the merged stream — the merge adds Context rows, it does not
+        // touch the ones already there.
+        let changed_before: Vec<&rv_core::diff::DiffLine> =
+            diff.lines.iter().filter(|line| line.kind != LineKind::Context).collect();
+        let changed_after: Vec<&rv_core::diff::DiffLine> =
+            merged.iter().filter(|line| line.kind != LineKind::Context).collect();
+        prop_assert_eq!(changed_before, changed_after, "{:#?}", merged);
+    }
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(96))]
     /// Each engine's line shape, and the fact that the answer always follows
     /// the shape of whichever engine produced it. Both branches assert, so no
     /// input is skipped:
@@ -1692,7 +1757,8 @@ fn difft_language_follows_the_path_extension(#[case] path: &str, #[case] languag
     assert_eq!(
         diff.source,
         DiffSource::Difftastic {
-            language: language.to_owned()
+            language: language.to_owned(),
+            line_oriented: false,
         },
         "{diff:#?}"
     );

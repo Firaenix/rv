@@ -37,7 +37,7 @@ fn a_typed_comment_reaches_the_store_byte_identically() {
         let app = app.borrow();
         assert_eq!(app.selected_file().expect("a file").path, "alpha.rs");
         assert_difftastic(&app);
-        app.selected_diff().expect("a diff").lines.len()
+        app.displayed_lines().len()
     };
     assert!(total >= 3, "alpha.rs produced only {total} diff lines");
     let seen = Coverage::new(&[

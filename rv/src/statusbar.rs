@@ -99,6 +99,12 @@ pub enum Role {
     /// The revset under review.
     Scope,
     Comments,
+    /// Ephemeral: a background job is running for the selected file (a
+    /// full-file-context merge, today, and the only shape that fits). The
+    /// bar drops this before the status: a rebuilder that took its own row
+    /// away from `deleted comment at app.rs:42` would be showing itself in
+    /// the reviewer's way.
+    Busy,
     /// The last thing that happened.
     Status,
     /// Right-aligned, and it names `?`.
@@ -116,25 +122,29 @@ impl Role {
     const fn rank(self) -> u8 {
         match self {
             Role::Status => 0,
+            // Above Status only because it is a job-in-progress and going
+            // silent on a small terminal would leave the reviewer wondering
+            // why the pane just changed.
+            Role::Busy => 1,
             // Nice to know, never load-bearing: the position already says the
             // line, and the symbol is only present when the index is warm.
-            Role::Symbol => 1,
-            Role::Scope => 2,
+            Role::Symbol => 2,
+            Role::Scope => 3,
             // Above the scope and below the position: a reviewer who has walked
             // into a change wants to know which one, and the revset is the same
             // sentence it was when they opened the review.
-            Role::Change => 3,
-            Role::Position => 4,
-            Role::Comments => 5,
-            Role::Mode => 6,
-            Role::Hint => 7,
+            Role::Change => 4,
+            Role::Position => 5,
+            Role::Comments => 6,
+            Role::Mode => 7,
+            Role::Hint => 8,
         }
     }
 
     /// Whether the segment is drawn at the right-hand end rather than in the
     /// run that starts at the left.
     const fn trailing(self) -> bool {
-        matches!(self, Role::Hint)
+        matches!(self, Role::Hint | Role::Busy)
     }
 
     /// The colour the segment is drawn on.
@@ -155,6 +165,9 @@ impl Role {
             // Between the position and the scope, because that is what it is
             // between: narrower than the review, wider than one file.
             Role::Change | Role::Status => Color::Gray,
+            // A hue reviewers already read as "in progress" everywhere — the
+            // theme's own accent, not the two greys the other segments share.
+            Role::Busy => theme::COMMENT,
             Role::Comments => theme::COMMENT,
         }
     }
@@ -246,6 +259,10 @@ pub struct View<'a> {
     pub open_comments: usize,
     /// The last thing that happened, or empty once it has expired.
     pub status: &'a str,
+    /// Whether the selected file has a background job running for it — a
+    /// full-file-context merge, and today the only kind. The Busy segment
+    /// shows only while this is `true`.
+    pub busy: bool,
 }
 
 /// The bar's segments, left to right, skipping the ones with nothing to say.
@@ -301,6 +318,9 @@ pub fn segments(view: &View<'_>) -> Vec<Segment> {
     push(Role::Scope, view.scope.to_owned());
     push(Role::Comments, format!("{} open", view.open_comments));
     push(Role::Status, view.status.to_owned());
+    if view.busy {
+        push(Role::Busy, "preparing full view".to_owned());
+    }
     push(Role::Hint, HINT.to_owned());
     bar
 }

@@ -77,7 +77,8 @@ impl App {
     /// [`App::anchor_target`] the save path goes through, so a comment can
     /// never be stored against one line and displayed against another.
     pub fn comments_for_line(&self, index: usize) -> Vec<&Comment> {
-        let Some(line) = self.selected_diff().and_then(|diff| diff.lines.get(index)) else {
+        let displayed = self.displayed();
+        let Some(line) = displayed.get(index) else {
             return Vec::new();
         };
         let Some(target) = self.anchor_target(line) else {

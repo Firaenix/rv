@@ -98,7 +98,7 @@ impl App {
         let Some(line) = self.selected_line() else {
             return Ok(Err("no diff line selected, nothing saved".to_owned()));
         };
-        let Some(target) = self.anchor_target(line) else {
+        let Some(target) = self.anchor_target(&line) else {
             return Ok(Err(
                 "this line has no number on the side it belongs to".to_owned()
             ));

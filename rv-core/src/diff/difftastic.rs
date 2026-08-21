@@ -32,14 +32,43 @@ pub type Answer = (Vec<DiffLine>, DiffSource, bool);
 /// enough* through [`probe::verdict`]; a `None` from here is therefore about
 /// this run, not about the binary.
 pub fn run(old: Option<&[u8]>, new: Option<&[u8]>, path: &str) -> Option<Answer> {
+    run_with(old, new, path, false)
+}
+
+/// As [`run`], but with `--byte-limit 0` — difftastic's switch to its
+/// line-oriented engine, which reports whitespace-only edits (§3's
+/// reformatted-region case) as chunks the merger can walk. See the design
+/// spec §4.6: the caller — [`super::merge`]'s worker in rv — only asks for
+/// this after the syntax-aware answer's merge returned `None`.
+///
+/// The parser is the same one [`run`] uses; the only difference is which
+/// engine inside difftastic produced the chunks it returns.
+pub fn run_line_oriented(old: Option<&[u8]>, new: Option<&[u8]>, path: &str) -> Option<Answer> {
+    run_with(old, new, path, true)
+}
+
+fn run_with(
+    old: Option<&[u8]>,
+    new: Option<&[u8]>,
+    path: &str,
+    line_oriented: bool,
+) -> Option<Answer> {
     let suffix = extension_suffix(path);
     let mut old_file = tempfile::Builder::new().suffix(&suffix).tempfile().ok()?;
     let mut new_file = tempfile::Builder::new().suffix(&suffix).tempfile().ok()?;
     old_file.write_all(old.unwrap_or(&[])).ok()?;
     new_file.write_all(new.unwrap_or(&[])).ok()?;
 
-    let output = probe::command()
-        .env("DFT_UNSTABLE", "yes")
+    let mut command = probe::command();
+    command.env("DFT_UNSTABLE", "yes");
+    if line_oriented {
+        // `--byte-limit 0` selects difftastic's line-oriented engine (see
+        // difftastic's `DFT_BYTE_LIMIT` docs): every file is over the limit,
+        // so no file gets the syntax-aware parser. Available since 0.51.0
+        // (rv's minimum, `probe::MINIMUM_DIFFT`), so no version bump.
+        command.arg("--byte-limit").arg("0");
+    }
+    let output = command
         .arg("--display")
         .arg("json")
         .arg(old_file.path())
@@ -76,7 +105,14 @@ pub fn parse(json: &Value, old: Option<&[u8]>, new: Option<&[u8]>) -> Option<Ans
         .and_then(Value::as_str)
         .unwrap_or("Text")
         .to_owned();
-    let source = DiffSource::Difftastic { language };
+    // `line_oriented` is `false` here regardless of which engine actually
+    // ran: the parser describes what difftastic returned, and the caller
+    // (`super::merge`'s worker) is the only thing that knows whether this
+    // parse resulted from the retry — it flips the flag on the way back.
+    let source = DiffSource::Difftastic {
+        language,
+        line_oriented: false,
+    };
 
     // "unchanged" means no *semantic* difference (e.g. pure reindentation).
     // difftastic emits no chunks in this case, so there is nothing further to

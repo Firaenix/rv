@@ -5,3 +5,4 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc 5401977120cf5b976a75ae656e15fde6850cf03332944cefe1c0fa2708468e57 # shrinks to (old, new) = (["+plus", "  indented", "a", "  indented", "\ttab", "a"], ["+plus", "let x = 1;", "", "a", "", "let x = 1;", "let x = 1;"])
+cc b45f7e6c2a5edb2e3f52bc47d447e5bdaee783474621ff953016ff169a53aa43 # shrinks to (old, new) = (["line 0", "line 1", "line 2", "line 3", "line 4", "line 5", "line 6", "line 7"], ["line 2", "line 3", "inserted after 3", "inserted before 4", "line 4", "line 5", "inserted before 7", "line 7"])

@@ -14,11 +14,14 @@
 //! degraded diff is owed the difference between "difftastic was never asked"
 //! and "difftastic is installed but this rv cannot read it".
 
+mod context;
 mod difftastic;
 mod fallback;
 mod model;
 mod ordering;
 mod probe;
+
+pub use context::merge as merge_context;
 
 pub use model::DiffLine;
 pub use model::DiffSource;
@@ -108,6 +111,32 @@ pub fn difft_verdict() -> DifftVerdict {
 /// checked by looking at the [`FileDiff`] that comes back.
 pub fn difft_spawns() -> usize {
     probe::spawns()
+}
+
+/// Runs difftastic once with `--byte-limit 0`, the switch that selects its
+/// line-oriented engine. Returns just the [`DiffLine`]s and whether the
+/// answer was suppressed, because the caller — [`crate::app::merges`]' worker
+/// in `rv` — is retrying against a previous syntax-aware answer whose
+/// `DiffSource`'s `language` it already holds, so the retry's own language
+/// (always `"Text (N B exceeded DFT_BYTE_LIMIT)"`, describing the engine's
+/// choice not the file) is deliberately discarded.
+///
+/// Returns `None` when the retry produced nothing usable — a spawn that
+/// failed, JSON that did not parse, or a difftastic that could not be run at
+/// all. See the design spec §4.6 for the calling protocol.
+pub fn compute_line_oriented(
+    old: Option<&[u8]>,
+    new: Option<&[u8]>,
+    path: &str,
+) -> Option<(Vec<DiffLine>, bool)> {
+    if is_binary(old) || is_binary(new) {
+        return None;
+    }
+    if difft_verdict().refusal().is_some() {
+        return None;
+    }
+    let (lines, _source, suppressed) = difftastic::run_line_oriented(old, new, path)?;
+    Some((lines, suppressed))
 }
 
 fn binary_or(

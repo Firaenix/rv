@@ -262,6 +262,13 @@ impl App {
             }
             _ => rv_core::diff::compute(old.as_deref(), new.as_deref(), &head_path),
         };
+        self.commit_blobs.insert(
+            pair,
+            (
+                old.clone().unwrap_or_default(),
+                new.clone().unwrap_or_default(),
+            ),
+        );
         self.commit_diffs.insert(pair, diff);
         self.parse_highlights(from, base_path, old.as_deref());
         self.parse_highlights(to, head_path, new.as_deref());

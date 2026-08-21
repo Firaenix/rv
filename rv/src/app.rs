@@ -24,12 +24,14 @@
 mod alerts;
 mod anchor;
 mod bindings;
+mod build;
 mod changes;
 mod comment;
 mod comments;
 mod commits;
 mod delete;
 mod diffs;
+mod diffview;
 mod editor;
 mod enabled;
 mod export;
@@ -37,6 +39,7 @@ mod fold;
 mod hunks;
 mod keys;
 mod measure;
+mod merges;
 mod mode;
 mod mouse;
 mod navigate;
@@ -73,21 +76,15 @@ use std::cell::Cell;
 use std::collections::HashMap;
 use std::collections::HashSet;
 
-use anyhow::Context as _;
-use anyhow::Result;
 use rv_core::diff::FileDiff;
 use rv_core::highlight::Highlights;
 use rv_core::store::Comment;
-use rv_core::store::CommentState;
 
 use crate::gradient::Stat;
 use crate::layout::Layout;
 use crate::layout::Split;
 use crate::session::Review;
-use crate::statusbar;
 use crate::tree::Sort;
-use crate::ui;
-use status::HELP;
 
 /// One interactive review.
 ///
@@ -102,6 +99,35 @@ use status::HELP;
 pub struct App {
     review: Review,
     diffs: Vec<Option<FileDiff>>,
+    /// The `(old, new)` blob bytes each `diffs` entry was computed from,
+    /// parallel to it — `None` exactly where `diffs`' entry is `None`.
+    ///
+    /// Kept so [`super::merges`]' background worker can synthesize full-file
+    /// context without a second blob read, per the branch-reviewer design's
+    /// lazy-blob rule (spec §7): the bytes are already in hand the moment the
+    /// diff is, and re-reading them for a second purpose is exactly the eager
+    /// read that rule forbids.
+    blobs: Vec<Option<(Vec<u8>, Vec<u8>)>>,
+    /// The full-file-context merge for each file, parallel to `blobs` — see
+    /// [`super::merges::MergeState`]. Populated by the same lifecycle that
+    /// fills `blobs`: a fresh load slots [`MergeState::Pending`] and kicks
+    /// the background merger; the result lands as [`MergeState::Ready`] or
+    /// [`MergeState::Bailed`]. Read through [`App::displayed_lines`], which
+    /// falls back to the diff's own changed-only lines while the merge is
+    /// pending — the reviewer sees the shipped-before-this-feature view
+    /// during the sub-second the worker is running, not a blank pane.
+    ///
+    /// See `docs/superpowers/specs/2026-08-21-rv-full-file-context-design.md`
+    /// Appendix A (the caching architecture the shipped feature omitted).
+    merges: Vec<Option<merges::MergeState>>,
+    /// Whether the reviewer wants full-file context (spec §5, walked back to
+    /// let a toggle stand — see [`crate::app::context`]). Reviewer default is
+    /// `true`, and `f` flips it. Not persisted: this is a display preference
+    /// scoped to one run, not a review artefact.
+    full_context: bool,
+    /// The merge worker: single-slot, latest-wins, mirroring
+    /// [`diffs::Refiner`]. See [`super::merges`].
+    merger: merges::Merger,
     comments: Vec<Comment>,
     /// What each comment's anchor has done since it was written, by id —
     /// surveyed alongside `comments` and refreshed with them, because every
@@ -256,6 +282,9 @@ pub struct App {
     /// the view exists.
     commit_pair: Option<usize>,
     commit_diffs: HashMap<usize, FileDiff>,
+    /// The `(old, new)` bytes each `commit_diffs` entry was computed from,
+    /// keyed the same way — see `blobs`' doc comment for why this exists.
+    commit_blobs: HashMap<usize, (Vec<u8>, Vec<u8>)>,
     /// The symbols in scope, and which scope they were indexed for.
     ///
     /// Two fields rather than an `Option<(Scope, Index)>` because the index is
@@ -288,111 +317,4 @@ pub struct App {
     /// run it. `None` at every other moment: [`App::take_edit`] is the only
     /// reader and it takes.
     pending_edit: Option<editor::Edit>,
-}
-
-impl App {
-    /// Opens `review` in the reviewer, loading the first file's diff.
-    ///
-    /// # Why the engine is a parameter and not an environment variable
-    ///
-    /// `RV_NO_DIFFT` exists and `diff::compute` honours it, but a *test* cannot
-    /// use it: `std::env::set_var` is unsafe in edition 2024 precisely because it
-    /// races any concurrent `getenv`, and cargo runs integration tests on many
-    /// threads. The alternative this replaces is therefore a data race, not an
-    /// inconvenience — which is the argument for the parameter, and a stronger one
-    /// than the process-wide-and-impolite reasoning that used to stand here.
-    pub fn open(review: Review, engine: DiffEngine) -> Result<Self> {
-        Self::build(review, engine)
-    }
-
-    fn build(review: Review, engine: DiffEngine) -> Result<Self> {
-        let diffs = vec![None; review.files.len()];
-        // Read before the first diff is computed: a reviewer who quit halfway
-        // through yesterday opens on the notes they already made.
-        let mut comments = crate::session::in_range(
-            &review,
-            review
-                .store
-                .comments()
-                .context("could not read the saved comments")?,
-        );
-        // Derived, never stored: a comment whose anchor no longer resolves is
-        // outdated for as long as that stays true and no longer. One pass, its
-        // findings kept — see the `drift` field.
-        let drift = crate::stale::survey(&review, &mut comments);
-        let cursor_rows = vec![0; review.files.len()];
-        // A comment that is no longer open starts folded: still exactly where
-        // the reviewer left it, without competing for the screen with the ones
-        // still asking for an answer. Seeded here rather than forced every
-        // frame so that `s` can expand one like any other box.
-        let collapsed = comments
-            .iter()
-            .filter(|comment| comment.state != CommentState::Open)
-            .map(|comment| comment.id.clone())
-            .collect();
-        // Before anything is drawn: the sidebar's tint and counts are facts
-        // about the whole review. Unreadable blobs are measured as zero *and
-        // said out loud*, unstamped — opening a review has no more clock in
-        // reach than a key press does.
-        let (stats, unreadable) = Self::measure(&review);
-        let mut app = Self {
-            review,
-            diffs,
-            comments,
-            file_index: 0,
-            cursor_rows,
-            drift,
-            focus: Focus::Diff,
-            sidebar_tab: SidebarTab::Files,
-            browser_index: 0,
-            comment_index: 0,
-            collapsed,
-            collapsed_dirs: HashSet::new(),
-            tree: false,
-            sort: Sort::default(),
-            tint: true,
-            counts: true,
-            zoom: Vec::new(),
-            sidebar_row: 0,
-            stats,
-            ascii: statusbar::ascii_from_env(),
-            split: Split::default(),
-            help: HelpStage::Closed,
-            help_scroll: 0,
-            body_width: Cell::new(ui::default_body_width()),
-            highlights: HashMap::new(),
-            painted: Cell::new(ui::default_layout()),
-            dragging: false,
-            diff_scroll: None,
-            sidebar_scroll: None,
-            diff_hscroll: 0,
-            sidebar_hscroll: 0,
-            alerts: Vec::new(),
-            mode: Mode::Browse,
-            buffer: String::new(),
-            status: HELP.to_owned(),
-            status_stamp: None,
-            status_seen: String::new(),
-            engine,
-            parsing: HashSet::new(),
-            painter: paint::Painter::default(),
-            commit_pair: None,
-            commit_diffs: HashMap::new(),
-            symbol_index: crate::index::Index::default(),
-            indexed_scope: None,
-            refining: HashSet::new(),
-            refined: HashSet::new(),
-            refiner: diffs::Refiner::default(),
-            info_dismissed: false,
-            info_scroll: 0,
-            sidebar_hidden: false,
-            commits: commits::Commits::default(),
-            pending_edit: None,
-        };
-        for message in unreadable {
-            app.raise(message);
-        }
-        app.load_selected()?;
-        Ok(app)
-    }
 }

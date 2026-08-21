@@ -113,7 +113,7 @@ fn the_fallback_path_navigates_comments_and_anchors() {
     let app = RefCell::new(fixture.fallback_app());
     let total = {
         let app = app.borrow();
-        app.selected_diff().expect("a diff").lines.len()
+        app.displayed_lines().len()
     };
     assert!(total >= 6, "the fallback diff has only {total} lines");
 

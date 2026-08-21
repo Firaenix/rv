@@ -196,7 +196,10 @@ impl Fixture {
     /// change below the one every fixture above puts its head state in.
     pub fn app(&self) -> App {
         let review = session::build(self.root(), Some("@--"), None).expect("build the review");
-        App::open(review, DiffEngine::Structural).expect("open the reviewer")
+        let mut app = App::open(review, DiffEngine::Structural).expect("open the reviewer");
+        app.finish_loading();
+        app.finish_merging();
+        app
     }
 
     /// The reviewer over the same range, with difftastic bypassed: every diff
@@ -207,7 +210,10 @@ impl Fixture {
     /// silently swap the diff engine under every other property in this binary.
     pub fn fallback_app(&self) -> App {
         let review = session::build(self.root(), Some("@--"), None).expect("build the review");
-        App::open(review, DiffEngine::Fallback).expect("open the reviewer")
+        let mut app = App::open(review, DiffEngine::Fallback).expect("open the reviewer");
+        app.finish_loading();
+        app.finish_merging();
+        app
     }
 
     /// A store handle that shares nothing with the app's own, so an assertion

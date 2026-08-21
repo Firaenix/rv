@@ -90,10 +90,15 @@ use crate::support::*;
 #[case::list_or_tree(KeyCode::Char('t'), Action::Continue, Mode::Browse, Focus::Diff, (0, 0), None)]
 #[case::order_the_files(KeyCode::Char('o'), Action::Continue, Mode::Browse, Focus::Diff, (0, 0), None)]
 // `J`/`K` walk hunks. `alpha.rs` carries two — the inserted header, then the
-// rewritten line below it — so `J` from the top has exactly one to reach and
-// `K` from the top has none, which is where the no-wrap ruling is visible: the
-// refusal speaks rather than jumping to the far end.
-#[case::next_hunk(KeyCode::Char('J'), Action::Continue, Mode::Browse, Focus::Diff, (0, 1), None)]
+// rewritten line below it. With full-file context shown the two are
+// separated by real `Context` rows (the untouched `pub fn alpha() {` and
+// `let a01 = 1;`), so the reviewer opens standing on the header (hunk one,
+// line_index 0) and `J` jumps past the intervening context to line_index 3,
+// the removed half of the rewritten pair — not to line_index 1, which is
+// now context. `K` from the top still has nowhere to go, which is where the
+// no-wrap ruling is visible: the refusal speaks rather than jumping to the
+// far end.
+#[case::next_hunk(KeyCode::Char('J'), Action::Continue, Mode::Browse, Focus::Diff, (0, 3), None)]
 #[case::previous_hunk_at_the_first(KeyCode::Char('K'), Action::Continue, Mode::Browse, Focus::Diff, (0, 0), Some("the first hunk in this file"))]
 #[case::open_the_help(KeyCode::Char('?'), Action::Continue, Mode::Browse, Focus::Diff, (0, 0), None)]
 // Not in the table, and therefore inert.

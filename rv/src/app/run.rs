@@ -87,6 +87,7 @@ impl App {
             // reading is painted on this pass rather than the next.
             self.collect_highlights();
             self.collect_refined();
+            self.collect_merged();
             terminal
                 .draw(|frame| ui::draw(frame, self, now))
                 .context("could not draw the review")?;
@@ -95,7 +96,7 @@ impl App {
             // step of the fade — or the colour that has just been parsed.
             let deadline = match (
                 self.next_deadline(Instant::now()),
-                self.painting() || self.refining(),
+                self.painting() || self.refining() || self.merging(),
             ) {
                 (Some(fade), true) => Some(fade.min(PAINT_POLL)),
                 (Some(fade), false) => Some(fade),
