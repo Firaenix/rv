@@ -40,6 +40,14 @@ enum HelpRow {
     },
 }
 
+/// The binding a row carries, or `None` for a heading.
+fn row_binding(row: &HelpRow) -> Option<&'static Binding> {
+    match row {
+        HelpRow::Key { binding, .. } => Some(binding),
+        HelpRow::Heading(_) => None,
+    }
+}
+
 /// How a binding is spelled in the full keymap: the chord a reviewer presses. A
 /// direct key is itself; a key under a leader is the leader then the key — `v f`.
 /// The `Space` leader is drawn as `⎵` here so its column stays as narrow as the
@@ -72,10 +80,14 @@ const LAYERS: &[Layer] = &[
     },
     Layer {
         keys: "Tab",
-        what: "tree / diff",
+        what: "next mode",
     },
     Layer {
         keys: "Space",
+        what: "actions here …",
+    },
+    Layer {
+        keys: "m",
         what: "mode …",
     },
     Layer {
@@ -196,16 +208,12 @@ pub(super) fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
 /// [`scrolled`] is the only place [`App::help_scroll`] is used.
 fn help_text(app: &App, width: usize, height: usize) -> Text<'static> {
     let blocks = help_blocks(app);
-    let keys = BINDINGS
-        .iter()
-        .map(|binding| chord(binding).chars().count())
-        .max()
-        .unwrap_or(0);
-    let what = BINDINGS
-        .iter()
-        .map(|binding| binding.what.chars().count())
-        .max()
-        .unwrap_or(0);
+    // Measured over the rows actually shown, not every binding — the `Space`
+    // menu's children are excluded from the map, so counting them would widen
+    // the column for keys that never appear.
+    let shown = || blocks.iter().flatten().filter_map(row_binding);
+    let keys = shown().map(|b| chord(b).chars().count()).max().unwrap_or(0);
+    let what = shown().map(|b| b.what.chars().count()).max().unwrap_or(0);
     let column = keys + HELP_GAP + what;
     // `(width + gap) / (column + gap)`: n columns need n-1 gaps between them.
     let columns = ((width + HELP_GAP) / (column + HELP_GAP)).max(1);
@@ -271,7 +279,13 @@ fn help_blocks(app: &App) -> Vec<Vec<HelpRow>> {
             rows.extend(
                 BINDINGS
                     .iter()
-                    .filter(|binding| binding.group == *group)
+                    // The `Space` menu's children are duplicates reached through
+                    // their stable leader (`c d`, `v t`, …); the full map lists
+                    // them there, not twice.
+                    .filter(|binding| {
+                        binding.group == *group
+                            && binding.leader != Some(crate::app::Leader::Context)
+                    })
                     .map(|binding| HelpRow::Key {
                         binding,
                         enabled: app.binding_enabled(binding),

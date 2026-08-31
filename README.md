@@ -200,11 +200,13 @@ are *backgrounds*, and a syntax colour is always a *foreground*.
 **Browsing**
 
 Movement is the **arrows** (and the mouse) — there are no `hjkl` aliases. The
-rest of the keymap is layered under three leaders: press `g` to **go**
-somewhere, `c` to act on the **comment** under the cursor, or `v` to change the
-**view**, and a small menu shows what the next key does. When only one thing
-makes sense — `c` on a line with no comment yet — rv skips the menu and does it,
-naming the choice in the status bar. `?` shows the whole map at any time.
+rest of the keymap is layered under leaders, each opening a small menu of what
+the next key does. `Space` is the **contextual** menu — it shows whichever
+actions suit the mode you are in; `m` jumps to a **mode**; `g` **goes**
+somewhere; `c` acts on the **comment** under the cursor; and `v` is the full,
+stable list of **view** toggles. When only one thing makes sense — `c` on a line
+with no comment yet — rv skips the menu and does it, naming the choice in the
+status bar. `?` shows the leaders; `?` again unrolls the whole map.
 
 | Key | Action |
 | --- | --- |
@@ -221,17 +223,31 @@ naming the choice in the status bar. `?` shows the whole map at any time.
 | `]` | Next file, from whichever pane the cursor is in |
 | `[` | Previous file, likewise |
 | `Enter` | To the diff for the highlighted item: opens the file under the sidebar cursor (moving the focus to the diff), steps into the selected diff line's comment stack, or from the Comments tab jumps to the comment's code. It no longer fires on a directory or change row — `→` drills into those |
-| `Tab` | Swap the focus between the tree panel and the diff panel. A file row under a change shows *that change's* diff of it |
+| `Tab` | To the next mode, looping: Files → Commits → Comments → Diff. A file row under a change shows *that change's* diff of it |
 | `s` | Fold a comment box away, or a directory in the file list — again to unfold |
+| `f` | On the diff: toggle full-file context (also `v` `f` from anywhere) |
+| `i` | In the **Commits** list: put the change details away, or bring them back (also `v` `i` from anywhere) |
 | `E` | Open the selected file at the cursor's line in `$EDITOR`, and come back to the review when it exits. Unset `$EDITOR` is reported in the status line rather than guessed at |
+| `+` | Widen the sidebar |
+| `_` | Narrow it |
 | `Esc` | Leave the comment stack, or back out of a zoomed directory |
 | `?` | What the keys do **here**: a contextual tip in the corner above the bar. `?` again unrolls the whole keymap; `Esc` or `q` closes either |
 | `q` | Quit |
 | `Ctrl+C` | Quit from anywhere, including out of a half-typed comment |
-| `Space` `f` | Go to the **Files** mode: the sidebar's file list |
-| `Space` `c` | Go to the **Commits** mode: the list of changes |
-| `Space` `m` | Go to the **Comments** mode: the review's comment browser |
-| `Space` `d` | Go to the **Diff** mode: the focus lands on the diff |
+| `Space` `t` | (Files/Commits) Switch the list between a flat list and a tree |
+| `Space` `o` | (Files/Commits) Cycle the list's order: by path, additions, deletions |
+| `Space` `#` | (Files/Commits) Show or hide the `+n -n` counts |
+| `Space` `c` | (Files/Commits) Tint the names by their change |
+| `Space` `g` | (Diff) Group the diff by side instead of interleaving |
+| `Space` `b` | (Diff) Cycle before ｜ diffed ｜ after |
+| `Space` `f` | (Diff) Toggle full-file context |
+| `Space` `d` | (on a comment) Delete it, after a `y`/`n` confirmation |
+| `Space` `r` | (on a comment) Resolve it — again to reopen |
+| `Space` `a` | (on a comment) Abandon it — again to reopen |
+| `m` `f` | Go to the **Files** mode: the sidebar's file list |
+| `m` `c` | Go to the **Commits** mode: the list of changes |
+| `m` `o` | Go to the **Comments** mode: the review's comment browser |
+| `m` `d` | Go to the **Diff** mode: the focus lands on the diff |
 | `g` `↓` | Next hunk: the first line of the next run of changes, skipping the context between them |
 | `g` `↑` | The previous hunk |
 | `g` `n` | Next symbol in scope — every changed file, or one change's files from the Commits tab |

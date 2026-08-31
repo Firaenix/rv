@@ -84,10 +84,17 @@ pub(super) fn draw(frame: &mut Frame, app: &App, area: Rect, bar: Rect) {
 }
 
 /// The leader's children that would do something from where the cursor is now.
+/// The contextual (`Space`) menu also drops children that do not belong to the
+/// current mode, so it shows only that mode's own actions.
 fn live_children(app: &App, leader: Leader) -> Vec<&'static Binding> {
+    let context = app.context();
     BINDINGS
         .iter()
-        .filter(|binding| binding.leader == Some(leader) && app.binding_enabled(binding))
+        .filter(|binding| {
+            binding.leader == Some(leader)
+                && (binding.contexts.is_empty() || binding.contexts.contains(&context))
+                && app.binding_enabled(binding)
+        })
         .collect()
 }
 

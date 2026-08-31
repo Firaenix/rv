@@ -52,8 +52,21 @@ enum Job {
     Shutdown,
 }
 
+/// Where a refined diff belongs when it lands.
+///
+/// The file list and the commits view keep their diffs in different places —
+/// the shared `diffs` array by file index, and the `commit_diffs` map by pair —
+/// but the work of turning two blobs into a structural diff is identical, so
+/// one worker does both and the target rides along to say which slot the answer
+/// is for.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub(super) enum Target {
+    File(usize),
+    Commit(usize),
+}
+
 struct Request {
-    file: usize,
+    target: Target,
     base: Option<Vec<u8>>,
     head: Option<Vec<u8>>,
     path: String,
@@ -61,7 +74,7 @@ struct Request {
 
 /// A structural diff on its way back to the main thread.
 pub(super) struct Refined {
-    file: usize,
+    target: Target,
     diff: FileDiff,
 }
 
@@ -102,34 +115,46 @@ impl Drop for Refiner {
 
 impl App {
     /// Asks for `file`'s structural diff, replacing whatever was waiting.
-    ///
-    /// This is also the only writer of the `refining` set, so the flag and the
-    /// request cannot disagree: replacing a pending request **un-flags the file
-    /// it belonged to**. The first version flagged in the caller and un-flagged
-    /// only when a result arrived — so a request dropped by replacement orphaned
-    /// its flag, pinning the file to the fast diff forever, polling the event
-    /// loop at 30ms for as long as it was selected, and hanging
-    /// `finish_loading` on a result that could never come.
     pub(super) fn refine(&mut self, file: usize, base: Option<Vec<u8>>, head: Option<Vec<u8>>) {
         let Some(path) = self.review.files.get(file).map(|f| f.path.clone()) else {
             return;
         };
+        self.refine_target(Target::File(file), path, base, head);
+    }
+
+    /// Asks for the structural diff of whatever `target` names, replacing
+    /// whatever was waiting.
+    ///
+    /// This is also the only writer of the `refining` set, so the flag and the
+    /// request cannot disagree: replacing a pending request **un-flags the
+    /// target it belonged to**. The first version flagged in the caller and
+    /// un-flagged only when a result arrived — so a request dropped by
+    /// replacement orphaned its flag, pinning the diff to the fast fallback
+    /// forever, polling the event loop at 30ms for as long as it was selected,
+    /// and hanging `finish_loading` on a result that could never come.
+    pub(super) fn refine_target(
+        &mut self,
+        target: Target,
+        path: String,
+        base: Option<Vec<u8>>,
+        head: Option<Vec<u8>>,
+    ) {
         self.start_refiner();
-        self.refining.insert(file);
+        self.refining.insert(target);
         let (slot, waiting) = &*self.refiner.slot;
         if let Ok(mut held) = slot.lock() {
             // Replaced, not queued: the reviewer has moved on from whatever was
-            // in there — and the file it was for is no longer being refined.
+            // in there — and the target it was for is no longer being refined.
             let previous = held.replace(Job::Diff(Request {
-                file,
+                target,
                 base,
                 head,
                 path,
             }));
             if let Some(Job::Diff(dropped)) = previous
-                && dropped.file != file
+                && dropped.target != target
             {
-                self.refining.remove(&dropped.file);
+                self.refining.remove(&dropped.target);
             }
             waiting.notify_one();
         }
@@ -170,7 +195,7 @@ impl App {
                 );
                 if sender
                     .send(Refined {
-                        file: request.file,
+                        target: request.target,
                         diff,
                     })
                     .is_err()
@@ -193,24 +218,36 @@ impl App {
     }
 
     fn apply_refined(&mut self, refined: Refined) {
-        let line = (refined.file == self.file_index)
+        // The cursor is only re-settled when the diff that landed is the one on
+        // screen; the source line it sits on is captured before the swap because
+        // the two engines emit different lines and the row it names would move.
+        let on_screen = refined.target == self.shown_target();
+        let line = on_screen
             .then(|| {
                 self.selected_line()
                     .and_then(|line| line.right.or(line.left))
             })
             .flatten();
-        if let Some(slot) = self.diffs.get_mut(refined.file) {
-            *slot = Some(refined.diff);
+        match refined.target {
+            Target::File(file) => {
+                if let Some(slot) = self.diffs.get_mut(file) {
+                    *slot = Some(refined.diff);
+                }
+                // A refined diff replaces the fast one; the full-file merge must
+                // be re-built off it, because the two engines emit different
+                // lines.
+                self.start_merge(file);
+            }
+            Target::Commit(pair) => {
+                self.commit_diffs.insert(pair, refined.diff);
+            }
         }
-        // A refined diff replaces the fast one; the full-file merge must be
-        // re-built off it, because the two engines emit different lines.
-        self.start_merge(refined.file);
-        self.refining.remove(&refined.file);
+        self.refining.remove(&refined.target);
         // Even when the structural engine fell back internally: `refined` is
         // "the question was answered", not "the answer was difftastic's", so a
-        // machine with no `difft` re-asks once per file rather than once per
+        // machine with no `difft` re-asks once per target rather than once per
         // selection.
-        self.refined.insert(refined.file);
+        self.refined.insert(refined.target);
         if let Some(number) = line {
             self.resettle_on_line(number);
         }
@@ -264,6 +301,19 @@ impl App {
     /// Whether the diff on screen is the fast one, still waiting to be refined.
     #[must_use]
     pub fn refining(&self) -> bool {
-        self.refining.contains(&self.file_index)
+        self.refining.contains(&self.shown_target())
+    }
+
+    /// Which slot the diff currently on screen lives in — the commits view's
+    /// pair where it is showing a change's own diff, the selected file's slot
+    /// otherwise. This is what `selected_diff` reads, expressed as a target.
+    pub(super) fn shown_target(&self) -> Target {
+        if self.sidebar_tab == super::SidebarTab::Commits
+            && let Some(pair) = self.commit_pair
+            && self.commit_path(pair) == self.selected_file().map(|file| file.path.as_str())
+        {
+            return Target::Commit(pair);
+        }
+        Target::File(self.file_index)
     }
 }

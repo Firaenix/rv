@@ -28,6 +28,7 @@ mod build;
 mod changes;
 mod comment;
 mod comments;
+mod commit_diff;
 mod commits;
 mod delete;
 mod diffs;
@@ -191,6 +192,12 @@ pub struct App {
     tint: bool,
     /// Where the sidebar is zoomed into, innermost last — see [`zoom`].
     zoom: Vec<zoom::Zoom>,
+    /// The built sidebar rows, memoized against a fingerprint of what shapes
+    /// them. Rebuilding the whole tree on every `nodes()` call — and it is
+    /// reached many times per keystroke and per frame — is what made scrolling
+    /// the commits list crawl. A refresh builds a fresh `App`, so the cache
+    /// never outlives the files it was built from.
+    nodes_cache: std::cell::RefCell<Option<(u64, Vec<crate::tree::Node>)>>,
     /// Whether the sidebar shows the `+n -n` column at all.
     counts: bool,
     /// Which **row of the file list** the cursor is on.
@@ -310,10 +317,12 @@ pub struct App {
     /// press of `n`.
     symbol_index: crate::index::Index,
     indexed_scope: Option<symbols::Scope>,
-    /// Files showing the fast diff while difftastic is still being asked, and
-    /// files whose structural answer has landed — whatever it was. See [`diffs`].
-    refining: HashSet<usize>,
-    refined: HashSet<usize>,
+    /// Diffs showing the fast fallback while difftastic is still being asked,
+    /// and diffs whose structural answer has landed — whatever it was. Keyed by
+    /// [`diffs::Target`] so the file list and the commits view share one worker
+    /// and one set of flags. See [`diffs`].
+    refining: HashSet<diffs::Target>,
+    refined: HashSet<diffs::Target>,
     refiner: diffs::Refiner,
     /// Whether `i` has put the change tooltip away, and how far down it is
     /// scrolled.

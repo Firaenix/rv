@@ -41,10 +41,10 @@ fn the_mode_leader_selects_each_list() {
 
     for (letter, tab) in [
         ('c', SidebarTab::Commits),
-        ('m', SidebarTab::Comments),
+        ('o', SidebarTab::Comments),
         ('f', SidebarTab::Files),
     ] {
-        app.on_key(KeyCode::Char(' ')).expect("mode leader");
+        app.on_key(KeyCode::Char('m')).expect("mode leader");
         app.on_key(KeyCode::Char(letter)).expect("the mode");
         assert_eq!(app.sidebar_tab(), tab);
         assert_eq!(app.focus(), Focus::Sidebar, "a mode lands on the sidebar");
@@ -66,7 +66,7 @@ fn the_mode_leader_selects_a_list_from_any_focus(#[case] approach: &[KeyCode]) {
     }
     let (file, line) = (app.file_index(), app.line_index());
 
-    app.on_key(KeyCode::Char(' ')).expect("mode leader");
+    app.on_key(KeyCode::Char('m')).expect("mode leader");
     app.on_key(KeyCode::Char('c')).expect("commits");
 
     assert_eq!(app.sidebar_tab(), SidebarTab::Commits);

@@ -96,6 +96,7 @@ impl App {
             tint: true,
             counts: true,
             zoom: Vec::new(),
+            nodes_cache: std::cell::RefCell::new(None),
             sidebar_row: 0,
             stats,
             ascii: statusbar::ascii_from_env(),

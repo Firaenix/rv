@@ -48,14 +48,20 @@ impl App {
         }
     }
 
-    /// `Tab`: swaps the focus between the tree panel and the diff panel. From a
-    /// comment stack it lands on the sidebar, since the stack lives inside the
-    /// diff and `Tab` is about the two panels, not the three focuses.
-    pub(super) fn toggle_focus(&mut self) {
-        self.focus = match self.focus {
-            Focus::Sidebar => Focus::Diff,
-            Focus::Diff | Focus::Stack => Focus::Sidebar,
-        };
+    /// `Tab`: to the next of the review's four modes, looping — the files list,
+    /// the commits list, the comment browser, then the diff. A comment stack
+    /// counts as the diff it lives in, so `Tab` from it lands on the files list.
+    pub(super) fn cycle_mode(&mut self) -> Result<()> {
+        let on_diff = matches!(self.focus, Focus::Diff | Focus::Stack);
+        match (on_diff, self.sidebar_tab) {
+            (true, _) => self.goto_mode(SidebarTab::Files),
+            (false, SidebarTab::Files) => self.goto_mode(SidebarTab::Commits),
+            (false, SidebarTab::Commits) => self.goto_mode(SidebarTab::Comments),
+            (false, SidebarTab::Comments) => {
+                self.focus = Focus::Diff;
+                Ok(())
+            }
+        }
     }
 
     /// Opens the file under the sidebar cursor and moves the focus to the diff;

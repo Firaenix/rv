@@ -66,11 +66,10 @@ pub fn rewind(app: &mut App) {
         app.on_key(KeyCode::Char('v')).expect("view leader");
         app.on_key(KeyCode::Char('o')).expect("back to path order");
     }
-    // `Tab` swaps to the diff regardless of which sidebar row is under the
-    // cursor — `Right` would drill a directory instead of moving the focus.
-    if app.focus() != Focus::Diff {
-        app.on_key(KeyCode::Tab).expect("back onto the diff");
-    }
+    // `m d` goes straight to the diff mode regardless of which sidebar row is
+    // under the cursor — `→` would drill a directory instead of moving focus.
+    app.on_key(KeyCode::Char('m')).expect("mode leader");
+    app.on_key(KeyCode::Char('d')).expect("the diff mode");
     for _ in 0..=app.files().len() {
         app.on_key(KeyCode::Char('[')).expect("first file");
     }
@@ -313,14 +312,14 @@ pub fn run_cases<S: Strategy>(cases: u32, strategy: S, test: impl Fn(S::Value) -
 /// Selected with its direct `3` key now that `Tab` swaps the panel focus rather
 /// than cycling the tabs.
 pub fn to_comments(app: &mut App) {
-    app.on_key(KeyCode::Char(' ')).expect("mode leader");
-    app.on_key(KeyCode::Char('m')).expect("the comments mode");
+    app.on_key(KeyCode::Char('m')).expect("mode leader");
+    app.on_key(KeyCode::Char('o')).expect("the comments mode");
     assert_eq!(app.sidebar_tab(), SidebarTab::Comments);
 }
 
 /// The same, for the tab that lists the stack's changes: `2`.
 pub fn to_commits(app: &mut App) {
-    app.on_key(KeyCode::Char(' ')).expect("mode leader");
+    app.on_key(KeyCode::Char('m')).expect("mode leader");
     app.on_key(KeyCode::Char('c')).expect("the commits mode");
     assert_eq!(app.sidebar_tab(), SidebarTab::Commits);
 }
@@ -328,7 +327,7 @@ pub fn to_commits(app: &mut App) {
 /// The same, for the file list — which is also where the view leader's `t` and
 /// `o` mean something, so `rewind` resets them from here: `1`.
 pub fn to_files(app: &mut App) {
-    app.on_key(KeyCode::Char(' ')).expect("mode leader");
+    app.on_key(KeyCode::Char('m')).expect("mode leader");
     app.on_key(KeyCode::Char('f')).expect("the files mode");
     assert_eq!(app.sidebar_tab(), SidebarTab::Files);
 }

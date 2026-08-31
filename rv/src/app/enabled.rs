@@ -22,7 +22,7 @@ impl App {
         match binding.command {
             // Always something to do: they change what is on screen, never what
             // is under the cursor.
-            Command::ToggleFocus
+            Command::CycleMode
             | Command::ModeDiff
             | Command::FilesTab
             | Command::CommitsTab

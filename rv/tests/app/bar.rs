@@ -35,12 +35,12 @@ fn the_mode_segment_follows_the_context() {
     app.on_key(KeyCode::Left).expect("focus the sidebar");
     assert!(last_row(&frame_at(&app, 100, 24)).contains("FILES"));
 
-    app.on_key(KeyCode::Char(' ')).expect("mode leader");
+    app.on_key(KeyCode::Char('m')).expect("mode leader");
     app.on_key(KeyCode::Char('c')).expect("the commits mode");
     assert!(last_row(&frame_at(&app, 100, 24)).contains("COMMITS"));
 
-    app.on_key(KeyCode::Char(' ')).expect("mode leader");
-    app.on_key(KeyCode::Char('m')).expect("the comments mode");
+    app.on_key(KeyCode::Char('m')).expect("mode leader");
+    app.on_key(KeyCode::Char('o')).expect("the comments mode");
     assert!(last_row(&frame_at(&app, 100, 24)).contains("COMMENTS"));
 }
 

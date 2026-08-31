@@ -168,11 +168,13 @@ impl App {
         // or a key none of them claim, closes it. Either way the leader is
         // cleared — a chord is one key deep, so a stray second key does not
         // strand the reviewer in a menu.
+        let context = self.context();
         if let Some(leader) = self.pending_leader.take() {
-            if let Some(binding) = BINDINGS
-                .iter()
-                .find(|binding| binding.leader == Some(leader) && binding.codes.contains(&key))
-            {
+            if let Some(binding) = BINDINGS.iter().find(|binding| {
+                binding.leader == Some(leader)
+                    && binding.codes.contains(&key)
+                    && shown_in(binding, context)
+            }) {
                 return self.run_command(binding.command);
             }
             return Ok(Action::Continue);
@@ -191,6 +193,7 @@ impl App {
                 .iter()
                 .filter(|binding| {
                     binding.leader == Some(leader)
+                        && shown_in(binding, context)
                         && binding.command.targets_cursor()
                         && self.binding_enabled(binding)
                 })
@@ -203,10 +206,9 @@ impl App {
             return Ok(Action::Continue);
         }
 
-        let Some(binding) = BINDINGS
-            .iter()
-            .find(|binding| binding.leader.is_none() && binding.codes.contains(&key))
-        else {
+        let Some(binding) = BINDINGS.iter().find(|binding| {
+            binding.leader.is_none() && binding.codes.contains(&key) && shown_in(binding, context)
+        }) else {
             return Ok(Action::Continue);
         };
         self.run_command(binding.command)
@@ -242,8 +244,7 @@ impl App {
             Command::Abandon => self.abandon_comment()?,
             Command::OpenEditor => return Ok(self.begin_edit()),
             Command::Fold => self.toggle_collapse(),
-            // Focus-free, like `[` and `]`.
-            Command::ToggleFocus => self.toggle_focus(),
+            Command::CycleMode => self.cycle_mode()?,
             Command::FilesTab => self.goto_mode(SidebarTab::Files)?,
             Command::CommitsTab => self.goto_mode(SidebarTab::Commits)?,
             Command::CommentsTab => self.goto_mode(SidebarTab::Comments)?,
@@ -273,4 +274,11 @@ impl App {
         }
         Ok(Action::Continue)
     }
+}
+
+/// Whether a binding is offered in `context`. Only the `Space` contextual menu's
+/// children are filtered — every other binding lists no contexts and is shown
+/// from anywhere.
+fn shown_in(binding: &Binding, context: super::Context) -> bool {
+    binding.contexts.is_empty() || binding.contexts.contains(&context)
 }

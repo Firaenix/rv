@@ -7,7 +7,10 @@
 
 use crossterm::event::KeyCode;
 
+use super::Context;
+
 mod table;
+mod view;
 
 pub use table::BINDINGS;
 
@@ -63,8 +66,10 @@ impl Group {
 /// submenu, after which the binding's own `codes` are the second keystroke.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Leader {
-    /// `Space`: jump to one of the review's modes (files, commits, comments,
-    /// diff), mnemonic on each mode's first letter.
+    /// `Space`: the contextual menu — its children are whichever actions suit
+    /// the mode the reviewer is in, filtered by [`Binding::contexts`].
+    Context,
+    /// `m`: jump straight to one of the review's modes.
     Mode,
     Goto,
     Comment,
@@ -73,13 +78,20 @@ pub enum Leader {
 
 impl Leader {
     /// Every leader, in the order the `?` popup lists them.
-    pub const ALL: &'static [Leader] = &[Leader::Mode, Leader::Goto, Leader::Comment, Leader::View];
+    pub const ALL: &'static [Leader] = &[
+        Leader::Context,
+        Leader::Mode,
+        Leader::Goto,
+        Leader::Comment,
+        Leader::View,
+    ];
 
     /// The key that opens the leader's submenu.
     #[must_use]
     pub fn key(self) -> char {
         match self {
-            Leader::Mode => ' ',
+            Leader::Context => ' ',
+            Leader::Mode => 'm',
             Leader::Goto => 'g',
             Leader::Comment => 'c',
             Leader::View => 'v',
@@ -91,17 +103,26 @@ impl Leader {
     #[must_use]
     pub fn label(self) -> &'static str {
         match self {
-            Leader::Mode => "Space",
+            Leader::Context => "Space",
+            Leader::Mode => "m",
             Leader::Goto => "g",
             Leader::Comment => "c",
             Leader::View => "v",
         }
     }
 
+    /// Whether the leader's submenu is filtered by the current context — only
+    /// the [`Leader::Context`] menu is, so `Space` shows a mode's own actions.
+    #[must_use]
+    pub fn is_contextual(self) -> bool {
+        matches!(self, Leader::Context)
+    }
+
     /// What the which-key popup titles the submenu.
     #[must_use]
     pub fn title(self) -> &'static str {
         match self {
+            Leader::Context => "actions here",
             Leader::Mode => "mode",
             Leader::Goto => "goto",
             Leader::Comment => "comment",
@@ -111,6 +132,7 @@ impl Leader {
 }
 
 /// What one key does, spelled once.
+#[derive(Clone, Copy)]
 pub struct Binding {
     /// How the popup spells the key, arrows and aliases included. For a binding
     /// under a leader this is the *second* keystroke alone.
@@ -118,6 +140,9 @@ pub struct Binding {
     pub group: Group,
     /// The leader this binding sits under, or `None` for a direct key.
     pub leader: Option<Leader>,
+    /// Which modes a [`Leader::Context`] (`Space`) child appears in — empty for
+    /// every other binding, since only the contextual menu is filtered.
+    pub contexts: &'static [Context],
     /// What it does, short enough to sit beside the key in a column.
     pub what: &'static str,
     /// The key presses this row answers. Not public: it is the table's business
@@ -151,7 +176,7 @@ pub(super) enum Command {
     Pick,
     FocusLeft,
     FocusRight,
-    ToggleFocus,
+    CycleMode,
     FilesTab,
     CommitsTab,
     CommentsTab,

@@ -41,14 +41,14 @@ pub fn write_comment(app: &mut App, body: &str) {
 
 /// Selects the review's comments tab with its direct `3` key.
 pub fn to_comments(app: &mut App) {
-    app.on_key(KeyCode::Char(' ')).expect("mode leader");
-    app.on_key(KeyCode::Char('m')).expect("the comments mode");
+    app.on_key(KeyCode::Char('m')).expect("mode leader");
+    app.on_key(KeyCode::Char('o')).expect("the comments mode");
     assert_eq!(app.sidebar_tab(), SidebarTab::Comments);
 }
 
 /// The same, for the tab that lists the stack's changes: `2`.
 pub fn to_commits(app: &mut App) {
-    app.on_key(KeyCode::Char(' ')).expect("mode leader");
+    app.on_key(KeyCode::Char('m')).expect("mode leader");
     app.on_key(KeyCode::Char('c')).expect("the commits mode");
     assert_eq!(app.sidebar_tab(), SidebarTab::Commits);
 }
@@ -66,7 +66,7 @@ pub fn to_top(app: &mut App) {
 
 /// The same, for the file list: `1`.
 pub fn to_files(app: &mut App) {
-    app.on_key(KeyCode::Char(' ')).expect("mode leader");
+    app.on_key(KeyCode::Char('m')).expect("mode leader");
     app.on_key(KeyCode::Char('f')).expect("the files mode");
     assert_eq!(app.sidebar_tab(), SidebarTab::Files);
 }

@@ -157,9 +157,14 @@ impl App {
     /// list.
     pub fn plan(&self) -> Plan<'_> {
         let lines = self.displayed_lines();
+        // The closure reads the line off `lines` rather than through
+        // `comments_for_line`, which would rebuild the whole stream once per row.
         rows::plan(
             &lines,
-            &|index| self.comments_for_line(index),
+            &|index| match lines.get(index) {
+                Some(line) => self.comments_anchored_at(line),
+                None => Vec::new(),
+            },
             &|comment| self.drift.get(&comment.id),
             &self.collapsed,
             self.body_width.get(),

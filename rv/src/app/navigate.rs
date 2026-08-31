@@ -260,15 +260,20 @@ impl App {
         if index >= self.review.files.len() || index == self.file_index {
             return Ok(());
         }
+        self.point_at_file(index);
+        self.load_selected()?;
+        self.set_cursor_row(self.cursor_row());
+        self.resettle_sidebar();
+        Ok(())
+    }
+
+    /// Moves the selection to file `index` without loading its diff — shared
+    /// with the commits view, which shows the change's own diff, not the
+    /// bookmark's.
+    pub(super) fn point_at_file(&mut self, index: usize) {
         self.file_index = index;
         // A scroll chosen for one file's long lines is noise on the next one's.
         self.diff_hscroll = 0;
-        self.load_selected()?;
-        self.set_cursor_row(self.cursor_row());
-        // `[` and `]` consult no focus, so a file can be selected from anywhere;
-        // the file list's cursor follows it.
-        self.resettle_sidebar();
-        Ok(())
     }
 
     /// Computes the selected file's diff if it has not been computed yet.
@@ -287,8 +292,8 @@ impl App {
             // file pinned to the fast diff for the rest of the session.
             let file = self.file_index;
             if self.engine == DiffEngine::Auto
-                && !self.refining.contains(&file)
-                && !self.refined.contains(&file)
+                && !self.refining.contains(&super::diffs::Target::File(file))
+                && !self.refined.contains(&super::diffs::Target::File(file))
             {
                 self.request_refinement(file)?;
             }

@@ -15,7 +15,6 @@ use rv_core::diff;
 use rv_core::diff::LineKind;
 use rv_core::model::FileChange;
 
-use anyhow::Context as _;
 use anyhow::Result;
 
 use super::App;
@@ -183,18 +182,40 @@ impl App {
     }
 
     /// The rows the sidebar is showing: the bookmark's files, or the stack's
-    /// changes with their files beneath.
-    ///
-    /// One list and one cursor, because the two tabs are never on screen at
-    /// once. The Comments tab has neither — it lists comments, not nodes — and
-    /// answers with an empty list.
+    /// changes with their files beneath. Memoized — see [`App::nodes_cache`].
     #[must_use]
     pub fn nodes(&self) -> Vec<tree::Node> {
-        match self.sidebar_tab() {
+        let key = self.nodes_fingerprint();
+        if let Some((cached_key, nodes)) = &*self.nodes_cache.borrow()
+            && *cached_key == key
+        {
+            return nodes.clone();
+        }
+        let nodes = match self.sidebar_tab() {
             SidebarTab::Files => self.sidebar_nodes(),
             SidebarTab::Commits => self.commit_nodes(),
             SidebarTab::Comments => Vec::new(),
-        }
+        };
+        *self.nodes_cache.borrow_mut() = Some((key, nodes.clone()));
+        nodes
+    }
+
+    /// A cheap hash of everything that shapes [`App::nodes`]: the tab, the
+    /// list's shape and order, the folded rows, and the zoom. The files and
+    /// changes only move on a refresh, which builds a fresh app.
+    fn nodes_fingerprint(&self) -> u64 {
+        use std::hash::Hash;
+        use std::hash::Hasher;
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        (self.sidebar_tab() as u8).hash(&mut hasher);
+        self.tree.hash(&mut hasher);
+        (self.sort as u8).hash(&mut hasher);
+        // Sorted so a fold then unfold hashes the same set, order aside.
+        let mut folded: Vec<&String> = self.collapsed_dirs.iter().collect();
+        folded.sort();
+        folded.hash(&mut hasher);
+        self.zoom.iter().for_each(|z| z.key.hash(&mut hasher));
+        hasher.finish()
     }
 
     /// Selects whatever file the row under the cursor names, in the vocabulary
@@ -206,115 +227,6 @@ impl App {
             SidebarTab::Commits => self.select_commit_file(index),
             SidebarTab::Comments => Ok(()),
         }
-    }
-
-    /// Selects the file a commits-view row names, and shows **that change's**
-    /// diff of it.
-    ///
-    /// Two selections, because the row means two things. The bookmark file is
-    /// still chosen — comments, the sidebar's cursor and the status line all
-    /// address a file by its position in `App::files()` — while the diff on
-    /// screen, and the commits a comment written on it is anchored between, come
-    /// from the change the row sits under.
-    ///
-    /// A pair whose path is not in the bookmark's own list is passed over: it
-    /// was touched by a change and undone by a later one, so the range has no
-    /// file to select.
-    pub(super) fn select_commit_file(&mut self, pair: usize) -> Result<()> {
-        let Some(path) = self.commit_path(pair).map(str::to_owned) else {
-            return Ok(());
-        };
-        if let Some(index) = self.review.files.iter().position(|file| file.path == path) {
-            self.select_file(index)?;
-        }
-        self.commit_pair = Some(pair);
-        self.load_commit_diff(pair)
-    }
-
-    /// Computes the `pair`th row's own diff, unless it is already cached.
-    ///
-    /// The same engine and the same blobs-to-highlights path the bookmark view
-    /// uses — see `load_selected` — because a line of this diff is painted by the
-    /// same renderer and must be able to answer the same questions about itself.
-    fn load_commit_diff(&mut self, pair: usize) -> Result<()> {
-        if self.commit_diffs.contains_key(&pair) {
-            return Ok(());
-        }
-        let Some((from, to, base_path, head_path)) = self.commit_blob_keys(pair) else {
-            return Ok(());
-        };
-        let old = self
-            .review
-            .repo
-            .read_blob(&from, &base_path)
-            .with_context(|| format!("could not read {base_path} at {from}"))?;
-        let new = self
-            .review
-            .repo
-            .read_blob(&to, &head_path)
-            .with_context(|| format!("could not read {head_path} at {to}"))?;
-
-        // The commits view's diffs are loaded on selection like the bookmark's, and
-        // the same engine decides how.
-        let diff = match self.engine() {
-            super::DiffEngine::Fallback => {
-                rv_core::diff::compute_with(old.as_deref(), new.as_deref(), &head_path, false)
-            }
-            _ => rv_core::diff::compute(old.as_deref(), new.as_deref(), &head_path),
-        };
-        self.commit_blobs.insert(
-            pair,
-            (
-                old.clone().unwrap_or_default(),
-                new.clone().unwrap_or_default(),
-            ),
-        );
-        self.commit_diffs.insert(pair, diff);
-        self.parse_highlights(from, base_path, old.as_deref());
-        self.parse_highlights(to, head_path, new.as_deref());
-        Ok(())
-    }
-
-    /// The two commits and two paths the `pair`th row's diff is read from.
-    fn commit_blob_keys(&self, pair: usize) -> Option<(String, String, String, String)> {
-        let index = self.commit_index();
-        let (change, file) = index.pair(pair)?;
-        let (from, to) = index.endpoints_of(change)?;
-        Some((
-            from.to_owned(),
-            to.to_owned(),
-            file.source_path.as_deref().unwrap_or(&file.path).to_owned(),
-            file.path.clone(),
-        ))
-    }
-
-    /// The two commits the diff on screen is between.
-    ///
-    /// The review's own endpoints in the bookmark view, and the selected
-    /// change's in the commits view. This is what a comment is anchored between,
-    /// and it has to be the pair the text on screen was read from: a comment
-    /// whose commit names a revision its quoted text cannot be read back from is
-    /// a comment that cannot be verified, which is that field's only job.
-    pub(super) fn shown_endpoints(&self) -> (String, String) {
-        let session = &self.review.session;
-        let fallback = || (session.base_commit.clone(), session.head_commit.clone());
-        if self.sidebar_tab() != SidebarTab::Commits {
-            return fallback();
-        }
-        let Some(pair) = self.commit_pair else {
-            return fallback();
-        };
-        // See `selected_diff`: a pair that does not name the selected file is
-        // stale, and the review's own endpoints are what the shown diff is
-        // between.
-        if self.commit_path(pair) != self.selected_file().map(|file| file.path.as_str()) {
-            return fallback();
-        }
-        let index = self.commit_index();
-        index
-            .pair(pair)
-            .and_then(|(change, _)| index.endpoints_of(change))
-            .map_or_else(fallback, |(from, to)| (from.to_owned(), to.to_owned()))
     }
 
     /// The paths one change touched, in the order the repository lists them.

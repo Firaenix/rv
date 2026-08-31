@@ -71,7 +71,7 @@ fn the_mode_leader_reaches_the_commits_list() {
     let workspace = Fixture::new();
     let mut app = workspace.app();
 
-    app.on_key(KeyCode::Char(' ')).expect("mode leader");
+    app.on_key(KeyCode::Char('m')).expect("mode leader");
     app.on_key(KeyCode::Char('c')).expect("commits");
 
     assert_eq!(app.sidebar_tab(), SidebarTab::Commits);
@@ -710,11 +710,9 @@ fn i_puts_the_change_details_away_and_brings_them_back() {
         "nothing was shown to begin with"
     );
 
-    app.on_key(KeyCode::Char('v')).expect("view leader");
     app.on_key(KeyCode::Char('i')).expect("put it away");
     assert!(app.change_info().is_none(), "`i` hid nothing");
 
-    app.on_key(KeyCode::Char('v')).expect("view leader");
     app.on_key(KeyCode::Char('i')).expect("bring it back");
     assert!(app.change_info().is_some(), "`i` is a one-way door");
 }
@@ -840,7 +838,7 @@ fn switching_tabs_lands_on_the_selected_file() {
     app.on_key(KeyCode::Char(']')).expect("next file");
     let selected = app.files()[app.file_index()].path.clone();
 
-    app.on_key(KeyCode::Char(' ')).expect("mode leader");
+    app.on_key(KeyCode::Char('m')).expect("mode leader");
     app.on_key(KeyCode::Char('c')).expect("the commits mode");
     assert_eq!(app.sidebar_tab(), SidebarTab::Commits);
     let nodes = app.commit_nodes();
@@ -854,7 +852,7 @@ fn switching_tabs_lands_on_the_selected_file() {
         "the cursor did not land on the selected file"
     );
 
-    app.on_key(KeyCode::Char(' ')).expect("mode leader");
+    app.on_key(KeyCode::Char('m')).expect("mode leader");
     app.on_key(KeyCode::Char('f')).expect("the files mode");
     assert_eq!(app.sidebar_tab(), SidebarTab::Files);
     assert_eq!(
@@ -869,18 +867,18 @@ fn switching_tabs_lands_on_the_selected_file() {
     );
 }
 
-/// `Space m` reaches the comments mode directly, and a repeated jump is inert.
+/// `m o` reaches the comments mode directly, and a repeated jump is inert.
 #[test]
 fn the_mode_leader_jumps_straight_to_a_mode() {
     let workspace = Fixture::new();
     let mut app = workspace.app();
-    app.on_key(KeyCode::Char(' ')).expect("mode leader");
-    app.on_key(KeyCode::Char('m')).expect("comments");
+    app.on_key(KeyCode::Char('m')).expect("mode leader");
+    app.on_key(KeyCode::Char('o')).expect("comments");
     assert_eq!(app.sidebar_tab(), SidebarTab::Comments);
-    app.on_key(KeyCode::Char(' ')).expect("mode leader");
-    app.on_key(KeyCode::Char('m')).expect("again");
+    app.on_key(KeyCode::Char('m')).expect("mode leader");
+    app.on_key(KeyCode::Char('o')).expect("again");
     assert_eq!(app.sidebar_tab(), SidebarTab::Comments);
-    app.on_key(KeyCode::Char(' ')).expect("mode leader");
+    app.on_key(KeyCode::Char('m')).expect("mode leader");
     app.on_key(KeyCode::Char('f')).expect("files");
     assert_eq!(app.sidebar_tab(), SidebarTab::Files);
 }

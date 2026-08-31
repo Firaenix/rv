@@ -30,16 +30,31 @@ pub const BROWSE_KEYS: &[&str] = &[
     "`Enter`",
     "`Tab`",
     "`s`",
+    "`f`",
+    "`i`",
     "`E`",
+    "`+`",
+    "`_`",
     "`Esc`",
     "`?`",
     "`q`",
     "`Ctrl+C`",
-    // Space — mode
-    "`Space` `f`",
+    // Space — contextual actions (files/commits lists, the diff, and comments)
+    "`Space` `t`",
+    "`Space` `o`",
+    "`Space` `#`",
     "`Space` `c`",
-    "`Space` `m`",
+    "`Space` `g`",
+    "`Space` `b`",
+    "`Space` `f`",
     "`Space` `d`",
+    "`Space` `r`",
+    "`Space` `a`",
+    // m — mode
+    "`m` `f`",
+    "`m` `c`",
+    "`m` `o`",
+    "`m` `d`",
     // g — goto
     "`g` `↓`",
     "`g` `↑`",
@@ -51,7 +66,7 @@ pub const BROWSE_KEYS: &[&str] = &[
     "`c` `d`",
     "`c` `r`",
     "`c` `a`",
-    // v — view
+    // v — view (complete)
     "`v` `f`",
     "`v` `g`",
     "`v` `b`",

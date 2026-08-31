@@ -9,6 +9,7 @@
 
 use std::collections::HashSet;
 
+use rv_core::diff::DiffLine;
 use rv_core::model::Confidence;
 use rv_core::store::Comment;
 
@@ -81,6 +82,13 @@ impl App {
         let Some(line) = displayed.get(index) else {
             return Vec::new();
         };
+        self.comments_anchored_at(line)
+    }
+
+    /// The comments on `line`, without the `displayed_lines()` lookup
+    /// [`App::comments_for_line`] does first — for [`App::plan`], which already
+    /// holds the line stream and would otherwise rebuild it once per row.
+    pub(super) fn comments_anchored_at(&self, line: &DiffLine) -> Vec<&Comment> {
         let Some(target) = self.anchor_target(line) else {
             return Vec::new();
         };

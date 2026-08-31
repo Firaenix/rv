@@ -218,7 +218,10 @@ impl App {
     /// anything, which is worse than a number that is still growing.
     #[must_use]
     pub fn suppression(&self) -> Suppression {
-        let settled = |file: usize| self.engine != DiffEngine::Auto || self.refined.contains(&file);
+        let settled = |file: usize| {
+            self.engine != DiffEngine::Auto
+                || self.refined.contains(&super::diffs::Target::File(file))
+        };
         self.diffs
             .iter()
             .enumerate()
