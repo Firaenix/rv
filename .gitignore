@@ -1,1 +1,23 @@
+# Rust / Cargo
+/target/
+target/
+debug/
+**/*.rs.bk
+*.pdb
+
+# Cargo.lock is kept: this workspace builds executables
+
+# Nix
 /result
+
+# Editors / IDEs
+.idea/
+.vscode/
+*.iml
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
