@@ -218,6 +218,10 @@ everywhere.
 | `[` | Previous file, likewise |
 | `H` | Scroll the focused pane's text sideways, back toward the start of the line — in the diff, `Shift`+`←` does the same |
 | `L` | The other way, to read the tail of lines wider than the pane — in the diff, `Shift`+`→` and a trackpad's sideways flick do the same |
+| `PgDn` | Move the cursor a screenful forward in the focused pane |
+| `PgUp` | A screenful back |
+| `Home` | Jump the cursor to the first row of the focused pane |
+| `End` | Jump it to the last row |
 | `Tab` | Cycle the sidebar through **Files**, **Commits** and **Comments**. A file row under a change shows *that change's* diff of it |
 | `1` | Jump straight to the **Files** tab without cycling. Switching tabs preserves your position: the cursor lands on the selected file's row in the list that appears — in the Commits tab, under the newest change that touched it |
 | `2` | The **Commits** tab, likewise |

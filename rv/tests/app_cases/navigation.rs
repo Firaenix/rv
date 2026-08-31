@@ -147,6 +147,48 @@ fn line_navigation_clamps_at_both_ends() {
     });
 }
 
+/// `Home`/`End` jump the diff cursor to the first and last line, and `PgUp`/
+/// `PgDn` move it a screenful without ever running off either end.
+///
+/// `End` then `Home` is the round trip: whatever a page did on the way, the
+/// cursor is back at the top. The page size comes from the last painted frame,
+/// and an unpainted app falls back to a fixed page — so this asserts direction
+/// and the clamps, not a literal jump distance.
+#[test]
+fn page_and_jump_keys_reach_the_ends_and_clamp() {
+    let fixture = shared_multi();
+    let app = RefCell::new(fixture.app());
+    let long = {
+        let app = app.borrow();
+        app.files()
+            .iter()
+            .position(|file| file.path == "long.rs")
+            .expect("long.rs is in the review")
+    };
+
+    let app = &mut *app.borrow_mut();
+    rewind(app);
+    press_n(app, KeyCode::Char(']'), long);
+    assert_eq!(app.file_index(), long);
+    let last = lines(app).len() - 1;
+    assert!(last >= 19, "long.rs is too short to page through");
+    assert_eq!(app.focus(), Focus::Diff);
+
+    press(app, KeyCode::End);
+    assert_eq!(app.line_index(), last, "End did not reach the last line");
+    press(app, KeyCode::Home);
+    assert_eq!(app.line_index(), 0, "Home did not return to the first line");
+
+    press(app, KeyCode::PageUp);
+    assert_eq!(app.line_index(), 0, "PgUp ran off the top");
+    press(app, KeyCode::PageDown);
+    let after_page = app.line_index();
+    assert!(after_page > 0, "PgDn did not move the cursor");
+    assert!(after_page <= last, "PgDn ran off the end");
+    press(app, KeyCode::PageUp);
+    assert_eq!(app.line_index(), 0, "PgDn then PgUp did not return to the top");
+}
+
 /// The sidebar's closed form, and the invariant that replaced the line reset:
 /// every file keeps its *own* place, and `[` `]` gives it back.
 ///

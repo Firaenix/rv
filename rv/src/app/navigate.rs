@@ -70,6 +70,12 @@ impl App {
     /// leaves the selection alone: a directory row is a thing to fold, not a
     /// file to open.
     fn move_sidebar(&mut self, forward: bool) -> Result<()> {
+        self.step_sidebar(forward, 1)
+    }
+
+    /// The file list moved `count` rows in one direction, clamped, selecting the
+    /// file the landing row holds. One is `j`/`k`; a page is many.
+    pub(super) fn step_sidebar(&mut self, forward: bool, count: usize) -> Result<()> {
         // The keyboard takes the view back from the wheel: a selection the
         // reviewer is moving has to be one they can see.
         self.sidebar_scroll = None;
@@ -78,10 +84,25 @@ impl App {
             return Ok(());
         };
         self.sidebar_row = if forward {
-            self.sidebar_row.saturating_add(1).min(last)
+            self.sidebar_row.saturating_add(count).min(last)
         } else {
-            self.sidebar_row.saturating_sub(1)
+            self.sidebar_row.saturating_sub(count)
         };
+        if let NodeKind::File { index } = nodes[self.sidebar_row].kind {
+            self.select_node_file(index)?;
+        }
+        Ok(())
+    }
+
+    /// The file list jumped to its first (`forward` false) or last row, opening
+    /// the file there if it holds one.
+    pub(super) fn jump_sidebar(&mut self, forward: bool) -> Result<()> {
+        self.sidebar_scroll = None;
+        let nodes = self.nodes();
+        let Some(last) = nodes.len().checked_sub(1) else {
+            return Ok(());
+        };
+        self.sidebar_row = if forward { last } else { 0 };
         if let NodeKind::File { index } = nodes[self.sidebar_row].kind {
             self.select_node_file(index)?;
         }
@@ -98,20 +119,43 @@ impl App {
     /// the list they had just walked to. So the walk skips headings and stops
     /// on the first and last comments, exactly as `k` stops at diff row 0.
     fn move_browser(&mut self, forward: bool) {
-        // The keyboard takes the view back from the wheel, exactly as the file
-        // list's walk does.
+        self.step_browser(forward, 1);
+    }
+
+    /// The browser walked `count` comments in one direction, skipping headings
+    /// and stopping on the first and last comment.
+    pub(super) fn step_browser(&mut self, forward: bool, count: usize) {
         self.sidebar_scroll = None;
         let rows = self.browser_rows();
         let is_comment = |row: &usize| matches!(rows[*row], BrowserRow::Comment(_));
-        let found = if forward {
-            (self.browser_index.saturating_add(1)..rows.len()).find(is_comment)
+        for _ in 0..count {
+            let found = if forward {
+                (self.browser_index.saturating_add(1)..rows.len()).find(is_comment)
+            } else {
+                (0..self.browser_index).rev().find(is_comment)
+            };
+            match found {
+                Some(row) => self.browser_index = row,
+                None => break,
+            }
+        }
+    }
+
+    /// The browser jumped to its first or last comment, skipping headings.
+    pub(super) fn jump_browser(&mut self, forward: bool) {
+        self.sidebar_scroll = None;
+        let rows = self.browser_rows();
+        let mut comments = (0..rows.len()).filter(|row| matches!(rows[*row], BrowserRow::Comment(_)));
+        let landing = if forward {
+            comments.next_back()
         } else {
-            (0..self.browser_index).rev().find(is_comment)
+            comments.next()
         };
-        if let Some(row) = found {
+        if let Some(row) = landing {
             self.browser_index = row;
         }
     }
+
 
     /// `H`/`L`: scrolls the focused pane's text sideways by `delta` columns.
     ///

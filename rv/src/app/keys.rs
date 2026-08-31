@@ -172,6 +172,10 @@ impl App {
             Command::FocusRight => self.focus_right(),
             Command::Forward => self.move_forward()?,
             Command::Back => self.move_back()?,
+            Command::PageForward => self.page_forward()?,
+            Command::PageBackward => self.page_backward()?,
+            Command::JumpFirst => self.jump_first()?,
+            Command::JumpLast => self.jump_last()?,
             // `[` and `]` consult no focus at all, so walking a review never
             // costs a trip through the sidebar.
             Command::NextFile => self.select_file(self.file_index.saturating_add(1))?,

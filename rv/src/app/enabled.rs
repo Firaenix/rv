@@ -34,8 +34,10 @@ impl App {
             // A review with no comments still has a session to export.
             | Command::Export
             | Command::Quit => true,
-            Command::Forward => self.can_move_forward(),
-            Command::Back => self.can_move_back(),
+            Command::Forward | Command::PageForward | Command::JumpLast => {
+                self.can_move_forward()
+            }
+            Command::Back | Command::PageBackward | Command::JumpFirst => self.can_move_back(),
             Command::NextFile => self.file_index + 1 < self.review.files.len(),
             // Asked of the cache rather than of a fresh index: the popup is
             // drawn from `&self` and indexing is not a thing to do per frame. An

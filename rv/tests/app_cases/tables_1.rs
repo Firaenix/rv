@@ -107,8 +107,11 @@ use crate::support::*;
 #[case::unbound_backspace(KeyCode::Backspace, Action::Continue, Mode::Browse, Focus::Diff, (0, 0), None)]
 #[case::unbound_backtab(KeyCode::BackTab, Action::Continue, Mode::Browse, Focus::Diff, (0, 0), None)]
 #[case::unbound_function(KeyCode::F(1), Action::Continue, Mode::Browse, Focus::Diff, (0, 0), None)]
-#[case::unbound_page_down(KeyCode::PageDown, Action::Continue, Mode::Browse, Focus::Diff, (0, 0), None)]
-#[case::unbound_home(KeyCode::Home, Action::Continue, Mode::Browse, Focus::Diff, (0, 0), None)]
+// `Home`/`PgUp` at the top of the diff have nowhere to go, so they stay put.
+// `PgDn`/`End` move the cursor and are pinned dynamically in `navigation.rs`,
+// since where they land is the fixture's last line rather than a literal.
+#[case::home_at_the_top(KeyCode::Home, Action::Continue, Mode::Browse, Focus::Diff, (0, 0), None)]
+#[case::page_up_at_the_top(KeyCode::PageUp, Action::Continue, Mode::Browse, Focus::Diff, (0, 0), None)]
 #[case::unbound_delete(KeyCode::Delete, Action::Continue, Mode::Browse, Focus::Diff, (0, 0), None)]
 fn browse_keybindings(
     mut multi_app: App,

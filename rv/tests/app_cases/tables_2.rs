@@ -139,8 +139,34 @@ use crate::support::*;
     SidebarTab::Comments,
     ("first finding", 0)
 )]
-#[case::unbound_home(
+// `Home` jumps to the first comment; the browser already starts there.
+#[case::home_first_comment(
     KeyCode::Home,
+    Action::Continue,
+    Mode::Browse,
+    Focus::Sidebar,
+    SidebarTab::Comments,
+    ("first finding", 0)
+)]
+// `End` and a page down both reach the last comment; only two here.
+#[case::end_last_comment(
+    KeyCode::End,
+    Action::Continue,
+    Mode::Browse,
+    Focus::Sidebar,
+    SidebarTab::Comments,
+    ("second finding", 0)
+)]
+#[case::page_down_last_comment(
+    KeyCode::PageDown,
+    Action::Continue,
+    Mode::Browse,
+    Focus::Sidebar,
+    SidebarTab::Comments,
+    ("second finding", 0)
+)]
+#[case::page_up_stays_first(
+    KeyCode::PageUp,
     Action::Continue,
     Mode::Browse,
     Focus::Sidebar,

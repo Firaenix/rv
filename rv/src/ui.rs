@@ -105,7 +105,7 @@ const COMMENT_ROWS: u16 = 3;
 
 /// Rows a bordered pane spends on its own borders. The same number of columns,
 /// which is why it is used for both.
-const BORDER_ROWS: u16 = 2;
+pub(crate) const BORDER_ROWS: u16 = 2;
 
 /// Columns a diff line spends before its text starts: a five-wide number field,
 /// a space, and the one-character sigil.

@@ -43,6 +43,7 @@ mod merges;
 mod mode;
 mod mouse;
 mod navigate;
+mod paging;
 mod paint;
 mod query;
 mod refresh;

@@ -20,6 +20,8 @@ pub use table::BINDINGS;
 pub enum Group {
     /// Moving the cursor inside whatever pane has it.
     Move,
+    /// Jumping the cursor by a page or to an end, and scrolling text sideways.
+    Scroll,
     /// Moving the cursor *between* panes, and between what the sidebar lists.
     Focus,
     /// Writing, deleting and folding comments.
@@ -36,6 +38,7 @@ impl Group {
     /// Every group, in the order the popup lists them.
     pub const ALL: &'static [Group] = &[
         Group::Move,
+        Group::Scroll,
         Group::Focus,
         Group::Comment,
         Group::Edit,
@@ -48,6 +51,7 @@ impl Group {
     pub fn heading(self) -> &'static str {
         match self {
             Group::Move => "Move",
+            Group::Scroll => "Jump & scroll",
             Group::Focus => "Panes",
             Group::Comment => "Comments",
             Group::Edit => "Edit",
@@ -85,6 +89,10 @@ pub struct Binding {
 pub(super) enum Command {
     Forward,
     Back,
+    PageForward,
+    PageBackward,
+    JumpFirst,
+    JumpLast,
     NextFile,
     PreviousFile,
     NextHunk,
