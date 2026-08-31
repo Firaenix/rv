@@ -49,21 +49,16 @@ pub struct Suppression {
 }
 
 impl App {
-    /// Flips the left column between the files and the comments.
-    ///
-    /// Says nothing in the status line: it is navigation, the pane's own title
-    /// reports which tab is up, and a key that overwrote the help text to
-    /// announce itself would cost the reviewer the keymap they read off it.
-    pub(super) fn switch_tab(&mut self) -> Result<()> {
-        self.goto_tab(match self.sidebar_tab {
-            SidebarTab::Files => SidebarTab::Commits,
-            SidebarTab::Commits => SidebarTab::Comments,
-            SidebarTab::Comments => SidebarTab::Files,
-        })
+    /// `Space f`/`c`/`m`: enters the sidebar mode `tab` names — the focus lands
+    /// on the sidebar and it shows that list. `Space d` is the fourth mode, the
+    /// diff, and takes the focus straight there without a tab.
+    pub(super) fn goto_mode(&mut self, tab: SidebarTab) -> Result<()> {
+        self.focus = super::Focus::Sidebar;
+        self.goto_tab(tab)
     }
 
-    /// Shows `tab` in the left column — `Tab`'s cycle, and `1`/`2`/`3`
-    /// directly.
+    /// Shows `tab` in the left column, without touching the focus — the inner
+    /// half of [`App::goto_mode`], and the path `Tab`'s panel swap does not take.
     pub(super) fn goto_tab(&mut self, tab: SidebarTab) -> Result<()> {
         if tab == self.sidebar_tab {
             return Ok(());

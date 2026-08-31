@@ -49,7 +49,7 @@ fn jumping_to_any_comment_lands_on_a_line_that_shows_it() {
             rewind(app);
             press_n(app, KeyCode::Char(']'), *file);
             walk_to_line(app, *downs);
-            press(app, KeyCode::Char('c'));
+            comment(app);
             prop_assert_eq!(app.mode(), Mode::Comment);
             // Distinct bodies, so that two writes at one location are two
             // comments rather than one upsert of the other.
@@ -63,7 +63,6 @@ fn jumping_to_any_comment_lands_on_a_line_that_shows_it() {
         for id in &ids {
             rewind(app);
             to_comments(app);
-            press(app, KeyCode::Left);
             // Walked to rather than indexed: the browser groups its comments
             // under file headings and orders them by `(file, line)`, so a row
             // number is an address in a list whose shape this property is not

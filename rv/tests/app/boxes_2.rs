@@ -170,8 +170,8 @@ fn the_selected_box_stays_on_screen_in_a_short_pane() {
     }
 
     app.on_key(KeyCode::Enter).expect("enter the stack");
-    app.on_key(KeyCode::Char('j')).expect("second");
-    app.on_key(KeyCode::Char('j')).expect("third");
+    app.on_key(KeyCode::Down).expect("second");
+    app.on_key(KeyCode::Down).expect("third");
 
     // Eight rows: a status bar, two borders, and five rows of pane — far less
     // than the three boxes need.

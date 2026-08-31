@@ -185,7 +185,7 @@ fn the_selected_line_is_brighter_rather_than_reversed() {
 
     // ...and the brightness moves with the cursor rather than being a property
     // of the first row.
-    app.on_key(KeyCode::Char('j')).expect("j");
+    app.on_key(KeyCode::Down).expect("j");
     let moved = frame_at(&app, 100, 24);
     assert_eq!(
         diff_bg(&moved, area, selected + 1),

@@ -19,6 +19,7 @@ fn d_then_y_deletes_the_comment_from_the_store() {
     write_comment(&mut app, "needs a doc");
     let line = app.line_index();
 
+    app.on_key(KeyCode::Char('c')).expect("comment leader");
     app.on_key(KeyCode::Char('d')).expect("ask");
     assert!(
         matches!(app.mode(), Mode::ConfirmDelete { .. }),
@@ -81,6 +82,7 @@ fn deleting_a_comment_does_not_rewrite_the_export(#[case] answer: KeyCode, #[cas
         .modified()
         .expect("mtime");
 
+    app.on_key(KeyCode::Char('c')).expect("comment leader");
     app.on_key(KeyCode::Char('d')).expect("ask");
     app.on_key(answer).expect("answer");
 
@@ -113,6 +115,7 @@ fn d_then_anything_else_cancels_and_keeps_the_comment() {
     write_comment(&mut app, "needs a doc");
     let line = app.line_index();
 
+    app.on_key(KeyCode::Char('c')).expect("comment leader");
     app.on_key(KeyCode::Char('d')).expect("ask");
     app.on_key(KeyCode::Char('n')).expect("decline");
 
@@ -151,6 +154,7 @@ fn every_key_answers_the_confirmation(#[case] key: KeyCode, #[case] deletes: boo
     let mut app = workspace.app();
     write_comment(&mut app, "needs a doc");
 
+    app.on_key(KeyCode::Char('c')).expect("comment leader");
     app.on_key(KeyCode::Char('d')).expect("ask");
     let action = app.on_key(key).expect("answer");
 
@@ -186,6 +190,7 @@ fn from_the_diff_d_targets_the_newest_and_reports_how_many_there_were() {
     write_comment(&mut app, "second finding");
     let line = app.line_index();
 
+    app.on_key(KeyCode::Char('c')).expect("comment leader");
     app.on_key(KeyCode::Char('d')).expect("ask");
     app.on_key(KeyCode::Char('y')).expect("confirm");
 
@@ -218,6 +223,7 @@ fn from_the_stack_d_targets_the_selected_comment() {
         "first finding",
         "the cursor is on the oldest, which is not the one `d` would take from the diff"
     );
+    app.on_key(KeyCode::Char('c')).expect("comment leader");
     app.on_key(KeyCode::Char('d')).expect("ask");
     app.on_key(KeyCode::Char('y')).expect("confirm");
 
@@ -245,6 +251,7 @@ fn deleting_the_last_comment_on_a_line_returns_focus_to_the_diff() {
     write_comment(&mut app, "needs a doc");
 
     app.on_key(KeyCode::Enter).expect("enter the stack");
+    app.on_key(KeyCode::Char('c')).expect("comment leader");
     app.on_key(KeyCode::Char('d')).expect("ask");
     app.on_key(KeyCode::Char('y')).expect("confirm");
 
@@ -272,6 +279,7 @@ fn d_from_the_file_list_deletes_nothing() {
 
     app.on_key(KeyCode::Left).expect("focus the file list");
     assert_eq!(app.focus(), Focus::Sidebar);
+    app.on_key(KeyCode::Char('c')).expect("comment leader");
     app.on_key(KeyCode::Char('d')).expect("d");
 
     assert_eq!(
@@ -301,16 +309,21 @@ fn d_from_the_file_list_deletes_nothing() {
     );
 }
 
-/// `d` on a line with nothing on it says so and stays in `Browse`: there is no
-/// question to ask, so asking one would be a state the reviewer has to escape
-/// for no reason.
+/// On a line with nothing on it, the comment leader has only one thing it can
+/// do — write — so `c` skips its menu and opens the box rather than offering a
+/// delete there is nothing to answer. The menu never presents `d` with no
+/// comment to remove, so there is no "delete nothing" refusal to escape.
 #[test]
-fn d_with_nothing_to_delete_says_so() {
+fn c_on_an_empty_line_writes_rather_than_offering_delete() {
     let workspace = Fixture::new();
     let mut app = workspace.app();
 
-    app.on_key(KeyCode::Char('d')).expect("d");
+    app.on_key(KeyCode::Char('c')).expect("comment leader");
 
-    assert_eq!(app.mode(), Mode::Browse);
-    assert!(app.status().contains("no comments"), "{:?}", app.status());
+    assert_eq!(
+        app.mode(),
+        Mode::Comment,
+        "c on an empty line should smart-collapse to the write"
+    );
+    assert!(app.pending_leader().is_none(), "no menu should be waiting");
 }

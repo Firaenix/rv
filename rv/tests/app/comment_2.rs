@@ -47,7 +47,7 @@ fn a_comment_stored_under_a_foreign_id_keeps_working() {
     session::reply(&review, LEGACY, "still addressable").expect("store the reply");
     drop(app);
     let mut app = workspace.app();
-    app.on_key(KeyCode::Char('j')).expect("move down a line");
+    app.on_key(KeyCode::Down).expect("move down a line");
     write_comment(&mut app, "written by this build");
 
     let comments = workspace.store().comments().expect("read the comments");

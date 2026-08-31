@@ -54,7 +54,7 @@ fn a_review_with_no_files_is_inert_but_alive() {
             // about. `Esc` closes it and is a no-op otherwise.
             press(app, KeyCode::Esc);
             prop_assert!(!app.help_open());
-            press(app, KeyCode::Char('c'));
+            comment(app);
             prop_assert_eq!(app.mode(), Mode::Browse);
             prop_assert_eq!(app.status(), "no diff line selected, nothing to comment on");
             prop_assert!(fixture.comments().is_empty());
@@ -87,7 +87,7 @@ fn drawing_survives_pathological_sizes(#[case] width: u16, #[case] height: u16) 
     for file in 0..count {
         rewind(&mut app);
         press_n(&mut app, KeyCode::Char(']'), file);
-        press_n(&mut app, KeyCode::Char('j'), 60);
+        press_n(&mut app, KeyCode::Down, 60);
 
         let browse = render(&app, width, height);
         assert_eq!(
@@ -95,7 +95,7 @@ fn drawing_survives_pathological_sizes(#[case] width: u16, #[case] height: u16) 
             Rect::new(0, 0, width, height)
         );
 
-        press(&mut app, KeyCode::Char('c'));
+        comment(&mut app);
         if app.mode() == Mode::Comment {
             type_text(&mut app, "a comment being typed into a very small terminal");
         }

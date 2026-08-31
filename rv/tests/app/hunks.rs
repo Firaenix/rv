@@ -72,11 +72,12 @@ fn cursor_line(app: &App) -> u32 {
 /// Presses `key` until the cursor stops moving, collecting every line it
 /// rested on — the one it started on included, since with full-file context
 /// the reviewer opens on the file's first line, not on a hunk at all.
-fn walk(app: &mut App, key: char) -> Vec<u32> {
+fn walk(app: &mut App, direction: KeyCode) -> Vec<u32> {
     let mut seen = vec![cursor_line(app)];
     let mut previous = app.line_index();
     for _ in 0..EDITED.len() + 2 {
-        app.on_key(KeyCode::Char(key)).expect("a hunk key");
+        app.on_key(KeyCode::Char('g')).expect("goto leader");
+        app.on_key(direction).expect("a hunk key");
         if app.line_index() == previous {
             break;
         }
@@ -103,7 +104,10 @@ fn j_steps_forward_through_every_hunk_and_stops_at_the_last() {
         1,
         "a reviewer opens on the file's first line"
     );
-    assert_eq!(walk(&mut app, 'J'), [1, EDITED[0], EDITED[1], EDITED[2]]);
+    assert_eq!(
+        walk(&mut app, KeyCode::Down),
+        [1, EDITED[0], EDITED[1], EDITED[2]]
+    );
 }
 
 /// No wrap at the far end: a jump from the last hunk to the first would look
@@ -111,10 +115,11 @@ fn j_steps_forward_through_every_hunk_and_stops_at_the_last() {
 #[test]
 fn j_at_the_last_hunk_says_so_rather_than_wrapping() {
     let (_workspace, mut app) = on_wide();
-    walk(&mut app, 'J');
+    walk(&mut app, KeyCode::Down);
     let last = app.line_index();
 
-    app.on_key(KeyCode::Char('J')).expect("J at the last hunk");
+    app.on_key(KeyCode::Char('g')).expect("goto leader");
+    app.on_key(KeyCode::Down).expect("J at the last hunk");
     assert_eq!(app.line_index(), last, "J wrapped off the last hunk");
     assert_eq!(app.status(), "the last hunk in this file");
     assert_eq!(
@@ -127,9 +132,9 @@ fn j_at_the_last_hunk_says_so_rather_than_wrapping() {
 #[test]
 fn k_steps_back_through_every_hunk_and_stops_at_the_first() {
     let (_workspace, mut app) = on_wide();
-    walk(&mut app, 'J');
+    walk(&mut app, KeyCode::Down);
 
-    let mut back = walk(&mut app, 'K');
+    let mut back = walk(&mut app, KeyCode::Up);
     back.reverse();
     assert_eq!(back, EDITED);
 }
@@ -139,7 +144,8 @@ fn k_at_the_first_hunk_says_so_rather_than_wrapping() {
     let (_workspace, mut app) = on_wide();
     let first = app.line_index();
 
-    app.on_key(KeyCode::Char('K')).expect("K at the first hunk");
+    app.on_key(KeyCode::Char('g')).expect("goto leader");
+    app.on_key(KeyCode::Up).expect("K at the first hunk");
     assert_eq!(app.line_index(), first, "K wrapped off the first hunk");
     assert_eq!(app.status(), "the first hunk in this file");
 }
@@ -151,10 +157,14 @@ fn k_at_the_first_hunk_says_so_rather_than_wrapping() {
 #[test]
 fn a_hunk_jump_moves_the_row_cursor_a_comment_is_anchored_to() {
     let (workspace, mut app) = on_wide();
-    app.on_key(KeyCode::Char('J')).expect("J");
+    app.on_key(KeyCode::Char('g')).expect("goto leader");
+    app.on_key(KeyCode::Down).expect("next hunk");
     let landed = cursor_line(&app);
 
-    app.on_key(KeyCode::Char('c')).expect("c");
+    app.on_key(KeyCode::Char('c')).expect("comment leader");
+    if app.pending_leader().is_some() {
+        app.on_key(KeyCode::Char('c')).expect("write");
+    }
     for character in "on the hunk".chars() {
         app.on_key(KeyCode::Char(character)).expect("type");
     }
@@ -176,7 +186,8 @@ fn a_hunk_jump_from_the_sidebar_lands_in_the_diff() {
     app.on_key(KeyCode::Left).expect("focus the sidebar");
     assert_eq!(app.focus(), Focus::Sidebar);
 
-    app.on_key(KeyCode::Char('J')).expect("J");
+    app.on_key(KeyCode::Char('g')).expect("goto leader");
+    app.on_key(KeyCode::Down).expect("J");
     assert_eq!(app.focus(), Focus::Diff);
     assert_eq!(cursor_line(&app), EDITED[0]);
 }
@@ -189,8 +200,10 @@ fn a_file_with_no_changed_lines_says_it_has_no_hunks() {
     let workspace = Fixture::pure_rename();
     let mut app = workspace.app_from("@--");
 
-    app.on_key(KeyCode::Char('J')).expect("J");
+    app.on_key(KeyCode::Char('g')).expect("goto leader");
+    app.on_key(KeyCode::Down).expect("J");
     assert_eq!(app.status(), "no hunks in this file");
-    app.on_key(KeyCode::Char('K')).expect("K");
+    app.on_key(KeyCode::Char('g')).expect("goto leader");
+    app.on_key(KeyCode::Up).expect("K");
     assert_eq!(app.status(), "no hunks in this file");
 }

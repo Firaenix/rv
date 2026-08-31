@@ -277,7 +277,7 @@ fn body<'a>(
     if diff.source == DiffSource::Binary {
         return Text::from("binary file, not shown by line");
     }
-    if app.displayed().is_empty() {
+    if app.displayed_lines().is_empty() {
         return Text::from(if diff.suppressed {
             SUPPRESSED_EMPTY
         } else {

@@ -18,6 +18,9 @@ use crate::session;
 
 impl App {
     pub(super) fn on_key_comment(&mut self, key: KeyCode) -> Result<Action> {
+        // Drop any leftover browse status (the smart-collapse flash) back to
+        // the keymap hint; Esc and Enter set their own below.
+        self.status = super::status::HELP.to_owned();
         match key {
             KeyCode::Esc => {
                 self.mode = Mode::Browse;

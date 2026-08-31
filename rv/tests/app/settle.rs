@@ -26,6 +26,7 @@ fn a_key_settles_the_comment_and_records_who_did_it(
     let mut app = workspace.app();
     write_comment(&mut app, "needs a second look");
 
+    app.on_key(KeyCode::Char('c')).expect("comment leader");
     app.on_key(key).expect("settle the comment");
 
     assert_eq!(
@@ -44,7 +45,9 @@ fn pressing_it_twice_puts_the_comment_back_to_open(#[case] key: KeyCode) {
     let mut app = workspace.app();
     write_comment(&mut app, "on second thoughts");
 
+    app.on_key(KeyCode::Char('c')).expect("comment leader");
     app.on_key(key).expect("settle");
+    app.on_key(KeyCode::Char('c')).expect("comment leader");
     app.on_key(key).expect("unsettle");
 
     assert_eq!(
@@ -62,7 +65,9 @@ fn abandoning_a_resolved_comment_abandons_it() {
     let mut app = workspace.app();
     write_comment(&mut app, "fixed, or maybe not");
 
+    app.on_key(KeyCode::Char('c')).expect("comment leader");
     app.on_key(KeyCode::Char('r')).expect("resolve");
+    app.on_key(KeyCode::Char('c')).expect("comment leader");
     app.on_key(KeyCode::Char('a')).expect("abandon");
 
     assert_eq!(stored_state(&workspace).0, CommentState::Abandoned);
@@ -76,6 +81,7 @@ fn a_settled_comment_is_still_in_the_store_with_its_body() {
     let mut app = workspace.app();
     write_comment(&mut app, "the body survives");
 
+    app.on_key(KeyCode::Char('c')).expect("comment leader");
     app.on_key(KeyCode::Char('a')).expect("abandon");
 
     let comments = workspace.store().comments().expect("read the comments");
@@ -93,6 +99,7 @@ fn the_two_settled_states_are_told_apart_on_screen() {
     let mut app = workspace.app();
     write_comment(&mut app, "a remark");
 
+    app.on_key(KeyCode::Char('c')).expect("comment leader");
     app.on_key(KeyCode::Char('r')).expect("resolve");
     let resolved = frame_at(&app, 100, 24);
     assert!(
@@ -101,6 +108,7 @@ fn the_two_settled_states_are_told_apart_on_screen() {
         buffer_text(&resolved)
     );
 
+    app.on_key(KeyCode::Char('c')).expect("comment leader");
     app.on_key(KeyCode::Char('a')).expect("abandon");
     let frame = frame_at(&app, 100, 24);
     let text = buffer_text(&frame);
@@ -153,6 +161,7 @@ fn the_file_list_settles_nothing_and_says_why(#[case] key: KeyCode) {
     app.on_key(KeyCode::Left).expect("focus the file list");
     assert_eq!(app.focus(), Focus::Sidebar);
 
+    app.on_key(KeyCode::Char('c')).expect("comment leader");
     app.on_key(key).expect("press it from the file list");
 
     assert_eq!(
@@ -244,6 +253,7 @@ fn a_resolved_comment_does_not_become_outdated() {
     let workspace = Fixture::new();
     let mut app = workspace.app();
     write_comment(&mut app, "fixed, then the file moved on");
+    app.on_key(KeyCode::Char('c')).expect("comment leader");
     app.on_key(KeyCode::Char('r')).expect("resolve");
 
     workspace.write("a.rs", "fn completely_different() {\n    let y = 9;\n}\n");

@@ -7,81 +7,46 @@ use std::cell::RefCell;
 
 use crate::support::*;
 
-/// README's `j` / `↓` and `k` / `↑` are aliases, so two reviewers pressing the
-/// same moves — one on letters, one on arrows — must end up looking at exactly
-/// the same thing.
-///
-/// Differential rather than re-derived: neither app is the oracle, which is
-/// what makes this fail if either binding drifts.
-///
-/// `Left` and `Right` are in the sequence because they are what makes the claim
-/// non-trivial now: the pair moves the *file* selection while the sidebar has
-/// focus and the *line* while the diff does, so an alias that was only wired up
-/// in one of the two arms shows up here.
+/// Movement is the arrows alone — the vim letters `h`/`j`/`k`/`l` were dropped,
+/// and pressing one must do nothing rather than quietly move the cursor. The
+/// arrows still move: `↓`/`↑` walk the focused pane and `←`/`→` change which
+/// pane has the focus.
 #[test]
-fn arrow_keys_are_aliases_of_the_letters() {
+fn the_vim_letters_are_inert_and_the_arrows_move() {
     let fixture = shared_multi();
-    let letters = RefCell::new(fixture.app());
-    let arrows = RefCell::new(fixture.app());
+    let app = &mut fixture.app();
+    rewind(app);
 
-    #[derive(Clone, Copy, Debug)]
-    enum Move {
-        Forward,
-        Back,
-        FileNext,
-        FilePrevious,
-        FocusLeft,
-        FocusRight,
+    // The diff is focused on a fresh reviewer, and `↓` walks its lines.
+    assert_eq!(app.focus(), Focus::Diff);
+    let start = app.line_index();
+    press(app, KeyCode::Down);
+    assert_eq!(app.line_index(), start + 1, "↓ did not move the cursor");
+    press(app, KeyCode::Up);
+    assert_eq!(app.line_index(), start, "↑ did not move it back");
+
+    // None of the dropped letters move the cursor or change the focus.
+    for letter in ['h', 'j', 'k', 'l'] {
+        let before = (app.focus(), app.file_index(), app.line_index());
+        press(app, KeyCode::Char(letter));
+        assert_eq!(
+            (app.focus(), app.file_index(), app.line_index()),
+            before,
+            "{letter} moved something — the vim aliases are supposed to be gone"
+        );
+        // A pressed letter that opened a leader would strand the next key; make
+        // sure nothing is left pending.
+        assert!(
+            app.pending_leader().is_none(),
+            "{letter} opened a menu it should not have"
+        );
     }
 
-    let moves = prop_oneof![
-        3 => Just(Move::Forward),
-        3 => Just(Move::Back),
-        1 => Just(Move::FileNext),
-        1 => Just(Move::FilePrevious),
-        2 => Just(Move::FocusLeft),
-        2 => Just(Move::FocusRight),
-    ];
-
-    let seen = Coverage::new(&[
-        "moving with the sidebar focused",
-        "moving with the diff focused",
-    ]);
-    run_cases(48, prop::collection::vec(moves, 0..24), |sequence| {
-        let letters = &mut *letters.borrow_mut();
-        let arrows = &mut *arrows.borrow_mut();
-        rewind(letters);
-        rewind(arrows);
-
-        for step in &sequence {
-            let (letter, arrow) = match step {
-                Move::Forward => (KeyCode::Char('j'), KeyCode::Down),
-                Move::Back => (KeyCode::Char('k'), KeyCode::Up),
-                Move::FileNext => (KeyCode::Char(']'), KeyCode::Char(']')),
-                Move::FilePrevious => (KeyCode::Char('['), KeyCode::Char('[')),
-                Move::FocusLeft => (KeyCode::Left, KeyCode::Left),
-                Move::FocusRight => (KeyCode::Right, KeyCode::Right),
-            };
-            if matches!(step, Move::Forward | Move::Back) {
-                seen.hit(usize::from(letters.focus() == Focus::Diff));
-            }
-            letters.on_key(letter).expect("letter key");
-            arrows.on_key(arrow).expect("arrow key");
-
-            prop_assert_eq!(
-                (letters.file_index(), letters.line_index()),
-                (arrows.file_index(), arrows.line_index()),
-                "after {:?}: letters and arrows disagree",
-                step
-            );
-            prop_assert_eq!(letters.focus(), arrows.focus());
-            prop_assert_eq!(letters.mode(), arrows.mode());
-            prop_assert_eq!(letters.buffer(), arrows.buffer());
-            prop_assert_eq!(letters.status(), arrows.status());
-        }
-        Ok(())
-    });
-    seen.assert_all();
+    // `←` takes the focus to the sidebar; `→` brings it back to the diff.
+    press(app, KeyCode::Left);
+    assert_eq!(app.focus(), Focus::Sidebar, "← did not move the focus");
+    press(app, KeyCode::Right);
+    assert_eq!(app.focus(), Focus::Diff, "→ did not bring it back");
 }
 
 /// The highlight's closed form: `n` presses of `j` from the top land on
@@ -115,7 +80,7 @@ fn line_navigation_clamps_at_both_ends() {
         prop_assert!(total >= 20, "long.rs produced only {} diff lines", total);
         let last = total - 1;
 
-        press_n(app, KeyCode::Char('j'), downs);
+        press_n(app, KeyCode::Down, downs);
         prop_assert_eq!(
             app.line_index(),
             downs.min(last),
@@ -124,7 +89,7 @@ fn line_navigation_clamps_at_both_ends() {
             total
         );
 
-        press_n(app, KeyCode::Char('k'), ups);
+        press_n(app, KeyCode::Up, ups);
         prop_assert_eq!(
             app.line_index(),
             downs.min(last).saturating_sub(ups),
@@ -186,7 +151,11 @@ fn page_and_jump_keys_reach_the_ends_and_clamp() {
     assert!(after_page > 0, "PgDn did not move the cursor");
     assert!(after_page <= last, "PgDn ran off the end");
     press(app, KeyCode::PageUp);
-    assert_eq!(app.line_index(), 0, "PgDn then PgUp did not return to the top");
+    assert_eq!(
+        app.line_index(),
+        0,
+        "PgDn then PgUp did not return to the top"
+    );
 }
 
 /// The sidebar's closed form, and the invariant that replaced the line reset:
@@ -232,7 +201,7 @@ fn file_navigation_walks_in_range_and_keeps_each_files_place() {
         let mut expected = 0usize;
         let mut places = vec![0usize; count];
         for (forward, downs) in &steps {
-            press_n(app, KeyCode::Char('j'), *downs);
+            press_n(app, KeyCode::Down, *downs);
             places[expected] = (places[expected] + downs).min(totals[expected].saturating_sub(1));
             prop_assert_eq!(
                 app.line_index(),

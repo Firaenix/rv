@@ -152,7 +152,7 @@ fn a_saved_comment_is_visible_on_the_line_it_anchored_to() {
     let workspace = Fixture::new();
     let mut app = workspace.app();
 
-    app.on_key(KeyCode::Char('j')).expect("move down a line");
+    app.on_key(KeyCode::Down).expect("move down a line");
     let line = app.line_index();
     write_comment(&mut app, "needs a doc");
 
@@ -172,7 +172,7 @@ fn a_saved_comment_is_visible_on_the_line_it_anchored_to() {
 fn reopening_the_reviewer_shows_the_comments_already_saved() {
     let workspace = Fixture::new();
     let mut first = workspace.app();
-    first.on_key(KeyCode::Char('j')).expect("move down a line");
+    first.on_key(KeyCode::Down).expect("move down a line");
     let line = first.line_index();
     write_comment(&mut first, "still here tomorrow");
     drop(first);

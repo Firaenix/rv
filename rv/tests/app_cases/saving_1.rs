@@ -65,7 +65,7 @@ fn a_typed_comment_reaches_the_store_byte_identically() {
         seen.hit(if side == Side::Left { 2 } else { 3 });
         seen.hit(usize::from(!typed.trim().is_empty()));
 
-        press(app, KeyCode::Char('c'));
+        comment(app);
         prop_assert_eq!(app.mode(), Mode::Comment);
         type_text(app, &typed);
         press(app, KeyCode::Enter);
@@ -205,7 +205,7 @@ fn both_halves_of_a_same_position_rewrite_keep_their_own_comment() {
         select_path(&mut app, "same.rs");
         walk_to_line(&mut app, index);
         assert_eq!(app.line_index(), index);
-        press(&mut app, KeyCode::Char('c'));
+        comment(&mut app);
         assert_eq!(app.mode(), Mode::Comment);
         type_text(&mut app, "which of these two is right?");
         press(&mut app, KeyCode::Enter);
@@ -290,7 +290,7 @@ fn a_jump_tells_the_two_halves_of_a_rewrite_apart() {
     for (index, body) in [(removed, "the old one"), (added, "the new one")] {
         select_path(&mut app, "same.rs");
         walk_to_line(&mut app, index);
-        press(&mut app, KeyCode::Char('c'));
+        comment(&mut app);
         assert_eq!(app.mode(), Mode::Comment);
         type_text(&mut app, body);
         press(&mut app, KeyCode::Enter);
@@ -300,7 +300,6 @@ fn a_jump_tells_the_two_halves_of_a_rewrite_apart() {
     for (row, expected, kind) in [(0, removed, LineKind::Removed), (1, added, LineKind::Added)] {
         rewind(&mut app);
         to_comments(&mut app);
-        press(&mut app, KeyCode::Left);
         press_n(&mut app, KeyCode::Down, row);
         press(&mut app, KeyCode::Enter);
 

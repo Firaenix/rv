@@ -6,12 +6,15 @@
 //! how — and the other half is everything else the renderer and keyboard
 //! read off [`App`].
 
+use std::borrow::Cow;
+
 use rv_core::diff::DiffLine;
 use rv_core::diff::FileDiff;
 use rv_core::highlight::Highlights;
 use rv_core::model::Side;
 
 use super::App;
+use super::ViewSide;
 use super::merges::MergeState;
 use crate::rows;
 use crate::rows::Plan;
@@ -66,7 +69,7 @@ impl App {
     /// file). They fall back to the diff's own lines while the merge would
     /// have to be computed synchronously here — a follow-on if commit-view
     /// perf becomes a complaint, which the shipped version does not report.
-    pub fn displayed(&self) -> &[DiffLine] {
+    pub fn base_lines(&self) -> &[DiffLine] {
         let Some(diff) = self.selected_diff() else {
             return &[];
         };
@@ -84,11 +87,23 @@ impl App {
         }
     }
 
-    /// Owned copy of [`App::displayed`] — kept as the historical signature
-    /// for callers that want a slice-like value they can index and iterate
-    /// without borrowing `App`.
-    pub fn displayed_lines(&self) -> Vec<DiffLine> {
-        self.displayed().to_vec()
+    /// The lines to draw, after the `v g` grouping and `v b` side toggles —
+    /// applied at this one place so the plan, hunk navigation and comment
+    /// matching agree on which lines exist and in what order.
+    ///
+    /// Borrows the base lines when neither toggle is on, since [`App::line_index`]
+    /// reaches this per keystroke; only a live transform owns a fresh stream.
+    pub fn displayed_lines(&self) -> Cow<'_, [DiffLine]> {
+        let base = self.base_lines();
+        if !self.grouped && self.view_side == ViewSide::Diffed {
+            return Cow::Borrowed(base);
+        }
+        let grouped = if self.grouped {
+            super::regroup::group(base.to_vec())
+        } else {
+            base.to_vec()
+        };
+        Cow::Owned(self.view_side.filter(grouped))
     }
 
     /// Whether full-file context was attempted for the selected file **and
@@ -141,8 +156,9 @@ impl App {
     /// so the rows the keyboard walks and the rows the pane shows are the same
     /// list.
     pub fn plan(&self) -> Plan<'_> {
+        let lines = self.displayed_lines();
         rows::plan(
-            self.displayed(),
+            &lines,
             &|index| self.comments_for_line(index),
             &|comment| self.drift.get(&comment.id),
             &self.collapsed,
@@ -176,7 +192,7 @@ impl App {
     }
 
     pub(super) fn selected_line(&self) -> Option<DiffLine> {
-        self.displayed().get(self.line_index()).cloned()
+        self.displayed_lines().get(self.line_index()).cloned()
     }
 
     /// The highlight spans for the selected file's blob **on `side`**.

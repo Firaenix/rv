@@ -117,7 +117,7 @@ fn a_suppressed_fallback_diff_shows_the_lines_it_lets_you_navigate() {
             select_path(app, path);
             walk_to_line(app, index);
 
-            press(app, KeyCode::Char('c'));
+            comment(app);
             assert_eq!(
                 app.mode(),
                 Mode::Comment,
@@ -175,7 +175,7 @@ fn a_suppressed_diff_with_no_lines_is_the_sentence_alone() {
         );
 
         // Nothing to put the highlight on, so nothing to comment on either.
-        press(&mut app, KeyCode::Char('c'));
+        comment(&mut app);
         assert_eq!(app.mode(), Mode::Browse);
         assert_eq!(app.status(), "no diff line selected, nothing to comment on");
     }
@@ -206,7 +206,7 @@ fn a_review_with_no_changes_refuses_to_attribute_a_comment() {
 
     // The refusal is at Enter, not at `c`: there *is* a line to anchor to, and
     // what is missing is the change to attribute the comment to.
-    press(&mut app, KeyCode::Char('c'));
+    comment(&mut app);
     assert_eq!(app.mode(), Mode::Comment);
     type_text(&mut app, "who changed this?");
     press(&mut app, KeyCode::Enter);

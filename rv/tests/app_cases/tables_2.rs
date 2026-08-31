@@ -23,14 +23,6 @@ use crate::support::*;
 /// end-to-end in `rv/tests/app.rs` and doing it here would empty the shared
 /// fixture under the other cases.
 #[rstest]
-#[case::next_comment_letter(
-    KeyCode::Char('j'),
-    Action::Continue,
-    Mode::Browse,
-    Focus::Sidebar,
-    SidebarTab::Comments,
-    ("second finding", 0)
-)]
 #[case::next_comment_arrow(
     KeyCode::Down,
     Action::Continue,
@@ -38,14 +30,6 @@ use crate::support::*;
     Focus::Sidebar,
     SidebarTab::Comments,
     ("second finding", 0)
-)]
-#[case::previous_comment_letter(
-    KeyCode::Char('k'),
-    Action::Continue,
-    Mode::Browse,
-    Focus::Sidebar,
-    SidebarTab::Comments,
-    ("first finding", 0)
 )]
 #[case::previous_comment_arrow(
     KeyCode::Up,
@@ -64,21 +48,25 @@ use crate::support::*;
     SidebarTab::Comments,
     ("first finding", 0)
 )]
-// `d` asks about the *browsed* comment, and stays in the browser to be answered.
-#[case::delete_asks(KeyCode::Char('d'), Action::Continue, Mode::ConfirmDelete { id: String::new(), label: String::new() }, Focus::Sidebar, SidebarTab::Comments, ("first finding", 0))]
-#[case::back_to_files(
+// The comment leader opens its submenu rather than acting; deleting is `c d`,
+// pinned end-to-end in `rv/tests/app.rs`. A bare `d` is inert now.
+#[case::comment_leader(KeyCode::Char('c'), Action::Continue, Mode::Browse, Focus::Sidebar, SidebarTab::Comments, ("first finding", 0))]
+#[case::bare_d_is_inert(KeyCode::Char('d'), Action::Continue, Mode::Browse, Focus::Sidebar, SidebarTab::Comments, ("first finding", 0))]
+// `Tab` swaps the focus to the diff; the comments list stays selected.
+#[case::tab_to_the_diff(
     KeyCode::Tab,
     Action::Continue,
     Mode::Browse,
-    Focus::Sidebar,
-    SidebarTab::Files,
+    Focus::Diff,
+    SidebarTab::Comments,
     ("first finding", 0)
 )]
-#[case::nothing_further_left(
+// The comment browser has no tree to climb, so `←` leads out to the diff.
+#[case::left_leads_to_the_diff(
     KeyCode::Left,
     Action::Continue,
     Mode::Browse,
-    Focus::Sidebar,
+    Focus::Diff,
     SidebarTab::Comments,
     ("first finding", 0)
 )]
@@ -107,10 +95,10 @@ use crate::support::*;
     SidebarTab::Comments,
     ("first finding", 0)
 )]
-#[case::comment(
-    KeyCode::Char('c'),
+#[case::view_leader(
+    KeyCode::Char('v'),
     Action::Continue,
-    Mode::Comment,
+    Mode::Browse,
     Focus::Sidebar,
     SidebarTab::Comments,
     ("first finding", 0)
@@ -265,7 +253,7 @@ fn comment_keybindings(
     #[case] status: Option<&str>,
 ) {
     let app = &mut multi_app;
-    assert_eq!(press(app, KeyCode::Char('c')), Action::Continue);
+    assert_eq!(comment(app), Action::Continue);
     assert_eq!(
         app.mode(),
         Mode::Comment,

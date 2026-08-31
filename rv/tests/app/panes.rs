@@ -32,7 +32,7 @@ fn left_and_right_move_focus_between_the_panes() {
 }
 
 #[rstest]
-#[case(KeyCode::Char('j'), KeyCode::Char('k'))]
+#[case(KeyCode::Down, KeyCode::Up)]
 #[case(KeyCode::Down, KeyCode::Up)]
 fn with_the_files_focused_both_key_pairs_move_the_file_selection(
     #[case] forward: KeyCode,
@@ -51,7 +51,7 @@ fn with_the_files_focused_both_key_pairs_move_the_file_selection(
 }
 
 #[rstest]
-#[case(KeyCode::Char('j'), KeyCode::Char('k'))]
+#[case(KeyCode::Down, KeyCode::Up)]
 #[case(KeyCode::Down, KeyCode::Up)]
 fn with_the_diff_focused_both_key_pairs_move_the_line(
     #[case] forward: KeyCode,
@@ -75,8 +75,8 @@ fn with_the_diff_focused_both_key_pairs_move_the_line(
 fn leaving_a_file_and_coming_back_keeps_your_place() {
     let workspace = Fixture::new();
     let mut app = workspace.app();
-    app.on_key(KeyCode::Char('j')).expect("down");
-    app.on_key(KeyCode::Char('j')).expect("down");
+    app.on_key(KeyCode::Down).expect("down");
+    app.on_key(KeyCode::Down).expect("down");
     let was = app.line_index();
     assert!(was > 0, "the fixture has enough lines to move");
 
@@ -96,10 +96,10 @@ fn leaving_a_file_and_coming_back_keeps_your_place() {
 fn each_file_keeps_its_own_place() {
     let workspace = Fixture::new();
     let mut app = workspace.app();
-    app.on_key(KeyCode::Char('j')).expect("down");
+    app.on_key(KeyCode::Down).expect("down");
     app.on_key(KeyCode::Char(']')).expect("next file");
-    app.on_key(KeyCode::Char('j')).expect("down");
-    app.on_key(KeyCode::Char('j')).expect("down");
+    app.on_key(KeyCode::Down).expect("down");
+    app.on_key(KeyCode::Down).expect("down");
     assert_eq!(app.line_index(), 2, "the second file is two lines down");
 
     app.on_key(KeyCode::Char('[')).expect("back");

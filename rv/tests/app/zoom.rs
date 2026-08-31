@@ -1,8 +1,6 @@
 //! Zooming the sidebar into a directory or a change, and back out.
 
 use crossterm::event::KeyCode;
-use crossterm::event::KeyEvent;
-use crossterm::event::KeyModifiers;
 use rv::layout::Split;
 
 use crate::support::*;
@@ -12,6 +10,7 @@ use crate::support::*;
 fn tree_sidebar() -> (Fixture, rv::app::App) {
     let workspace = Fixture::nested();
     let mut app = workspace.app();
+    app.on_key(KeyCode::Char('v')).expect("view leader");
     app.on_key(KeyCode::Char('t')).expect("tree view");
     app.on_key(KeyCode::Left).expect("focus the sidebar");
     // The cursor opens on the selected file's row; the directory above it is
@@ -21,7 +20,7 @@ fn tree_sidebar() -> (Fixture, rv::app::App) {
 }
 
 #[test]
-fn enter_zooms_into_a_directory_and_esc_backs_out() {
+fn right_drills_into_a_directory_and_esc_backs_out() {
     let (_workspace, mut app) = tree_sidebar();
     let before = sidebar_text(&frame_at(&app, 100, 24), 100, 24, Split::default());
     assert!(
@@ -29,7 +28,7 @@ fn enter_zooms_into_a_directory_and_esc_backs_out() {
         "the tree shows the whole review before any zoom:\n{before}"
     );
 
-    app.on_key(KeyCode::Enter).expect("zoom in");
+    app.on_key(KeyCode::Right).expect("drill in");
     let zoomed = sidebar_text(&frame_at(&app, 100, 24), 100, 24, Split::default());
     assert!(
         zoomed.contains("▴") && zoomed.contains("docs/specs"),
@@ -52,7 +51,7 @@ fn enter_zooms_into_a_directory_and_esc_backs_out() {
     );
     // The cursor is left on the directory that was zoomed into: the reviewer is
     // at that directory, looking at it from outside now.
-    app.on_key(KeyCode::Enter).expect("zoom straight back in");
+    app.on_key(KeyCode::Right).expect("drill straight back in");
     let again = sidebar_text(&frame_at(&app, 100, 24), 100, 24, Split::default());
     assert!(
         again.contains("▴") && !again.contains("top.rs"),
@@ -61,23 +60,20 @@ fn enter_zooms_into_a_directory_and_esc_backs_out() {
 }
 
 #[test]
-fn enter_on_the_up_row_also_backs_out() {
+fn left_on_the_up_row_also_backs_out() {
     let (_workspace, mut app) = tree_sidebar();
-    app.on_key(KeyCode::Enter).expect("zoom in");
-    // The Up row is the first row of a zoomed view and the zoom leaves the
-    // cursor on it.
-    app.on_key(KeyCode::Enter).expect("enter on the Up row");
+    app.on_key(KeyCode::Right).expect("drill in");
+    // The Up row is the first row of a zoomed view and the drill leaves the
+    // cursor on it; `←` climbs back out.
+    app.on_key(KeyCode::Left).expect("left on the Up row");
     let text = sidebar_text(&frame_at(&app, 100, 24), 100, 24, Split::default());
-    assert!(
-        text.contains("top.rs"),
-        "enter on ▴ did not back out:\n{text}"
-    );
+    assert!(text.contains("top.rs"), "← on ▴ did not back out:\n{text}");
 }
 
 #[test]
-fn space_still_folds_rather_than_zooming() {
+fn s_still_folds_rather_than_drilling() {
     let (_workspace, mut app) = tree_sidebar();
-    app.on_key(KeyCode::Char(' ')).expect("fold the directory");
+    app.on_key(KeyCode::Char('s')).expect("fold the directory");
     let text = sidebar_text(&frame_at(&app, 100, 24), 100, 24, Split::default());
     assert!(
         !text.contains("a.md") && !text.contains("▴"),
@@ -90,12 +86,11 @@ fn space_still_folds_rather_than_zooming() {
 }
 
 #[test]
-fn enter_zooms_into_a_change_in_the_commits_tab() {
+fn right_drills_into_a_change_in_the_commits_tab() {
     let workspace = Fixture::nested();
     let mut app = workspace.app();
-    app.on_key(KeyCode::Left).expect("focus the sidebar");
-    app.on_key(KeyCode::Tab).expect("the commits tab");
-    // Tab-entry parks the cursor on the selected file's row; the walk down
+    to_commits(&mut app);
+    // The commits mode parks the cursor on the selected file's row; the walk down
     // starts at the top. The stack lists newest first and `@` is an empty,
     // undescribed change; the described one is the row beneath it.
     to_top(&mut app);
@@ -111,7 +106,7 @@ fn enter_zooms_into_a_change_in_the_commits_tab() {
         app.on_key(KeyCode::Down).expect("next row");
     }
 
-    app.on_key(KeyCode::Enter).expect("zoom into the change");
+    app.on_key(KeyCode::Right).expect("drill into the change");
     let text = sidebar_text(&frame_at(&app, 100, 24), 100, 24, Split::default());
     assert!(
         text.contains("▴"),
@@ -132,9 +127,10 @@ fn enter_zooms_into_a_change_in_the_commits_tab() {
 #[test]
 fn a_zoom_whose_key_no_longer_names_a_row_is_dormant_not_wrong() {
     let (_workspace, mut app) = tree_sidebar();
-    app.on_key(KeyCode::Enter).expect("zoom in");
+    app.on_key(KeyCode::Right).expect("drill in");
     // `t` flattens the tree: there is no directory row to carve to any more,
     // so the whole list is the view rather than an error or an empty pane.
+    app.on_key(KeyCode::Char('v')).expect("view leader");
     app.on_key(KeyCode::Char('t')).expect("flat list");
     let text = sidebar_text(&frame_at(&app, 100, 24), 100, 24, Split::default());
     assert!(
@@ -143,24 +139,18 @@ fn a_zoom_whose_key_no_longer_names_a_row_is_dormant_not_wrong() {
     );
 }
 
-/// `Shift+→` and `Shift+←` are the arrows one layer deeper: in the sidebar
-/// they walk the tree the way `Enter` and `Esc` do.
+/// Plain `→` and `←` walk the tree: into a folder and back out.
 #[test]
-fn shift_arrows_walk_into_folders_and_back_out() {
+fn arrows_walk_into_folders_and_back_out() {
     let (_workspace, mut app) = tree_sidebar();
-    app.on_key_event(KeyEvent::new(KeyCode::Right, KeyModifiers::SHIFT))
-        .expect("shift+right");
+    app.on_key(KeyCode::Right).expect("drill in");
     let zoomed = sidebar_text(&frame_at(&app, 100, 24), 100, 24, Split::default());
     assert!(
         zoomed.contains("▴") && !zoomed.contains("top.rs"),
-        "shift+right did not zoom in:\n{zoomed}"
+        "→ did not drill in:\n{zoomed}"
     );
 
-    app.on_key_event(KeyEvent::new(KeyCode::Left, KeyModifiers::SHIFT))
-        .expect("shift+left");
+    app.on_key(KeyCode::Left).expect("climb out");
     let back = sidebar_text(&frame_at(&app, 100, 24), 100, 24, Split::default());
-    assert!(
-        back.contains("top.rs"),
-        "shift+left did not back out:\n{back}"
-    );
+    assert!(back.contains("top.rs"), "← did not back out:\n{back}");
 }

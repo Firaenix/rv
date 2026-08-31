@@ -75,7 +75,7 @@ fn the_toast_takes_no_key_and_steals_no_focus() {
     let line = app.line_index();
 
     app.alert("something went wrong", Instant::now());
-    app.on_key(KeyCode::Char('j')).expect("j");
+    app.on_key(KeyCode::Down).expect("j");
 
     assert_eq!(app.focus(), focus, "the toast took the focus");
     assert_eq!(app.line_index(), line + 1, "and j still moved the line");
@@ -226,7 +226,7 @@ fn stale_anchor() -> Fixture {
         let mut app = workspace.app();
         // Down to a line the second change will not touch.
         for _ in 0..3 {
-            app.on_key(KeyCode::Char('j')).expect("next line");
+            app.on_key(KeyCode::Down).expect("next line");
         }
         write_comment(&mut app, "a finding");
     }

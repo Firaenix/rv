@@ -25,6 +25,7 @@ use crate::app::App;
 use crate::app::BINDINGS;
 use crate::app::Binding;
 use crate::app::Group;
+use crate::app::Leader;
 
 /// Columns between the key column and its description, and between one column
 /// of the popup and the next.
@@ -39,29 +40,82 @@ enum HelpRow {
     },
 }
 
-/// The bindings the current context's tip lists, in table order.
-fn tip_bindings(app: &App) -> Vec<&'static Binding> {
-    let context = app.context();
-    BINDINGS
-        .iter()
-        .filter(|binding| binding.contexts.contains(&context))
-        .collect()
+/// How a binding is spelled in the full keymap: the chord a reviewer presses. A
+/// direct key is itself; a key under a leader is the leader then the key — `v f`.
+/// The `Space` leader is drawn as `⎵` here so its column stays as narrow as the
+/// letter leaders', which is what lets the map deal into three columns at 80x24.
+fn chord(binding: &Binding) -> String {
+    match binding.leader {
+        Some(Leader::Mode) => format!("⎵ {}", binding.keys),
+        Some(leader) => format!("{} {}", leader.label(), binding.keys),
+        None => binding.keys.to_owned(),
+    }
 }
 
-/// How big the tip wants to be, borders included: one row per binding, wide
-/// enough for its longest row and its own title.
+/// One row of the layers overview `?` shows: how a key or a leader is spelled,
+/// and what it reaches.
+struct Layer {
+    keys: &'static str,
+    what: &'static str,
+}
+
+/// The layers overview: the handful of keys that move around, and the four
+/// leaders every other key hangs off. `?` shows this; `? ?` opens the whole map.
+const LAYERS: &[Layer] = &[
+    Layer {
+        keys: "↑↓",
+        what: "move",
+    },
+    Layer {
+        keys: "←→",
+        what: "out / in",
+    },
+    Layer {
+        keys: "Tab",
+        what: "tree / diff",
+    },
+    Layer {
+        keys: "Space",
+        what: "mode …",
+    },
+    Layer {
+        keys: "g",
+        what: "goto …",
+    },
+    Layer {
+        keys: "c",
+        what: "comment …",
+    },
+    Layer {
+        keys: "v",
+        what: "view …",
+    },
+    Layer {
+        keys: "? ?",
+        what: "all keys",
+    },
+];
+
+/// How big the tip wants to be, borders included: one row per layer, wide enough
+/// for its longest row and its own title.
 ///
 /// Asked by [`crate::ui`] before the layout is computed, because only this
 /// module knows what the tip says; where the box goes is [`crate::layout`]'s.
 #[must_use]
 pub fn tip_size(app: &App) -> (u16, u16) {
-    let bindings = tip_bindings(app);
-    let keys = column_width(&bindings, |binding| binding.keys);
-    let what = column_width(&bindings, |binding| binding.what);
-    let title = tip_title(app).chars().count();
-    let inner = (keys + HELP_GAP + what).max(title);
+    let keys = LAYERS
+        .iter()
+        .map(|l| l.keys.chars().count())
+        .max()
+        .unwrap_or(0);
+    let what = LAYERS
+        .iter()
+        .map(|l| l.what.chars().count())
+        .max()
+        .unwrap_or(0);
+    let inner = (keys + HELP_GAP + what).max(tip_title(app).chars().count());
     (
-        u16::try_from(bindings.len())
+        u16::try_from(LAYERS.len())
             .unwrap_or(u16::MAX)
             .saturating_add(BORDER_ROWS),
         u16::try_from(inner)
@@ -70,35 +124,33 @@ pub fn tip_size(app: &App) -> (u16, u16) {
     )
 }
 
-/// What the tip calls itself: the context, and the way to the whole keymap.
+/// What the tip calls itself: where the reviewer is, and the way to the whole
+/// keymap.
 fn tip_title(app: &App) -> String {
-    format!("▸ {} — ? all keys", app.context().name())
+    format!("▸ {} — ? ? all keys", app.context().name())
 }
 
-/// The contextual tip: what the keys do *here*, one per row, above the bar's
-/// `? help` hint.
-///
-/// Nothing in it is dimmed. The full popup dims a key that is in the wrong
-/// *place* — `d` from the file list — but every key in a tip is already the
-/// right place's, and dimming the momentarily inapplicable ones (`H` before
-/// anything has scrolled, `j` on the last row) read as "these keys are broken"
-/// rather than as information.
+/// The layers overview: the leaders and the moves that reach every key, above
+/// the bar's `? help` hint. `? ?` unrolls the whole keymap.
 pub(super) fn draw_tip(frame: &mut Frame, app: &App, area: Rect) {
-    let bindings = tip_bindings(app);
-    let keys = column_width(&bindings, |binding| binding.keys);
-    let width = usize::from(area.width.saturating_sub(BORDER_ROWS)).saturating_sub(1);
-    let lines: Vec<Line<'static>> = bindings
+    let keys = LAYERS
         .iter()
-        .map(|binding| {
+        .map(|l| l.keys.chars().count())
+        .max()
+        .unwrap_or(0);
+    let width = usize::from(area.width.saturating_sub(BORDER_ROWS)).saturating_sub(1);
+    let lines: Vec<Line<'static>> = LAYERS
+        .iter()
+        .map(|layer| {
             clip_spans(
                 vec![
                     Span::raw(" "),
                     Span::styled(
-                        format!("{:<keys$}", binding.keys),
+                        format!("{:<keys$}", layer.keys),
                         Style::default().add_modifier(Modifier::BOLD),
                     ),
                     Span::raw(" ".repeat(HELP_GAP)),
-                    Span::raw(binding.what.to_owned()),
+                    Span::raw(layer.what),
                 ],
                 width,
             )
@@ -113,15 +165,6 @@ pub(super) fn draw_tip(frame: &mut Frame, app: &App, area: Rect) {
         ),
         area,
     );
-}
-
-/// The widest `field` of the given bindings, in columns.
-fn column_width(bindings: &[&Binding], field: impl Fn(&Binding) -> &'static str) -> usize {
-    bindings
-        .iter()
-        .map(|binding| field(binding).chars().count())
-        .max()
-        .unwrap_or(0)
 }
 
 pub(super) fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
@@ -155,7 +198,7 @@ fn help_text(app: &App, width: usize, height: usize) -> Text<'static> {
     let blocks = help_blocks(app);
     let keys = BINDINGS
         .iter()
-        .map(|binding| binding.keys.chars().count())
+        .map(|binding| chord(binding).chars().count())
         .max()
         .unwrap_or(0);
     let what = BINDINGS
@@ -210,7 +253,7 @@ fn help_cell(row: Option<&&HelpRow>, keys: usize, what: usize) -> Vec<Span<'stat
                 (dim, dim)
             };
             vec![
-                Span::styled(format!("{:<keys$}", binding.keys), key_style),
+                Span::styled(format!("{:<keys$}", chord(binding)), key_style),
                 Span::raw(" ".repeat(HELP_GAP)),
                 Span::styled(format!("{:<what$}", binding.what), what_style),
             ]

@@ -64,6 +64,7 @@ mod pane;
 mod sidebar;
 mod text;
 mod toast;
+mod whichkey;
 
 pub use code::capture_colour;
 pub use code::line_background;
@@ -154,6 +155,9 @@ pub fn draw(frame: &mut Frame, app: &App, now: Instant) {
             help::draw_tip(frame, app, area);
         }
     }
+    // Above everything else: a pressed leader is waiting for its next key, and
+    // the menu answering it must sit over whatever it was raised in front of.
+    whichkey::draw(frame, app, frame.area(), rects.bar);
 }
 
 /// `area` with its first `columns` taken off the left.

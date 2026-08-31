@@ -104,7 +104,7 @@ fn distinct_comments_are_never_lost_to_each_other() {
         for (file, downs, body) in &writes {
             rewind(app);
             press_n(app, KeyCode::Char(']'), *file);
-            press_n(app, KeyCode::Char('j'), *downs);
+            press_n(app, KeyCode::Down, *downs);
             let selected = app.selected_file().cloned().expect("a file");
             let line = lines(app)
                 .get(app.line_index())
@@ -122,7 +122,7 @@ fn distinct_comments_are_never_lost_to_each_other() {
                 Side::Right => selected.path.clone(),
             };
 
-            press(app, KeyCode::Char('c'));
+            comment(app);
             prop_assert_eq!(app.mode(), Mode::Comment);
             type_text(app, body);
             press(app, KeyCode::Enter);
@@ -265,11 +265,11 @@ fn commenting_is_refused_before_typing_or_not_at_all() {
         let app = &mut *app.borrow_mut();
         rewind(app);
         press_n(app, KeyCode::Char(']'), file);
-        press_n(app, KeyCode::Char('j'), downs);
+        press_n(app, KeyCode::Down, downs);
 
         let selected = lines(app).get(app.line_index()).cloned();
         seen.hit(usize::from(selected.is_some()));
-        press(app, KeyCode::Char('c'));
+        comment(app);
 
         if selected.is_none() {
             prop_assert_eq!(
@@ -362,7 +362,7 @@ fn the_pane_the_status_and_the_anchor_agree_on_the_line() {
             ))
         })?;
 
-        press(app, KeyCode::Char('c'));
+        comment(app);
         prop_assert_eq!(app.mode(), Mode::Comment);
         type_text(app, "why");
         press(app, KeyCode::Enter);

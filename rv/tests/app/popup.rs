@@ -86,11 +86,11 @@ fn question_mark_walks_tip_then_keymap_then_closed() {
     assert!(!app.help_open(), "third: closed");
 }
 
-/// The tip is contextual: it says where the reviewer is, in the corner above
-/// the bar's own `? help` hint, and lists this context's keys rather than all
-/// of them.
+/// `?` shows the layers overview: the leaders every key hangs off, and how to
+/// reach them, in the corner above the bar's own hint. It still names where the
+/// reviewer is in its title, and `? ?` unrolls the whole keymap.
 #[test]
-fn the_tip_is_contextual_and_sits_in_the_corner() {
+fn the_layers_overview_sits_in_the_corner_and_names_the_context() {
     let workspace = Fixture::new();
     let mut app = workspace.app();
     app.on_key(KeyCode::Char('?')).expect("?");
@@ -99,15 +99,18 @@ fn the_tip_is_contextual_and_sits_in_the_corner() {
     let text = buffer_text(&frame);
     assert!(
         text.contains("DIFF"),
-        "the tip names the context the cursor is in:\n{text}"
+        "the overview names the context the cursor is in:\n{text}"
     );
+    // The four leaders are the whole point of the overview.
+    for leader in ["mode", "goto", "comment", "view"] {
+        assert!(
+            text.contains(leader),
+            "the overview does not advertise the {leader} layer:\n{text}"
+        );
+    }
     assert!(
-        text.contains("write a comment"),
-        "and lists the keys for here:\n{text}"
-    );
-    assert!(
-        !text.contains("narrower sidebar"),
-        "without unrolling the whole manual:\n{text}"
+        !text.contains("narrow sidebar"),
+        "the overview should not unroll the whole manual:\n{text}"
     );
 
     // In the corner: the tip's frame touches the right-hand edge, on the row
@@ -116,21 +119,17 @@ fn the_tip_is_contextual_and_sits_in_the_corner() {
     let above_bar = &rows[rows.len() - 2];
     assert!(
         above_bar.trim_end().ends_with('╯'),
-        "the tip's corner is not above the hint:\n{text}"
+        "the overview's corner is not above the hint:\n{text}"
     );
 
-    // And it moves with the context: the sidebar's tip is the file list's.
+    // The title follows the focus: the sidebar's overview names the file list.
     app.on_key(KeyCode::Esc).expect("close");
     app.on_key(KeyCode::Left).expect("focus the sidebar");
     app.on_key(KeyCode::Char('?')).expect("?");
     let text = buffer_text(&frame_at(&app, 100, 24));
     assert!(
         text.contains("FILES"),
-        "the tip did not follow the focus:\n{text}"
-    );
-    assert!(
-        text.contains("list / tree"),
-        "the file list's tip teaches its own keys:\n{text}"
+        "the overview title did not follow the focus:\n{text}"
     );
 }
 

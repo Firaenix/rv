@@ -35,10 +35,13 @@ fn the_shape_and_the_order_never_reach_disk() {
     let mut app = workspace.app();
     let before = workspace_tree(workspace.root());
 
+    app.on_key(KeyCode::Char('v')).expect("view leader");
     app.on_key(KeyCode::Char('t')).expect("the tree");
+    app.on_key(KeyCode::Char('v')).expect("view leader");
     app.on_key(KeyCode::Char('o')).expect("order by additions");
     app.on_key(KeyCode::Left).expect("focus the file list");
     app.on_key(KeyCode::Char('s')).expect("fold something");
+    app.on_key(KeyCode::Char('v')).expect("view leader");
     app.on_key(KeyCode::Char('o')).expect("order by removals");
 
     assert_eq!(
@@ -55,6 +58,7 @@ fn the_shape_and_the_order_never_reach_disk() {
 fn the_cursor_can_rest_on_a_directory_without_changing_the_diff() {
     let workspace = Fixture::nested();
     let mut app = workspace.app();
+    app.on_key(KeyCode::Char('v')).expect("view leader");
     app.on_key(KeyCode::Char('t')).expect("the tree");
     app.on_key(KeyCode::Left).expect("focus the file list");
 
@@ -86,6 +90,7 @@ fn the_file_lists_cursor_follows_the_file_that_is_selected() {
     // (50). By additions it is top.rs, lib.rs, a.md, b.md.
     assert_eq!((app.file_index(), app.sidebar_row()), (0, 0));
 
+    app.on_key(KeyCode::Char('v')).expect("view leader");
     app.on_key(KeyCode::Char('o')).expect("order by additions");
     assert_eq!(app.file_index(), 0, "reordering moved the selection");
     assert_eq!(
@@ -126,6 +131,7 @@ fn the_view_keys_say_they_are_about_the_file_list() {
     let tree = app.tree_view();
     let sort = app.sort();
 
+    app.on_key(KeyCode::Char('v')).expect("view leader");
     app.on_key(KeyCode::Char('t')).expect("t");
     assert_eq!(app.tree_view(), tree, "t reshaped a list nobody can see");
     assert!(
@@ -134,6 +140,7 @@ fn the_view_keys_say_they_are_about_the_file_list() {
         app.status()
     );
 
+    app.on_key(KeyCode::Char('v')).expect("view leader");
     app.on_key(KeyCode::Char('o')).expect("o");
     assert_eq!(app.sort(), sort, "o reordered a list nobody can see");
     assert!(
@@ -151,6 +158,8 @@ fn the_view_keys_say_they_are_about_the_file_list() {
 fn the_tree_carries_nerdfont_icons_unless_ascii_asks_otherwise() {
     let workspace = Fixture::nested();
     let mut app = workspace.app();
+    app.on_key(crossterm::event::KeyCode::Char('v'))
+        .expect("view leader");
     app.on_key(crossterm::event::KeyCode::Char('t'))
         .expect("tree view");
 
@@ -174,7 +183,7 @@ fn the_tree_carries_nerdfont_icons_unless_ascii_asks_otherwise() {
         .expect("focus the sidebar");
     app.on_key(crossterm::event::KeyCode::Up)
         .expect("onto the directory row");
-    app.on_key(crossterm::event::KeyCode::Char(' '))
+    app.on_key(crossterm::event::KeyCode::Char('s'))
         .expect("fold");
     let text = sidebar_text(
         &frame_at(&app, 100, 24),

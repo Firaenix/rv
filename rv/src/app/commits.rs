@@ -37,7 +37,7 @@ pub(super) struct CommitIndex {
     /// Kept rather than swallowed: an enumeration error shown as an empty change
     /// gives the summary a `+0 -0` that reads as "this change touched nothing",
     /// which is a claim about the change when the truth is a claim about the
-    /// repository. [`App::switch_tab`] raises these as alerts the first time the
+    /// repository. [`App::goto_tab`] raises these as alerts the first time the
     /// list is shown.
     errors: Vec<String>,
     /// The size of each pair's change, parallel to `pairs`.

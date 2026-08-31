@@ -19,7 +19,7 @@ use crate::support::*;
 fn two_files(workspace: &Fixture) -> App {
     let mut app = workspace.app();
     app.on_key(KeyCode::Char(']')).expect("b.rs");
-    app.on_key(KeyCode::Char('j')).expect("second line");
+    app.on_key(KeyCode::Down).expect("second line");
     write_comment(&mut app, "on b");
     app.on_key(KeyCode::Char('[')).expect("a.rs");
     write_comment(&mut app, "on a");
@@ -90,7 +90,7 @@ fn the_browsers_rows_are_headings_and_comments() {
 fn the_browser_cursor_walks_comments_and_never_rests_on_a_heading() {
     let workspace = Fixture::new();
     let mut app = two_files(&workspace);
-    app.on_key(KeyCode::Left).expect("focus the sidebar");
+    to_comments(&mut app);
 
     assert_eq!(
         app.browsed_comment().expect("a first comment").body,
@@ -338,9 +338,10 @@ fn the_browsed_row_is_highlighted_when_the_sidebar_has_focus() {
         (0..24).any(|y| (0..30).any(|x| buffer[(x, y)].modifier.contains(Modifier::REVERSED)))
     };
 
-    assert!(!reversed(&app), "the unfocused browser is reversed");
-    app.on_key(KeyCode::Left).expect("focus the sidebar");
+    // `Space m` lands on the sidebar, so the browser opens focused and marked.
     assert!(reversed(&app), "the focused browser has no selection");
+    app.on_key(KeyCode::Left).expect("out to the diff");
+    assert!(!reversed(&app), "the unfocused browser is still reversed");
 }
 
 /// The bar drops whole segments rather than cutting one in half, at every

@@ -78,14 +78,23 @@ fn the_wash_reaches_the_edge_of_the_pane_and_no_further() {
 #[test]
 fn every_documented_browse_key_is_a_row_of_the_binding_table() {
     for key in BROWSE_KEYS {
-        if *key == "`Ctrl+C`" {
+        // Ctrl+C and the Shift+arrow scrolls are answered in `on_key_event`
+        // ahead of the table, so they have no `BINDINGS` row of their own.
+        if *key == "`Ctrl+C`" || key.starts_with("`Shift`") {
             continue;
         }
-        let spelled = key.replace('`', "");
+        // A chord is spelled leader-then-key in both the README and BINDINGS,
+        // so rebuild it the same way here: the leader's letter, then the key.
+        let spelled: String = key.chars().filter(|c| !matches!(c, '`' | ' ')).collect();
         assert!(
-            BINDINGS.iter().any(|binding| binding.keys == spelled),
-            "the README documents {key}, which is not a row of BINDINGS: {:?}",
-            BINDINGS.iter().map(|b| b.keys).collect::<Vec<_>>()
+            BINDINGS.iter().any(|binding| {
+                let chord = match binding.leader {
+                    Some(leader) => format!("{}{}", leader.label(), binding.keys),
+                    None => binding.keys.to_owned(),
+                };
+                chord == spelled
+            }),
+            "the README documents {key}, which is not a row of BINDINGS",
         );
     }
 }

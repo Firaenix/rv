@@ -226,4 +226,21 @@ impl App {
     pub fn sidebar_hscroll(&self) -> usize {
         self.sidebar_hscroll
     }
+
+    /// Whether the diff is grouped (removals-then-additions per hunk) rather
+    /// than interleaved — the `v g` toggle, read by the pane's title.
+    pub fn grouped(&self) -> bool {
+        self.grouped
+    }
+
+    /// Which side of the change the diff pane is showing — the `v b` cycle, read
+    /// by the pane's title.
+    pub fn view_side(&self) -> super::ViewSide {
+        self.view_side
+    }
+
+    /// The leader whose which-key submenu is open, if any — drawn by the popup.
+    pub fn pending_leader(&self) -> Option<super::Leader> {
+        self.pending_leader
+    }
 }

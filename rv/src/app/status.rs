@@ -6,7 +6,7 @@
 /// One bar row is the whole budget: a key and one word each, 75 columns, which
 /// fits an 80-column terminal.
 pub(super) const HELP: &str =
-    "↓↑ line  [/] file  c comment  enter stack  d delete  s fold  ? help  q quit";
+    "↓↑ move  ←→ focus  [/] file  c comment  g goto  v view  ? help  q quit";
 
 pub(super) const DELETE_NEEDS_A_COMMENT: &str =
     "the file list selects files, not comments: tab for those, right for the diff";

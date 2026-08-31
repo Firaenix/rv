@@ -16,12 +16,14 @@ fn angle_brackets_resize_the_panes() {
         "a reviewer opens on the default split"
     );
 
+    app.on_key(KeyCode::Char('v')).expect("view leader");
     app.on_key(KeyCode::Char('>')).expect(">");
     assert!(
         app.split().ratio() > start,
         "the sidebar grew: {}",
         app.split().ratio()
     );
+    app.on_key(KeyCode::Char('v')).expect("view leader");
     app.on_key(KeyCode::Char('<')).expect("<");
     assert_eq!(app.split().ratio(), start, "and shrank back");
 }
@@ -32,6 +34,7 @@ fn resizing_never_leaves_the_bounds_however_long_you_hold_it() {
     let mut app = workspace.app();
 
     for _ in 0..200 {
+        app.on_key(KeyCode::Char('v')).expect("view leader");
         app.on_key(KeyCode::Char('>')).expect(">");
     }
     assert!(
@@ -40,6 +43,7 @@ fn resizing_never_leaves_the_bounds_however_long_you_hold_it() {
         app.split().ratio()
     );
     for _ in 0..400 {
+        app.on_key(KeyCode::Char('v')).expect("view leader");
         app.on_key(KeyCode::Char('<')).expect("<");
     }
     assert!(
@@ -58,6 +62,7 @@ fn a_resized_pane_actually_renders_at_its_new_width() {
     let before = frame_at(&app, 100, 24);
 
     for _ in 0..5 {
+        app.on_key(KeyCode::Char('v')).expect("view leader");
         app.on_key(KeyCode::Char('>')).expect(">");
     }
     let after = frame_at(&app, 100, 24);
@@ -94,6 +99,7 @@ fn the_split_is_not_written_anywhere() {
     assert!(!before.is_empty(), "the review wrote nothing to compare");
 
     for _ in 0..3 {
+        app.on_key(KeyCode::Char('v')).expect("view leader");
         app.on_key(KeyCode::Char('>')).expect(">");
     }
     assert_ne!(app.split().ratio(), Split::DEFAULT, "nothing was resized");

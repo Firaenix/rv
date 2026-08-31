@@ -177,7 +177,8 @@ fn quit_is_exactly_q_in_browse_mode() {
             // from a help screen surprises the reviewer least sure what the
             // keys do — so "browsing" is not on its own enough to expect
             // `Quit`, and the prefix can raise the popup with a generated `?`.
-            let browsing = mode == Mode::Browse && !app.help_open();
+            let browsing =
+                mode == Mode::Browse && !app.help_open() && app.pending_leader().is_none();
             seen.hit(if mode == Mode::Browse { 0 } else { 1 });
             let action = app
                 .on_key(KeyCode::Char('q'))

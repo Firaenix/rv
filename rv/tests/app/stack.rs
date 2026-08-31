@@ -69,7 +69,7 @@ fn enter_on_a_line_without_comments_says_so_and_stays_put() {
 /// Inside the stack the movement keys move between comments, and they clamp at
 /// both ends the way they do everywhere else in the reviewer.
 #[rstest]
-#[case(KeyCode::Char('j'), KeyCode::Char('k'))]
+#[case(KeyCode::Down, KeyCode::Up)]
 #[case(KeyCode::Down, KeyCode::Up)]
 fn both_key_pairs_move_between_the_comments_in_a_stack(
     #[case] forward: KeyCode,
@@ -154,11 +154,11 @@ fn moving_the_selection_puts_the_stack_index_back_at_the_top() {
     write_comment(&mut app, "second finding");
 
     app.on_key(KeyCode::Enter).expect("enter the stack");
-    app.on_key(KeyCode::Char('j')).expect("select the second");
+    app.on_key(KeyCode::Down).expect("select the second");
     assert_eq!(app.comment_index(), 1);
 
     app.on_key(KeyCode::Left).expect("back to the diff");
-    app.on_key(KeyCode::Char('j')).expect("next line");
+    app.on_key(KeyCode::Down).expect("next line");
     assert_eq!(app.focus(), Focus::Diff);
     assert_eq!(app.comment_index(), 0, "the stack index came back to 0");
 }
@@ -193,7 +193,7 @@ fn navigating_to_another_file_leaves_the_stack_even_when_that_line_has_comments(
     write_comment(&mut app, "first finding");
     write_comment(&mut app, "second finding");
     app.on_key(KeyCode::Enter).expect("enter the stack");
-    app.on_key(KeyCode::Char('j')).expect("select the second");
+    app.on_key(KeyCode::Down).expect("select the second");
     assert_eq!(app.focus(), Focus::Stack);
     assert_eq!(app.comment_index(), 1);
 

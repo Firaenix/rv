@@ -34,7 +34,7 @@ mod diffs;
 mod diffview;
 mod editor;
 mod enabled;
-mod export;
+mod focus;
 mod fold;
 mod hunks;
 mod keys;
@@ -47,12 +47,14 @@ mod paging;
 mod paint;
 mod query;
 mod refresh;
+mod regroup;
 mod run;
 mod settle;
 mod sidebar;
 mod stack;
 mod status;
 mod symbols;
+mod viewside;
 mod zoom;
 
 pub use alerts::Alert;
@@ -65,6 +67,7 @@ pub use anchor::comment_id;
 pub use bindings::BINDINGS;
 pub use bindings::Binding;
 pub use bindings::Group;
+pub use bindings::Leader;
 pub use mode::Action;
 pub use mode::Context;
 pub use mode::DiffEngine;
@@ -72,6 +75,7 @@ pub use mode::Focus;
 pub use mode::HelpStage;
 pub use mode::Mode;
 pub use mode::SidebarTab;
+pub use viewside::ViewSide;
 
 use std::cell::Cell;
 use std::collections::HashMap;
@@ -216,6 +220,19 @@ pub struct App {
     /// How far the keymap has been scrolled, in rows. Held unclamped, because
     /// only the renderer knows how tall the popup got.
     help_scroll: usize,
+    /// The leader whose which-key submenu is open, waiting for its second key,
+    /// or [`None`] when the next key is read from the top level. A leader is
+    /// pressed, its children are shown, and the following key either runs one of
+    /// them or (on `Esc`, or a key none of them claim) cancels back to browsing.
+    pending_leader: Option<bindings::Leader>,
+    /// Whether the diff pane groups each hunk's removals before its additions,
+    /// the way a unified diff prints — rather than difftastic's interleaving of
+    /// the two sides. Session-only, `v g` flips it. See [`crate::app::regroup`].
+    grouped: bool,
+    /// Which side of the change the diff pane shows: both (the default), the
+    /// base alone, or the head alone. Session-only, `v b` cycles it. See
+    /// [`crate::app::viewside`].
+    view_side: viewside::ViewSide,
     /// How many columns of body text a comment box was drawn with on the last
     /// frame — reported by [`crate::ui::visible`], never decided here.
     ///

@@ -302,8 +302,8 @@ pub fn shared_browser() -> &'static Fixture {
         let mut app = fixture.app();
         assert_eq!(app.selected_file().expect("a file").path, "alpha.rs");
         for (downs, body) in [(0, "first finding"), (1, "second finding")] {
-            press_n(&mut app, KeyCode::Char('j'), downs);
-            press(&mut app, KeyCode::Char('c'));
+            press_n(&mut app, KeyCode::Down, downs);
+            comment(&mut app);
             type_text(&mut app, body);
             press(&mut app, KeyCode::Enter);
         }
@@ -317,8 +317,8 @@ pub fn shared_browser() -> &'static Fixture {
 #[fixture]
 pub fn browser_app() -> App {
     let mut app = shared_browser().app();
+    // `Space m` lands the focus on the sidebar in the comments mode.
     to_comments(&mut app);
-    press(&mut app, KeyCode::Left);
     assert_eq!(app.sidebar_tab(), SidebarTab::Comments);
     assert_eq!(app.focus(), Focus::Sidebar);
     // The browser's first *row* is a file heading, so "at the top" is said as

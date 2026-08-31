@@ -86,6 +86,7 @@ fn clicking_a_file_row_selects_that_file_and_focuses_the_sidebar() {
 fn clicking_a_directory_row_folds_it() {
     let workspace = Fixture::nested();
     let mut app = workspace.app();
+    app.on_key(KeyCode::Char('v')).expect("view leader");
     app.on_key(KeyCode::Char('t')).expect("the tree");
     let folded = app
         .sidebar_nodes()
@@ -198,6 +199,7 @@ fn scrolling_moves_the_view_without_moving_the_selection() {
 fn scrolling_the_sidebar_looks_ahead_without_moving_the_selection() {
     let workspace = Fixture::nested();
     let mut app = workspace.app();
+    app.on_key(KeyCode::Char('v')).expect("view leader");
     app.on_key(KeyCode::Char('t'))
         .expect("the tree, which is taller");
 

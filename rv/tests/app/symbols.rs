@@ -56,6 +56,7 @@ fn n_walks_forward_and_n_shift_walks_back_without_wrapping() {
 
     let mut visited = Vec::new();
     for _ in 0..total + 2 {
+        app.on_key(KeyCode::Char('g')).expect("goto leader");
         app.on_key(KeyCode::Char('n')).expect("next symbol");
         visited.push((app.file_index(), app.line_index()));
     }
@@ -73,6 +74,7 @@ fn n_walks_forward_and_n_shift_walks_back_without_wrapping() {
     );
 
     let at_end = (app.file_index(), app.line_index());
+    app.on_key(KeyCode::Char('g')).expect("goto leader");
     app.on_key(KeyCode::Char('N')).expect("previous symbol");
     assert_ne!(
         (app.file_index(), app.line_index()),
@@ -91,6 +93,7 @@ fn the_walk_crosses_from_one_file_into_the_next() {
 
     let mut files = std::collections::HashSet::new();
     for _ in 0..total {
+        app.on_key(KeyCode::Char('g')).expect("goto leader");
         app.on_key(KeyCode::Char('n')).expect("next symbol");
         files.insert(app.file_index());
     }
@@ -108,6 +111,7 @@ fn a_jump_names_the_symbol_and_where_it_is() {
     let workspace = symbols();
     let mut app = workspace.app();
 
+    app.on_key(KeyCode::Char('g')).expect("goto leader");
     app.on_key(KeyCode::Char('n')).expect("next symbol");
 
     let status = app.status().to_owned();
@@ -126,6 +130,7 @@ fn a_review_with_no_indexable_files_says_so() {
     let mut app = workspace.app();
     assert!(app.index().is_empty(), "notes.txt produced symbols");
 
+    app.on_key(KeyCode::Char('g')).expect("goto leader");
     app.on_key(KeyCode::Char('n')).expect("next symbol");
 
     assert!(
@@ -140,6 +145,7 @@ fn slash_opens_the_picker_and_escape_closes_it() {
     let workspace = symbols();
     let mut app = workspace.app();
 
+    app.on_key(KeyCode::Char('g')).expect("goto leader");
     app.on_key(KeyCode::Char('/')).expect("open the picker");
     assert_eq!(app.mode(), Mode::Pick);
 
@@ -154,6 +160,7 @@ fn the_picker_jumps_to_the_symbol_you_typed() {
     let workspace = symbols();
     let mut app = workspace.app();
 
+    app.on_key(KeyCode::Char('g')).expect("goto leader");
     app.on_key(KeyCode::Char('/')).expect("open the picker");
     type_text(&mut app, "epsilon");
     app.on_key(KeyCode::Enter).expect("jump");
@@ -182,6 +189,7 @@ fn a_prefix_match_outranks_a_substring_one() {
     let mut app = workspace.app();
     let _ = app.index();
 
+    app.on_key(KeyCode::Char('g')).expect("goto leader");
     app.on_key(KeyCode::Char('/')).expect("open the picker");
     type_text(&mut app, "beta");
 
@@ -202,6 +210,7 @@ fn a_prefix_match_outranks_a_substring_one() {
 fn the_picker_shows_the_query_and_its_matches() {
     let workspace = symbols();
     let mut app = workspace.app();
+    app.on_key(KeyCode::Char('g')).expect("goto leader");
     app.on_key(KeyCode::Char('/')).expect("open the picker");
     type_text(&mut app, "et");
 
@@ -217,6 +226,7 @@ fn a_query_that_matches_nothing_jumps_nowhere() {
     let mut app = workspace.app();
     let before = (app.file_index(), app.line_index());
 
+    app.on_key(KeyCode::Char('g')).expect("goto leader");
     app.on_key(KeyCode::Char('/')).expect("open the picker");
     type_text(&mut app, "zzzzz");
     app.on_key(KeyCode::Enter).expect("try to jump");
@@ -325,6 +335,7 @@ fn the_scope_follows_the_cursor_between_changes() {
 fn the_picker_matches_every_word_against_name_or_file() {
     let workspace = symbols();
     let mut app = workspace.app();
+    app.on_key(KeyCode::Char('g')).expect("goto leader");
     app.on_key(KeyCode::Char('/')).expect("open the picker");
     type_text(&mut app, "second epsilon");
 
@@ -349,6 +360,7 @@ fn the_picker_matches_every_word_against_name_or_file() {
 fn the_picker_shows_each_matchs_kind() {
     let workspace = symbols();
     let mut app = workspace.app();
+    app.on_key(KeyCode::Char('g')).expect("goto leader");
     app.on_key(KeyCode::Char('/')).expect("open the picker");
     type_text(&mut app, "epsilon");
 

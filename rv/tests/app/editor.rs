@@ -66,7 +66,7 @@ fn still_usable(workspace: &Fixture, app: &mut rv::app::App) {
     assert_eq!(app.mode(), Mode::Browse);
     assert_eq!(app.focus(), Focus::Diff);
     assert_eq!(
-        app.on_key(KeyCode::Char('j')).expect("j still moves"),
+        app.on_key(KeyCode::Down).expect("j still moves"),
         Action::Continue
     );
     assert_eq!(app.line_index(), 1, "the cursor stopped moving");
@@ -102,7 +102,7 @@ fn v_with_no_editor_set_says_so_and_keeps_the_reviewer_running() {
     let workspace = Fixture::new();
     let mut app = workspace.app();
     assert_eq!(
-        app.on_key(KeyCode::Char('v')).expect("v"),
+        app.on_key(KeyCode::Char('E')).expect("v"),
         Action::Continue,
         "v gave the terminal up with no editor to give it to"
     );
@@ -131,7 +131,7 @@ fn v_runs_the_editor_and_the_reviewer_survives_it() {
     let workspace = Fixture::new();
     let mut app = workspace.app();
     assert_eq!(
-        app.on_key(KeyCode::Char('v')).expect("v"),
+        app.on_key(KeyCode::Char('E')).expect("v"),
         Action::Edit,
         "v did not ask the loop for the terminal"
     );
@@ -170,7 +170,7 @@ fn an_editor_that_fails_is_reported_and_the_reviewer_survives_it() {
 
     let workspace = Fixture::new();
     let mut app = workspace.app();
-    assert_eq!(app.on_key(KeyCode::Char('v')).expect("v"), Action::Edit);
+    assert_eq!(app.on_key(KeyCode::Char('E')).expect("v"), Action::Edit);
     app.run_pending_edit();
 
     let alerts: Vec<&str> = app
@@ -201,7 +201,7 @@ fn an_editor_that_cannot_be_run_is_an_alert_rather_than_an_error() {
 
     let workspace = Fixture::new();
     let mut app = workspace.app();
-    assert_eq!(app.on_key(KeyCode::Char('v')).expect("v"), Action::Edit);
+    assert_eq!(app.on_key(KeyCode::Char('E')).expect("v"), Action::Edit);
     app.run_pending_edit();
 
     let alerts: Vec<&str> = app
@@ -240,7 +240,7 @@ fn the_editor_variable_is_the_one_every_other_tool_reads() {
     let workspace = Fixture::new();
     let mut app = workspace.app();
     assert_eq!(
-        app.on_key(KeyCode::Char('v')).expect("v"),
+        app.on_key(KeyCode::Char('E')).expect("v"),
         Action::Edit,
         "rv reads some other variable than $EDITOR"
     );

@@ -35,10 +35,12 @@ fn the_mode_segment_follows_the_context() {
     app.on_key(KeyCode::Left).expect("focus the sidebar");
     assert!(last_row(&frame_at(&app, 100, 24)).contains("FILES"));
 
-    app.on_key(KeyCode::Tab).expect("the commits tab");
+    app.on_key(KeyCode::Char(' ')).expect("mode leader");
+    app.on_key(KeyCode::Char('c')).expect("the commits mode");
     assert!(last_row(&frame_at(&app, 100, 24)).contains("COMMITS"));
 
-    app.on_key(KeyCode::Tab).expect("the comments tab");
+    app.on_key(KeyCode::Char(' ')).expect("mode leader");
+    app.on_key(KeyCode::Char('m')).expect("the comments mode");
     assert!(last_row(&frame_at(&app, 100, 24)).contains("COMMENTS"));
 }
 
@@ -76,6 +78,7 @@ fn a_confirmation_is_never_dropped_for_want_of_room() {
     let workspace = Fixture::new();
     let mut app = workspace.app();
     write_comment(&mut app, "a finding");
+    app.on_key(KeyCode::Char('c')).expect("comment leader");
     app.on_key(KeyCode::Char('d')).expect("d");
 
     let bar = last_row(&frame_at(&app, 24, 24));

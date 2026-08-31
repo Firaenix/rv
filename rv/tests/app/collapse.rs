@@ -26,9 +26,11 @@ fn z_puts_the_sidebar_away_and_brings_it_back() {
         "the sidebar is not showing to begin with"
     );
 
+    app.on_key(KeyCode::Char('v')).expect("view leader");
     app.on_key(KeyCode::Char('z')).expect("hide it");
     assert!(app.sidebar_hidden());
 
+    app.on_key(KeyCode::Char('v')).expect("view leader");
     app.on_key(KeyCode::Char('z')).expect("bring it back");
     assert!(!app.sidebar_hidden());
 }
@@ -40,6 +42,7 @@ fn the_diff_takes_the_whole_width_when_the_sidebar_is_away() {
     let mut app = workspace.app();
     let before = row_holding(&frame_at(&app, 100, 24), "fn a()");
 
+    app.on_key(KeyCode::Char('v')).expect("view leader");
     app.on_key(KeyCode::Char('z')).expect("hide it");
 
     let frame = frame_at(&app, 100, 24);
@@ -61,6 +64,7 @@ fn hiding_the_sidebar_takes_the_focus_with_it() {
     app.on_key(KeyCode::Left).expect("focus the sidebar");
     assert_eq!(app.focus(), Focus::Sidebar);
 
+    app.on_key(KeyCode::Char('v')).expect("view leader");
     app.on_key(KeyCode::Char('z')).expect("hide it");
 
     assert_eq!(
@@ -113,14 +117,15 @@ fn the_chevron_does_not_evict_the_keymap_hint() {
     }
 }
 
-/// `Enter` and `Space` are the keys every tree in every editor folds with.
-#[rstest::rstest]
-#[case::enter(KeyCode::Enter)]
-#[case::space(KeyCode::Char(' '))]
-fn a_directory_folds_with_enter_or_space(#[case] key: KeyCode) {
+/// `s` folds a directory — `Enter` no longer does, and `→` drills into it
+/// instead. This pins the fold key on a row that holds others.
+#[test]
+fn s_folds_a_directory() {
+    let key = KeyCode::Char('s');
     let workspace = Fixture::nested();
     let mut app = workspace.app();
     app.on_key(KeyCode::Left).expect("focus the sidebar");
+    app.on_key(KeyCode::Char('v')).expect("view leader");
     app.on_key(KeyCode::Char('t')).expect("tree");
 
     // Onto the first row that holds anything.
@@ -143,10 +148,10 @@ fn a_directory_folds_with_enter_or_space(#[case] key: KeyCode) {
     assert_eq!(app.nodes().len(), before, "unfolding lost rows");
 }
 
-/// On a file row there is nothing to open, and `Enter` says so by doing
-/// nothing rather than by pretending.
+/// `Enter` on a file row opens it and takes the focus to the diff — it folds
+/// nothing, because a file holds no rows to hide.
 #[test]
-fn enter_on_a_file_row_folds_nothing() {
+fn enter_on_a_file_row_opens_it() {
     let workspace = Fixture::new();
     let mut app = workspace.app();
     app.on_key(KeyCode::Left).expect("focus the sidebar");
@@ -155,7 +160,7 @@ fn enter_on_a_file_row_folds_nothing() {
     app.on_key(KeyCode::Enter).expect("enter");
 
     assert_eq!(app.nodes().len(), before, "a file row folded something");
-    assert_eq!(app.focus(), Focus::Sidebar, "the focus moved");
+    assert_eq!(app.focus(), Focus::Diff, "enter did not open the file");
 }
 
 /// Highlighting is off the drawing thread: the diff is on screen before the
@@ -282,6 +287,7 @@ fn r_picks_up_changes_made_since_the_review_was_opened() {
     let workspace = Fixture::new();
     let mut app = workspace.app();
     let before = app.files().len();
+    app.on_key(KeyCode::Char('v')).expect("view leader");
     app.on_key(KeyCode::Char('t'))
         .expect("a preference to keep");
 
@@ -291,7 +297,8 @@ fn r_picks_up_changes_made_since_the_review_was_opened() {
     workspace.jj(&["new"]);
 
     assert_eq!(app.files().len(), before, "the snapshot moved by itself");
-    app.on_key(KeyCode::Char('R')).expect("refresh");
+    app.on_key(KeyCode::Char('v')).expect("view leader");
+    app.on_key(KeyCode::Char('r')).expect("refresh");
 
     assert_eq!(
         app.files().len(),
@@ -324,7 +331,8 @@ fn a_refresh_keeps_the_file_you_were_reading() {
     workspace.jj(&["describe", "-m", "landed while reviewing"]);
     workspace.jj(&["new"]);
 
-    app.on_key(KeyCode::Char('R')).expect("refresh");
+    app.on_key(KeyCode::Char('v')).expect("view leader");
+    app.on_key(KeyCode::Char('r')).expect("refresh");
     assert_eq!(
         app.files()[app.file_index()].path,
         "b.rs",
@@ -351,7 +359,8 @@ fn a_refresh_picks_up_comments_another_process_wrote() {
     )
     .expect("save a comment");
 
-    app.on_key(KeyCode::Char('R')).expect("refresh");
+    app.on_key(KeyCode::Char('v')).expect("view leader");
+    app.on_key(KeyCode::Char('r')).expect("refresh");
     assert_eq!(
         app.comments().len(),
         1,

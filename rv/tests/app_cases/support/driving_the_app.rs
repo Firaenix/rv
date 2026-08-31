@@ -43,16 +43,12 @@ use std::cell::RefCell;
 pub fn rewind(app: &mut App) {
     app.on_key(KeyCode::Esc).expect("leave comment mode");
     app.on_key(KeyCode::Left).expect("out of the stack");
-    app.on_key(KeyCode::Left).expect("onto the sidebar");
     to_comments(app);
     for _ in 0..=app.browser_rows().len() {
         // Bounded for the same reason the line loop below is: this presses the
         // very key the browser's clamp is about.
         app.on_key(KeyCode::Up).expect("first comment");
     }
-    // Round the cycle rather than one press back: `Tab` goes forward only, and
-    // the cycle is Files → Commits → Comments, so one press from the browser
-    // lands on the file list only because it is the next one along.
     to_files(app);
     // The file list's shape and order are session preferences a generated `t`
     // or `o` will have moved, and both change what `j` walks in that pane: a
@@ -60,15 +56,21 @@ pub fn rewind(app: &mut App) {
     // there that are not files at all. Reset from the Files tab, which is the
     // one place either key does anything.
     if app.tree_view() {
+        app.on_key(KeyCode::Char('v')).expect("view leader");
         app.on_key(KeyCode::Char('t')).expect("back to the list");
     }
     for _ in 0..3 {
         if app.sort() == Sort::Natural {
             break;
         }
+        app.on_key(KeyCode::Char('v')).expect("view leader");
         app.on_key(KeyCode::Char('o')).expect("back to path order");
     }
-    app.on_key(KeyCode::Right).expect("back onto the diff");
+    // `Tab` swaps to the diff regardless of which sidebar row is under the
+    // cursor — `Right` would drill a directory instead of moving the focus.
+    if app.focus() != Focus::Diff {
+        app.on_key(KeyCode::Tab).expect("back onto the diff");
+    }
     for _ in 0..=app.files().len() {
         app.on_key(KeyCode::Char('[')).expect("first file");
     }
@@ -83,7 +85,7 @@ pub fn rewind(app: &mut App) {
         // carrying comments has more of them than it has lines, and a bound of
         // one per line would stop partway up such a file.
         for _ in 0..=app.plan().rows.len() {
-            app.on_key(KeyCode::Char('k')).expect("first line");
+            app.on_key(KeyCode::Up).expect("first line");
         }
         app.on_key(KeyCode::Char(']')).expect("next file");
     }
@@ -128,6 +130,24 @@ pub fn press_n(app: &mut App, key: KeyCode, times: usize) {
     }
 }
 
+/// Enters comment mode the way a reviewer does now: the `c` leader, then `c`.
+///
+/// The chord is spelled in full rather than leaning on the smart-collapse that
+/// runs `c c` from a single `c` on a line whose only live comment verb is the
+/// write — a test that means "start a comment" should not depend on which other
+/// verbs happen to be live where the cursor is.
+pub fn comment(app: &mut App) -> Action {
+    let action = press(app, KeyCode::Char('c'));
+    // On a line whose only live comment verb is the write, the first `c`
+    // smart-collapses straight into the comment box; otherwise it opened the
+    // menu and the second `c` is the write. Pressing again only when the menu is
+    // still pending keeps a literal `c` out of the buffer.
+    if app.pending_leader().is_some() {
+        return press(app, KeyCode::Char('c'));
+    }
+    action
+}
+
 /// Walks the cursor down onto diff line `index` with `j`, the way a reviewer
 /// would, and returns the number of presses it took.
 ///
@@ -156,7 +176,7 @@ pub fn walk_to_line(app: &mut App, index: usize) -> usize {
             return pressed;
         }
         let row = app.cursor_row();
-        press(app, KeyCode::Char('j'));
+        press(app, KeyCode::Down);
         if app.cursor_row() == row {
             return pressed;
         }
@@ -177,7 +197,7 @@ pub fn type_text(app: &mut App, text: &str) {
 /// context where the merge can build it, the engine's own lines otherwise —
 /// which is what [`App::line_index`] indexes.
 pub fn lines(app: &App) -> Vec<DiffLine> {
-    app.displayed_lines()
+    app.displayed_lines().into_owned()
 }
 
 /// Rewinds and then walks the sidebar to `path` with `]`, the way a reviewer
@@ -289,39 +309,26 @@ pub fn run_cases<S: Strategy>(cases: u32, strategy: S, test: impl Fn(S::Value) -
     }
 }
 
-/// Presses `Tab` until the sidebar is showing the review's comments.
 ///
-/// The cycle is Files → Commits → Comments; a test that wants the browser wants
-/// it whatever the cycle's length is this week.
+/// Selected with its direct `3` key now that `Tab` swaps the panel focus rather
+/// than cycling the tabs.
 pub fn to_comments(app: &mut App) {
-    for _ in 0..8 {
-        if app.sidebar_tab() == SidebarTab::Comments {
-            return;
-        }
-        app.on_key(KeyCode::Tab).expect("switch the sidebar tab");
-    }
-    panic!("the comments tab is not in the Tab cycle");
+    app.on_key(KeyCode::Char(' ')).expect("mode leader");
+    app.on_key(KeyCode::Char('m')).expect("the comments mode");
+    assert_eq!(app.sidebar_tab(), SidebarTab::Comments);
 }
 
-/// The same, for the tab that lists the stack's changes.
+/// The same, for the tab that lists the stack's changes: `2`.
 pub fn to_commits(app: &mut App) {
-    for _ in 0..8 {
-        if app.sidebar_tab() == SidebarTab::Commits {
-            return;
-        }
-        app.on_key(KeyCode::Tab).expect("switch the sidebar tab");
-    }
-    panic!("the commits tab is not in the Tab cycle");
+    app.on_key(KeyCode::Char(' ')).expect("mode leader");
+    app.on_key(KeyCode::Char('c')).expect("the commits mode");
+    assert_eq!(app.sidebar_tab(), SidebarTab::Commits);
 }
 
-/// The same, for the file list — which is also where `t` and `o` mean
-/// something, so `rewind` resets them from here.
+/// The same, for the file list — which is also where the view leader's `t` and
+/// `o` mean something, so `rewind` resets them from here: `1`.
 pub fn to_files(app: &mut App) {
-    for _ in 0..8 {
-        if app.sidebar_tab() == SidebarTab::Files {
-            return;
-        }
-        app.on_key(KeyCode::Tab).expect("switch the sidebar tab");
-    }
-    panic!("the files tab is not in the Tab cycle");
+    app.on_key(KeyCode::Char(' ')).expect("mode leader");
+    app.on_key(KeyCode::Char('f')).expect("the files mode");
+    assert_eq!(app.sidebar_tab(), SidebarTab::Files);
 }

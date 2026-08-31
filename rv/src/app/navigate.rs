@@ -13,23 +13,6 @@ use super::sidebar::BrowserRow;
 use crate::tree::NodeKind;
 
 impl App {
-    pub(super) fn focus_left(&mut self) {
-        self.focus = match self.focus {
-            Focus::Stack => Focus::Diff,
-            Focus::Diff | Focus::Sidebar => Focus::Sidebar,
-        };
-    }
-
-    /// `Right` from the comment stack does nothing: the stack is drawn inside
-    /// the diff pane, so there is no pane to its right. `Left` leads out of
-    /// every focus, which is what keeps none of them a trap.
-    pub(super) fn focus_right(&mut self) {
-        self.focus = match self.focus {
-            Focus::Sidebar => Focus::Diff,
-            Focus::Diff | Focus::Stack => self.focus,
-        };
-    }
-
     /// `j` / `Down` in the focused pane — and, in the sidebar, in whichever
     /// list that pane is showing.
     pub(super) fn move_forward(&mut self) -> Result<()> {
@@ -145,7 +128,8 @@ impl App {
     pub(super) fn jump_browser(&mut self, forward: bool) {
         self.sidebar_scroll = None;
         let rows = self.browser_rows();
-        let mut comments = (0..rows.len()).filter(|row| matches!(rows[*row], BrowserRow::Comment(_)));
+        let mut comments =
+            (0..rows.len()).filter(|row| matches!(rows[*row], BrowserRow::Comment(_)));
         let landing = if forward {
             comments.next_back()
         } else {
@@ -155,7 +139,6 @@ impl App {
             self.browser_index = row;
         }
     }
-
 
     /// `H`/`L`: scrolls the focused pane's text sideways by `delta` columns.
     ///
@@ -200,14 +183,14 @@ impl App {
         // released before anything is written: `(where to go, is there a hunk
         // at all)`, which is the pair the two failure sentences need to tell
         let (found, any) = if self.selected_diff().is_some() {
-            let lines = self.displayed();
-            let mut starts = hunks::hunk_starts(lines);
+            let lines = self.displayed_lines();
+            let mut starts = hunks::hunk_starts(&lines);
             let found = if forward {
                 starts.find(|start| *start > line)
             } else {
                 starts.take_while(|start| *start < line).last()
             };
-            (found, hunks::hunk_starts(lines).next().is_some())
+            (found, hunks::hunk_starts(&lines).next().is_some())
         } else {
             (None, false)
         };

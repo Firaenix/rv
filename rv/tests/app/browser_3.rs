@@ -16,12 +16,12 @@ fn d_from_the_comment_browser_deletes_behind_the_same_confirmation() {
     let workspace = Fixture::new();
     let mut app = workspace.app();
     write_comment(&mut app, "first finding");
-    app.on_key(KeyCode::Char('j')).expect("next line");
+    app.on_key(KeyCode::Down).expect("next line");
     write_comment(&mut app, "second finding");
 
     to_comments(&mut app);
-    app.on_key(KeyCode::Left).expect("focus the sidebar");
     app.on_key(KeyCode::Down).expect("select the second");
+    app.on_key(KeyCode::Char('c')).expect("comment leader");
     app.on_key(KeyCode::Char('d')).expect("ask");
     assert!(
         matches!(app.mode(), Mode::ConfirmDelete { .. }),
@@ -48,7 +48,7 @@ fn d_from_the_comment_browser_can_be_declined() {
     write_comment(&mut app, "needs a doc");
 
     to_comments(&mut app);
-    app.on_key(KeyCode::Left).expect("focus the sidebar");
+    app.on_key(KeyCode::Char('c')).expect("comment leader");
     app.on_key(KeyCode::Char('d')).expect("ask");
     app.on_key(KeyCode::Char('n')).expect("decline");
 
@@ -66,6 +66,7 @@ fn d_from_the_files_tab_still_deletes_nothing() {
 
     app.on_key(KeyCode::Left).expect("focus the file list");
     assert_eq!(app.sidebar_tab(), SidebarTab::Files);
+    app.on_key(KeyCode::Char('c')).expect("comment leader");
     app.on_key(KeyCode::Char('d')).expect("d");
 
     assert_eq!(app.mode(), Mode::Browse);
@@ -80,7 +81,7 @@ fn d_from_an_empty_comment_browser_says_so() {
     let mut app = workspace.app();
 
     to_comments(&mut app);
-    app.on_key(KeyCode::Left).expect("focus the sidebar");
+    app.on_key(KeyCode::Char('c')).expect("comment leader");
     app.on_key(KeyCode::Char('d')).expect("d");
 
     assert_eq!(app.mode(), Mode::Browse);

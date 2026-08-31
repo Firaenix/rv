@@ -22,7 +22,8 @@ impl App {
         match binding.command {
             // Always something to do: they change what is on screen, never what
             // is under the cursor.
-            Command::SwitchTab
+            Command::ToggleFocus
+            | Command::ModeDiff
             | Command::FilesTab
             | Command::CommitsTab
             | Command::CommentsTab
@@ -31,12 +32,8 @@ impl App {
             | Command::Help
             | Command::ToggleSidebar
             | Command::Refresh
-            // A review with no comments still has a session to export.
-            | Command::Export
             | Command::Quit => true,
-            Command::Forward | Command::PageForward | Command::JumpLast => {
-                self.can_move_forward()
-            }
+            Command::Forward | Command::PageForward | Command::JumpLast => self.can_move_forward(),
             Command::Back | Command::PageBackward | Command::JumpFirst => self.can_move_back(),
             Command::NextFile => self.file_index + 1 < self.review.files.len(),
             // Asked of the cache rather than of a fresh index: the popup is
@@ -65,7 +62,9 @@ impl App {
                 Focus::Sidebar => self.sidebar_hscroll > 0,
                 Focus::Diff | Focus::Stack => self.diff_hscroll > 0,
             },
-            Command::FocusLeft => self.focus != Focus::Sidebar,
+            // `←` always leads somewhere (out of a pane, or up the tree); `→`
+            // acts only from the sidebar.
+            Command::FocusLeft => true,
             Command::FocusRight => self.focus == Focus::Sidebar,
             Command::Enter => match (self.focus, self.sidebar_tab) {
                 // Every browser row leads somewhere: a comment to its code, a
@@ -80,15 +79,14 @@ impl App {
                 (Focus::Diff, _) => !self.comments_for_line(self.line_index()).is_empty(),
                 (Focus::Stack, _) => false,
             },
-            Command::FoldRow => {
-                self.sidebar_fold_key().is_some()
-                    || (self.focus == Focus::Diff
-                        && !self.comments_for_line(self.line_index()).is_empty())
-            }
             Command::Escape => {
                 self.focus == Focus::Stack || (self.focus == Focus::Sidebar && self.zoomed())
             }
-            Command::Comment => self.selected_line().is_some(),
+            // A write is about the diff line under the cursor, live only where
+            // that cursor is the one being steered.
+            Command::Comment => {
+                matches!(self.focus, Focus::Diff | Focus::Stack) && self.selected_line().is_some()
+            }
             Command::Delete => self.delete_target().is_some(),
             Command::Resolve | Command::Abandon => self.settle_target().is_some(),
             // Two things under one key, so two ways for it to have a target.
@@ -98,6 +96,7 @@ impl App {
             | Command::ToggleTint
             | Command::ToggleCounts => self.sidebar_tab != SidebarTab::Comments,
             Command::ToggleFullContext => true,
+            Command::GroupDiff | Command::BeforeAfter => self.selected_diff().is_some(),
             Command::Info => self.sidebar_tab == SidebarTab::Commits,
         }
     }
@@ -120,7 +119,8 @@ impl App {
             return false;
         }
         let line = self.line_index();
-        let mut starts = hunks::hunk_starts(self.displayed());
+        let displayed = self.displayed_lines();
+        let mut starts = hunks::hunk_starts(&displayed);
         if forward {
             starts.any(|start| start > line)
         } else {

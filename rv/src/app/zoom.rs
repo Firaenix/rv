@@ -67,22 +67,6 @@ impl App {
         view
     }
 
-    /// `Enter` in the file list: into the row under the cursor where it holds
-    /// things, back out where it is the [`NodeKind::Up`] row.
-    ///
-    /// Whether anything happened, so [`App::on_enter`] knows to fall through to
-    /// the stack for the rows this does not answer.
-    pub(super) fn zoom_under_cursor(&mut self) -> bool {
-        if self.focus != Focus::Sidebar || self.sidebar_tab == SidebarTab::Comments {
-            return false;
-        }
-        if let Some(NodeKind::Up) = self.nodes().get(self.sidebar_row).map(|node| &node.kind) {
-            self.zoom_out();
-            return true;
-        }
-        self.zoom_into_under_cursor()
-    }
-
     /// `Shift+→` in the file list: into the row under the cursor where it
     /// holds things, and nothing anywhere else — the inward half of the
     /// shifted arrows' walk, whose outward half is [`App::zoom_out`].

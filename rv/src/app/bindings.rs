@@ -7,8 +7,6 @@
 
 use crossterm::event::KeyCode;
 
-use super::Context;
-
 mod table;
 
 pub use table::BINDINGS;
@@ -61,18 +59,67 @@ impl Group {
     }
 }
 
+/// The leader a binding sits under: a first keystroke that opens a which-key
+/// submenu, after which the binding's own `codes` are the second keystroke.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Leader {
+    /// `Space`: jump to one of the review's modes (files, commits, comments,
+    /// diff), mnemonic on each mode's first letter.
+    Mode,
+    Goto,
+    Comment,
+    View,
+}
+
+impl Leader {
+    /// Every leader, in the order the `?` popup lists them.
+    pub const ALL: &'static [Leader] = &[Leader::Mode, Leader::Goto, Leader::Comment, Leader::View];
+
+    /// The key that opens the leader's submenu.
+    #[must_use]
+    pub fn key(self) -> char {
+        match self {
+            Leader::Mode => ' ',
+            Leader::Goto => 'g',
+            Leader::Comment => 'c',
+            Leader::View => 'v',
+        }
+    }
+
+    /// How the leader key is spelled in the keymap and the which-key title —
+    /// the letter itself, except `Space`, whose glyph is invisible.
+    #[must_use]
+    pub fn label(self) -> &'static str {
+        match self {
+            Leader::Mode => "Space",
+            Leader::Goto => "g",
+            Leader::Comment => "c",
+            Leader::View => "v",
+        }
+    }
+
+    /// What the which-key popup titles the submenu.
+    #[must_use]
+    pub fn title(self) -> &'static str {
+        match self {
+            Leader::Mode => "mode",
+            Leader::Goto => "goto",
+            Leader::Comment => "comment",
+            Leader::View => "view",
+        }
+    }
+}
+
 /// What one key does, spelled once.
 pub struct Binding {
-    /// How the popup spells the key, arrows and aliases included.
+    /// How the popup spells the key, arrows and aliases included. For a binding
+    /// under a leader this is the *second* keystroke alone.
     pub keys: &'static str,
     pub group: Group,
+    /// The leader this binding sits under, or `None` for a direct key.
+    pub leader: Option<Leader>,
     /// What it does, short enough to sit beside the key in a column.
     pub what: &'static str,
-    /// The contexts whose `?` tip lists this key. Empty means the key appears
-    /// only in the full keymap: it exists everywhere, but a tip is a prompt for
-    /// *here*, and a key that is never the next thing to reach for would crowd
-    /// out the ones that are.
-    pub contexts: &'static [Context],
     /// The key presses this row answers. Not public: it is the table's business
     /// which codes a row claims, and a caller comparing codes would be a second
     /// dispatcher.
@@ -104,18 +151,17 @@ pub(super) enum Command {
     Pick,
     FocusLeft,
     FocusRight,
-    SwitchTab,
+    ToggleFocus,
     FilesTab,
     CommitsTab,
     CommentsTab,
+    ModeDiff,
     Enter,
-    FoldRow,
     Escape,
     Comment,
     Delete,
     Resolve,
     Abandon,
-    Export,
     OpenEditor,
     Fold,
     Narrower,
@@ -128,6 +174,39 @@ pub(super) enum Command {
     ToggleFullContext,
     Info,
     Refresh,
+    GroupDiff,
+    BeforeAfter,
     Help,
     Quit,
+}
+
+impl Command {
+    /// Whether the command acts on what the cursor is on, rather than being
+    /// *ambient* (a view or session change). Only cursor-targeting children
+    /// count when a leader decides it can skip its submenu for one live child.
+    pub(super) fn targets_cursor(self) -> bool {
+        matches!(
+            self,
+            Command::Comment
+                | Command::Delete
+                | Command::Resolve
+                | Command::Abandon
+                | Command::OpenEditor
+                | Command::NextHunk
+                | Command::PreviousHunk
+                | Command::NextSymbol
+                | Command::PreviousSymbol
+                | Command::Pick
+                | Command::Fold
+                | Command::Enter
+                | Command::Forward
+                | Command::Back
+                | Command::PageForward
+                | Command::PageBackward
+                | Command::JumpFirst
+                | Command::JumpLast
+                | Command::ScrollLeft
+                | Command::ScrollRight
+        )
+    }
 }

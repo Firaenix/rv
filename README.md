@@ -171,7 +171,7 @@ about.
 │                      │        │ reply: fixed with unwrap_or(0)   │          │
 │                      │        ╰──────────────────────────────────╯          │
 ├──────────────────────┴──────────────────────────────────────────────────────┤
-│ ↓↑ line  [/] file  c comment  enter stack  d delete  s fold  ? help  q quit │
+│ ↓↑ move  ←→ focus  [/] file  c comment  g goto  v view  ? help  q quit │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -199,61 +199,65 @@ are *backgrounds*, and a syntax colour is always a *foreground*.
 
 **Browsing**
 
-The arrows are the bindings and `hjkl` are aliases for them, so the table below
-leads with the arrow and gives the vim key in parentheses. Either works
-everywhere.
+Movement is the **arrows** (and the mouse) — there are no `hjkl` aliases. The
+rest of the keymap is layered under three leaders: press `g` to **go**
+somewhere, `c` to act on the **comment** under the cursor, or `v` to change the
+**view**, and a small menu shows what the next key does. When only one thing
+makes sense — `c` on a line with no comment yet — rv skips the menu and does it,
+naming the choice in the status bar. `?` shows the whole map at any time.
 
 | Key | Action |
 | --- | --- |
-| `↓` (`j`) | Next row, file or comment — whichever the focused pane is listing |
-| `↑` (`k`) | The previous one |
-| `←` (`h`) | Focus the pane to the left: the diff hands over to the sidebar, a comment stack to the diff |
-| `→` (`l`) | Focus the diff from the sidebar |
-| `J` | Next hunk: the first line of the next run of changes, skipping the context between them |
-| `K` | The previous one |
-| `n` | Jump to the next symbol in scope — every changed file, or one change's files from the Commits tab |
-| `N` | The previous one |
-| `/` | Find a symbol by name: type, `Enter` jumps to the best match, `Esc` cancels |
-| `]` | Next file, from whichever pane the cursor is in |
-| `[` | Previous file, likewise |
-| `H` | Scroll the focused pane's text sideways, back toward the start of the line — in the diff, `Shift`+`←` does the same |
-| `L` | The other way, to read the tail of lines wider than the pane — in the diff, `Shift`+`→` and a trackpad's sideways flick do the same |
+| `↓` | Next row, file or comment — whichever the focused pane is listing |
+| `↑` | The previous one |
+| `←` | Out / up a level: the diff hands the focus back to the sidebar, a comment stack back to the diff, and in the file or commits list it climbs one level of the tree you drilled into |
+| `→` | Into / open: in the file or commits list it drills into the directory or change under the cursor, opens the file under it (moving the focus to the diff), and in the Comments tab jumps to the comment's code |
 | `PgDn` | Move the cursor a screenful forward in the focused pane |
 | `PgUp` | A screenful back |
 | `Home` | Jump the cursor to the first row of the focused pane |
 | `End` | Jump it to the last row |
-| `Tab` | Cycle the sidebar through **Files**, **Commits** and **Comments**. A file row under a change shows *that change's* diff of it |
-| `1` | Jump straight to the **Files** tab without cycling. Switching tabs preserves your position: the cursor lands on the selected file's row in the list that appears — in the Commits tab, under the newest change that touched it |
-| `2` | The **Commits** tab, likewise |
-| `3` | The **Comments** tab |
-| `Enter` | **Zoom into** the directory or change under the sidebar cursor — its contents become the whole view, under a `▴` row that names where you are and leads back out. In the sidebar `Shift`+`→` zooms in and `Shift`+`←` backs out, the plain arrows one layer deeper. From the diff, step into the selected line's comment stack — or, from the Comments tab, jump to the code that comment is about |
-| `Space` | Fold the directory or change under the cursor |
-| `Esc` | Leave the comment stack, or back out of a zoomed directory |
-| `c` | Comment on the highlighted line |
-| `d` | Delete a comment, after a `y`/`n` confirmation |
-| `r` | Resolve a comment — press it again to reopen |
-| `a` | Abandon a comment, dropping it without fixing it — again to reopen |
+| `Shift`+`←` | Scroll the focused pane's text sideways toward the start of the line |
+| `Shift`+`→` | The other way, to read the tail of lines wider than the pane; a trackpad's sideways flick does the same |
+| `]` | Next file, from whichever pane the cursor is in |
+| `[` | Previous file, likewise |
+| `Enter` | To the diff for the highlighted item: opens the file under the sidebar cursor (moving the focus to the diff), steps into the selected diff line's comment stack, or from the Comments tab jumps to the comment's code. It no longer fires on a directory or change row — `→` drills into those |
+| `Tab` | Swap the focus between the tree panel and the diff panel. A file row under a change shows *that change's* diff of it |
 | `s` | Fold a comment box away, or a directory in the file list — again to unfold |
-| `R` | Refresh: re-resolve the range against the repository as it now stands — after a push, a rebase, or a bookmark move |
-| `i` | Put the change details away, or bring them back. They show themselves whenever a change is highlighted in the **Commits** tab: both ids, the whole description, and every file it touched |
-| `z` | Hide the sidebar, or bring it back — the `‹` in the bottom-left corner does the same by pointer |
-| `e` | Export the review to `.review/REVIEW-FEEDBACK.md`, same as `rv render` |
-| `t` | Switch the file list between a flat list and a tree |
-| `o` | Cycle the file list's order: by path, by additions, by deletions |
-| `v` | Open the selected file at the cursor's line in `$EDITOR`, and come back to the review when it exits. Unset `$EDITOR` is reported in the status line rather than guessed at |
-| `g` | Tint the sidebar names by their change — each name runs green through a light seam to red, split where its additions end — or turn the tint off |
-| `f` | Toggle full-file context on and off. Default on: the pane shows the whole file with the changed lines highlighted. Off restores the difftastic-only view of just the changes |
-| `#` | Show or hide the sidebar's `+n -n` counts |
-| `<` | Narrow the sidebar |
-| `>` | Widen it |
+| `E` | Open the selected file at the cursor's line in `$EDITOR`, and come back to the review when it exits. Unset `$EDITOR` is reported in the status line rather than guessed at |
+| `Esc` | Leave the comment stack, or back out of a zoomed directory |
 | `?` | What the keys do **here**: a contextual tip in the corner above the bar. `?` again unrolls the whole keymap; `Esc` or `q` closes either |
 | `q` | Quit |
 | `Ctrl+C` | Quit from anywhere, including out of a half-typed comment |
+| `Space` `f` | Go to the **Files** mode: the sidebar's file list |
+| `Space` `c` | Go to the **Commits** mode: the list of changes |
+| `Space` `m` | Go to the **Comments** mode: the review's comment browser |
+| `Space` `d` | Go to the **Diff** mode: the focus lands on the diff |
+| `g` `↓` | Next hunk: the first line of the next run of changes, skipping the context between them |
+| `g` `↑` | The previous hunk |
+| `g` `n` | Next symbol in scope — every changed file, or one change's files from the Commits tab |
+| `g` `N` | The previous symbol |
+| `g` `/` | Find a symbol by name: type, `Enter` jumps to the best match, `Esc` cancels |
+| `c` `c` | Comment on the highlighted line |
+| `c` `d` | Delete a comment, after a `y`/`n` confirmation |
+| `c` `r` | Resolve a comment — press it again to reopen |
+| `c` `a` | Abandon a comment, dropping it without fixing it — again to reopen |
+| `v` `f` | Toggle full-file context. Default on: the pane shows the whole file with the changed lines highlighted. Off restores the difftastic-only view of just the changes |
+| `v` `g` | Group the diff: each hunk's removed lines before its added ones, the way a unified diff prints — instead of difftastic's interleaving of the two sides |
+| `v` `b` | Cycle the diff between showing both sides, the **before** side alone (context and removals), and the **after** side alone (context and additions) |
+| `v` `t` | Switch the file list between a flat list and a tree |
+| `v` `o` | Cycle the file list's order: by path, by additions, by deletions |
+| `v` `c` | Tint the sidebar names by their change — each name runs green through a light seam to red, split where its additions end — or turn the tint off |
+| `v` `#` | Show or hide the sidebar's `+n -n` counts |
+| `v` `z` | Hide the sidebar, or bring it back — the `‹` in the bottom-left corner does the same by pointer |
+| `v` `<` | Narrow the sidebar |
+| `v` `>` | Widen it |
+| `v` `i` | Put the change details away, or bring them back. They show whenever a change is highlighted in the **Commits** tab: both ids, the whole description, and every file it touched |
+| `v` `r` | Refresh: re-resolve the range against the repository as it now stands — after a push, a rebase, or a bookmark move |
 
 In the diff, `↓` and `↑` move by **row** rather than by diff line, so a comment
 box is something the cursor walks through rather than over — see [Inline
-comments](#inline-comments). `<`, `>` and the fold state are preferences of the
-running session: nothing about how you arranged your screen is written to
+comments](#inline-comments). `v <`, `v >` and the fold state are preferences of
+the running session: nothing about how you arranged your screen is written to
 `.review/`.
 
 `J` and `K` walk *hunks* — a run of added or removed lines with unchanged

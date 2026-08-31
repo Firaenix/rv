@@ -8,16 +8,17 @@ use proptest::prelude::*;
 pub fn any_key() -> impl Strategy<Value = KeyCode> {
     prop_oneof![
         18 => prop_oneof![
-            Just(KeyCode::Char('j')),
-            Just(KeyCode::Char('k')),
             Just(KeyCode::Char(']')),
             Just(KeyCode::Char('[')),
+            // The leaders, and the keys their submenus answer: a random walk
+            // that could not press them would leave commenting, deleting and
+            // the view toggles out of every fuzzed invariant below.
             Just(KeyCode::Char('c')),
-            Just(KeyCode::Char('q')),
-            // The comment keys, and the one that answers `d`'s question: a
-            // random walk that could not press them would leave deleting and
-            // collapsing out of every fuzzed invariant below.
+            Just(KeyCode::Char('g')),
+            Just(KeyCode::Char('v')),
             Just(KeyCode::Char('d')),
+            Just(KeyCode::Char('r')),
+            Just(KeyCode::Char('q')),
             Just(KeyCode::Char('y')),
             Just(KeyCode::Char('s')),
             Just(KeyCode::Down),

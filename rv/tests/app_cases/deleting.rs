@@ -33,9 +33,9 @@ fn no_key_leaves_the_reviewer_stuck_at_a_confirmation() {
         fixture.clear_comments();
         let app = &mut *app.borrow_mut();
         rewind(app);
-        press_n(app, KeyCode::Char('j'), downs);
+        press_n(app, KeyCode::Down, downs);
 
-        press(app, KeyCode::Char('c'));
+        comment(app);
         prop_assert_eq!(app.mode(), Mode::Comment);
         type_text(app, "delete me");
         press(app, KeyCode::Enter);
@@ -45,10 +45,12 @@ fn no_key_leaves_the_reviewer_stuck_at_a_confirmation() {
             "the case has nothing to delete"
         );
 
+        // Deleting is the `c d` chord now; `d` alone is inert.
+        press(app, KeyCode::Char('c'));
         press(app, KeyCode::Char('d'));
         prop_assert!(
             matches!(app.mode(), Mode::ConfirmDelete { .. }),
-            "d deleted without asking, or did not ask: {:?}",
+            "c d deleted without asking, or did not ask: {:?}",
             app.mode()
         );
         let before = workspace_tree(fixture.root());

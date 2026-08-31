@@ -299,7 +299,7 @@ fn the_selected_box_in_the_stack_is_brighter_and_bold() {
 
     // ...and the box the cursor is *not* on stays plain, so "selected" means
     // one box rather than the whole stack.
-    app.on_key(KeyCode::Char('j')).expect("select the second");
+    app.on_key(KeyCode::Down).expect("select the second");
     let moved = frame_at(&app, 100, 24);
     assert_eq!(
         moved[first_corner].style().fg,

@@ -21,7 +21,7 @@ pub fn select_line(app: &mut App, wanted: impl Fn(&DiffLine) -> bool) -> DiffLin
         .position(&wanted)
         .unwrap_or_else(|| panic!("no diff line matched: {lines:?}"));
     for _ in 0..index {
-        app.on_key(KeyCode::Char('j')).expect("move down a line");
+        app.on_key(KeyCode::Down).expect("move down a line");
     }
     assert_eq!(app.line_index(), index);
     app.displayed_lines()[index].clone()
@@ -29,34 +29,28 @@ pub fn select_line(app: &mut App, wanted: impl Fn(&DiffLine) -> bool) -> DiffLin
 
 /// Presses `c`, types `body`, and presses Enter — one whole comment.
 pub fn write_comment(app: &mut App, body: &str) {
-    app.on_key(KeyCode::Char('c')).expect("enter comment mode");
+    app.on_key(KeyCode::Char('c')).expect("comment leader");
+    // The first `c` smart-collapses to the write when it is the only live
+    // comment verb; press again only if it merely opened the menu.
+    if app.pending_leader().is_some() {
+        app.on_key(KeyCode::Char('c')).expect("enter comment mode");
+    }
     type_text(app, body);
     app.on_key(KeyCode::Enter).expect("save the comment");
 }
 
-/// Presses `Tab` until the sidebar is showing the review's comments.
-///
-/// The cycle is Files → Commits → Comments; a test that wants the browser wants
-/// it whatever the cycle's length is this week.
+/// Selects the review's comments tab with its direct `3` key.
 pub fn to_comments(app: &mut App) {
-    for _ in 0..8 {
-        if app.sidebar_tab() == SidebarTab::Comments {
-            return;
-        }
-        app.on_key(KeyCode::Tab).expect("switch the sidebar tab");
-    }
-    panic!("the comments tab is not in the Tab cycle");
+    app.on_key(KeyCode::Char(' ')).expect("mode leader");
+    app.on_key(KeyCode::Char('m')).expect("the comments mode");
+    assert_eq!(app.sidebar_tab(), SidebarTab::Comments);
 }
 
-/// The same, for the tab that lists the stack's changes.
+/// The same, for the tab that lists the stack's changes: `2`.
 pub fn to_commits(app: &mut App) {
-    for _ in 0..8 {
-        if app.sidebar_tab() == SidebarTab::Commits {
-            return;
-        }
-        app.on_key(KeyCode::Tab).expect("switch the sidebar tab");
-    }
-    panic!("the commits tab is not in the Tab cycle");
+    app.on_key(KeyCode::Char(' ')).expect("mode leader");
+    app.on_key(KeyCode::Char('c')).expect("the commits mode");
+    assert_eq!(app.sidebar_tab(), SidebarTab::Commits);
 }
 
 /// Moves the sidebar cursor to the top of the list it is showing.
@@ -70,14 +64,9 @@ pub fn to_top(app: &mut App) {
     }
 }
 
-/// The same, for the file list — which is also the tab `t` and `o` mean something
-/// in.
+/// The same, for the file list: `1`.
 pub fn to_files(app: &mut App) {
-    for _ in 0..8 {
-        if app.sidebar_tab() == SidebarTab::Files {
-            return;
-        }
-        app.on_key(KeyCode::Tab).expect("switch the sidebar tab");
-    }
-    panic!("the files tab is not in the Tab cycle");
+    app.on_key(KeyCode::Char(' ')).expect("mode leader");
+    app.on_key(KeyCode::Char('f')).expect("the files mode");
+    assert_eq!(app.sidebar_tab(), SidebarTab::Files);
 }

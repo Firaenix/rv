@@ -6,6 +6,7 @@ use std::path::Path;
 use rstest::rstest;
 
 use rv::app::BINDINGS;
+use rv::app::Binding;
 
 use crate::support::*;
 
@@ -73,31 +74,24 @@ fn the_readme_documents_every_browse_binding() {
 #[test]
 fn every_binding_is_a_key_the_readme_lists() {
     for binding in BINDINGS {
-        let spelled = readme_spelling(binding.keys);
+        let spelled = readme_spelling(binding);
         assert!(
             BROWSE_KEYS.contains(&spelled.as_str()),
-            "`{}` is dispatched but is not in BROWSE_KEYS, so nothing requires \
-             the README to mention it: {BROWSE_KEYS:?}",
-            binding.keys
+            "`{spelled}` is dispatched but is not in BROWSE_KEYS, so nothing \
+             requires the README to mention it: {BROWSE_KEYS:?}",
         );
     }
 }
 
-/// A binding's `keys` as the README spells it: every key token in backticks,
-/// the parentheses around an alias left as they are.
-///
-/// `↓ (j)` in the table is `` `↓` (`j`) `` on the page — the same two keys with
-/// the same one leading, which is the spelling the whole keymap is held to.
-fn readme_spelling(keys: &str) -> String {
-    keys.split(' ')
-        .map(
-            |token| match token.strip_prefix('(').and_then(|t| t.strip_suffix(')')) {
-                Some(alias) => format!("(`{alias}`)"),
-                None => format!("`{token}`"),
-            },
-        )
-        .collect::<Vec<_>>()
-        .join(" ")
+/// A binding as the README spells it. A direct key is its token in backticks;
+/// a key under a leader is the leader's letter then the key, both in backticks —
+/// `v f` on the page is `` `v` `f` ``, the chord a reviewer actually presses.
+fn readme_spelling(binding: &Binding) -> String {
+    let key = format!("`{}`", binding.keys);
+    match binding.leader {
+        Some(leader) => format!("`{}` {key}", leader.label()),
+        None => key,
+    }
 }
 
 /// ...and no row for a key that is not one of them: a table that documents a

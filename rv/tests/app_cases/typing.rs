@@ -37,7 +37,7 @@ fn the_buffer_is_exactly_what_was_typed() {
     run_cases(48, prop::collection::vec(key, 0..40), |keys| {
         let app = &mut *app.borrow_mut();
         rewind(app);
-        press(app, KeyCode::Char('c'));
+        comment(app);
         prop_assert_eq!(app.mode(), Mode::Comment);
 
         let mut expected: Vec<char> = Vec::new();
@@ -73,9 +73,9 @@ fn escape_never_saves_anything() {
         fixture.clear_comments();
         let app = &mut *app.borrow_mut();
         rewind(app);
-        press_n(app, KeyCode::Char('j'), downs);
+        press_n(app, KeyCode::Down, downs);
 
-        press(app, KeyCode::Char('c'));
+        comment(app);
         prop_assert_eq!(app.mode(), Mode::Comment);
         type_text(app, &body);
         prop_assert_eq!(app.buffer().chars().count(), body.chars().count());

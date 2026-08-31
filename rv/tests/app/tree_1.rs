@@ -30,6 +30,7 @@ fn t_toggles_the_sidebar_between_a_list_and_a_tree() {
         sidebar_shape(&frame_at(&app, 100, 24))
     );
 
+    app.on_key(KeyCode::Char('v')).expect("view leader");
     app.on_key(KeyCode::Char('t')).expect("t");
     let tree = sidebar_text(&frame_at(&app, 100, 24), 100, 24, Split::default());
     assert_ne!(list, tree, "the sidebar did not change shape");
@@ -51,6 +52,7 @@ fn t_toggles_the_sidebar_between_a_list_and_a_tree() {
         sidebar_shape(&frame_at(&app, 100, 24))
     );
 
+    app.on_key(KeyCode::Char('v')).expect("view leader");
     app.on_key(KeyCode::Char('t')).expect("t again");
     assert_eq!(
         sidebar_text(&frame_at(&app, 100, 24), 100, 24, Split::default()),
@@ -66,6 +68,7 @@ fn t_toggles_the_sidebar_between_a_list_and_a_tree() {
 fn s_folds_a_directory_row_and_hides_the_files_under_it() {
     let workspace = Fixture::nested();
     let mut app = workspace.app();
+    app.on_key(KeyCode::Char('v')).expect("view leader");
     app.on_key(KeyCode::Char('t')).expect("the tree");
     app.on_key(KeyCode::Left).expect("focus the file list");
     // The review opens on the first file, which is under `docs/specs`; one
@@ -102,6 +105,7 @@ fn s_folds_a_directory_row_and_hides_the_files_under_it() {
 fn a_directory_row_carries_its_whole_subtrees_count() {
     let workspace = Fixture::nested();
     let mut app = workspace.app();
+    app.on_key(KeyCode::Char('v')).expect("view leader");
     app.on_key(KeyCode::Char('t')).expect("the tree");
 
     let frame = frame_at(&app, 100, 24);
@@ -136,6 +140,7 @@ fn a_narrow_sidebar_drops_the_counts_before_the_path() {
     let workspace = Fixture::mixed();
     let mut app = workspace.app_from("@--");
     for _ in 0..30 {
+        app.on_key(KeyCode::Char('v')).expect("view leader");
         app.on_key(KeyCode::Char('<')).expect("squeeze the sidebar");
     }
 
@@ -160,10 +165,13 @@ fn o_cycles_the_order_and_the_sidebar_says_which() {
     let shape = |app: &App| sidebar_shape(&frame_at(app, 100, 24));
 
     assert!(shape(&app).contains("natural"), "{:?}", shape(&app));
+    app.on_key(KeyCode::Char('v')).expect("view leader");
     app.on_key(KeyCode::Char('o')).expect("o");
     assert!(shape(&app).contains("added"), "{:?}", shape(&app));
+    app.on_key(KeyCode::Char('v')).expect("view leader");
     app.on_key(KeyCode::Char('o')).expect("o");
     assert!(shape(&app).contains("removed"), "{:?}", shape(&app));
+    app.on_key(KeyCode::Char('v')).expect("view leader");
     app.on_key(KeyCode::Char('o')).expect("o");
     assert!(
         shape(&app).contains("natural"),
@@ -184,6 +192,7 @@ fn sorting_by_additions_puts_the_biggest_file_first() {
         "the natural order is path order: {natural:?}"
     );
 
+    app.on_key(KeyCode::Char('v')).expect("view leader");
     app.on_key(KeyCode::Char('o')).expect("order by additions");
     let by_size = sidebar_filled(&frame_at(&app, 100, 24), 100, 24, Split::default());
     assert!(
@@ -263,6 +272,7 @@ fn a_rows_name_is_tinted_by_its_proportion() {
     let workspace = Fixture::mixed();
     let mut app = workspace.app_from("@--");
     for _ in 0..12 {
+        app.on_key(KeyCode::Char('v')).expect("view leader");
         app.on_key(KeyCode::Char('>')).expect("widen the sidebar");
     }
 
@@ -304,9 +314,11 @@ fn g_toggles_the_tint_off_and_on() {
     let workspace = Fixture::mixed();
     let mut app = workspace.app_from("@--");
     for _ in 0..12 {
+        app.on_key(KeyCode::Char('v')).expect("view leader");
         app.on_key(KeyCode::Char('>')).expect("widen the sidebar");
     }
-    app.on_key(KeyCode::Char('g')).expect("g");
+    app.on_key(KeyCode::Char('v')).expect("view leader");
+    app.on_key(KeyCode::Char('c')).expect("tint");
 
     let split = app.split();
     let frame = frame_at(&app, 120, 24);
@@ -319,7 +331,8 @@ fn g_toggles_the_tint_off_and_on() {
     });
     assert!(!tinted, "g did not untint the names");
 
-    app.on_key(KeyCode::Char('g')).expect("g again");
+    app.on_key(KeyCode::Char('v')).expect("view leader");
+    app.on_key(KeyCode::Char('c')).expect("tint again");
     let frame = frame_at(&app, 120, 24);
     let added = sidebar_row_for_in(&frame, area, "added.rs");
     let tinted = (area.x..area.right()).any(|x| {
@@ -338,11 +351,13 @@ fn hash_toggles_the_counts_off_and_on() {
     let text = sidebar_text(&frame_at(&app, 100, 24), 100, 24, Split::default());
     assert!(text.contains("+10"), "no counts to toggle:\n{text}");
 
+    app.on_key(KeyCode::Char('v')).expect("view leader");
     app.on_key(KeyCode::Char('#')).expect("#");
     let text = sidebar_text(&frame_at(&app, 100, 24), 100, 24, Split::default());
     assert!(!text.contains("+10"), "# did not hide the counts:\n{text}");
     assert!(text.contains("top.rs"), "the names must survive:\n{text}");
 
+    app.on_key(KeyCode::Char('v')).expect("view leader");
     app.on_key(KeyCode::Char('#')).expect("# again");
     let text = sidebar_text(&frame_at(&app, 100, 24), 100, 24, Split::default());
     assert!(
@@ -363,6 +378,7 @@ fn the_counts_are_given_up_before_the_path_is() {
 
     // Squeezed, the counts go and the names stay.
     for _ in 0..30 {
+        app.on_key(KeyCode::Char('v')).expect("view leader");
         app.on_key(KeyCode::Char('<')).expect("squeeze the sidebar");
     }
     let split = app.split();

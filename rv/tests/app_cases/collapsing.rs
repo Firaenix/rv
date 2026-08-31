@@ -28,15 +28,15 @@ fn collapsing_never_writes_to_the_workspace() {
     // something to do from the diff, from inside a stack, and on a line whose
     // boxes are in mixed states.
     for body in ["first finding", "second finding"] {
-        press(&mut app, KeyCode::Char('c'));
+        comment(&mut app);
         type_text(&mut app, body);
         press(&mut app, KeyCode::Enter);
     }
-    press(&mut app, KeyCode::Char('j'));
-    press(&mut app, KeyCode::Char('c'));
+    press(&mut app, KeyCode::Down);
+    comment(&mut app);
     type_text(&mut app, "third finding");
     press(&mut app, KeyCode::Enter);
-    press(&mut app, KeyCode::Char('k'));
+    press(&mut app, KeyCode::Up);
     assert_eq!(fixture.comments().len(), 3, "{:?}", fixture.comments());
 
     let before = workspace_tree(fixture.root());
@@ -46,11 +46,11 @@ fn collapsing_never_writes_to_the_workspace() {
         KeyCode::Char('s'), // fold the line, from the diff
         KeyCode::Enter,     // into the stack
         KeyCode::Char('s'), // unfold the selected box, leaving the line mixed
-        KeyCode::Char('j'), // onto the other box
+        KeyCode::Down,      // onto the other box
         KeyCode::Char('s'), // and fold that one
         KeyCode::Esc,       // back to the diff
         KeyCode::Char('s'), // fold the mixed line together
-        KeyCode::Char('j'), // onto the next line
+        KeyCode::Down,      // onto the next line
         KeyCode::Char('s'), // fold it too
         KeyCode::Char('s'), // and unfold it
     ] {

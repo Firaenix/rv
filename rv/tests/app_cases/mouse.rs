@@ -55,7 +55,7 @@ fn any_mouse() -> impl Strategy<Value = MouseEvent> {
 fn no_gesture_panics_quits_or_destroys_a_comment() {
     let fixture = Fixture::multi();
     let mut app = fixture.app();
-    press(&mut app, KeyCode::Char('c'));
+    comment(&mut app);
     assert_eq!(app.mode(), Mode::Comment, "the fixture has nothing to note");
     type_text(&mut app, "a finding");
     press(&mut app, KeyCode::Enter);

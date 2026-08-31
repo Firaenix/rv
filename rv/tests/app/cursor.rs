@@ -25,7 +25,7 @@ fn every_row_of_a_tall_comment_can_be_brought_on_screen() {
     let mut seen: HashSet<usize> = HashSet::new();
     for _ in 0..80 {
         seen.extend(visible_row_indices(&app, 100, height));
-        app.on_key(KeyCode::Char('j')).expect("j");
+        app.on_key(KeyCode::Down).expect("j");
     }
 
     let total = row_count(&app, 100, height);
@@ -51,7 +51,7 @@ fn j_walks_into_a_comment_box_rather_than_over_it() {
     let line = app.line_index();
     let row = app.cursor_row();
 
-    app.on_key(KeyCode::Char('j')).expect("j");
+    app.on_key(KeyCode::Down).expect("j");
     assert_eq!(
         app.line_index(),
         line,
@@ -74,7 +74,7 @@ fn commenting_from_inside_a_box_targets_the_line_the_box_belongs_to() {
     write_comment(&mut app, &"a long finding. ".repeat(20));
     let line = app.line_index();
 
-    app.on_key(KeyCode::Char('j')).expect("step into the box");
+    app.on_key(KeyCode::Down).expect("step into the box");
     write_comment(&mut app, "a second finding");
     assert_eq!(
         app.comments_for_line(line).len(),
@@ -93,7 +93,7 @@ fn stepping_past_the_last_row_of_a_box_lands_on_the_next_diff_line() {
     let line = app.line_index();
 
     for _ in 0..8 {
-        app.on_key(KeyCode::Char('j')).expect("j");
+        app.on_key(KeyCode::Down).expect("j");
     }
     assert!(
         app.line_index() > line,
@@ -119,7 +119,7 @@ fn folding_a_box_the_cursor_is_inside_keeps_the_cursor_on_its_line() {
     write_comment(&mut app, &"a long finding. ".repeat(20));
     let line = app.line_index();
     for _ in 0..6 {
-        app.on_key(KeyCode::Char('j')).expect("step into the box");
+        app.on_key(KeyCode::Down).expect("step into the box");
     }
     assert_eq!(
         app.line_index(),

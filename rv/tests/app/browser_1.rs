@@ -20,7 +20,6 @@ use crate::support::*;
 /// a list whose shape is what these tests are least interested in pinning.
 fn jump_to(app: &mut App, file: &str, line: u32) {
     to_comments(app);
-    app.on_key(KeyCode::Left).expect("focus the sidebar");
     for _ in 0..=app.browser_rows().len() {
         let found = app
             .browsed_comment()
@@ -35,42 +34,43 @@ fn jump_to(app: &mut App, file: &str, line: u32) {
 }
 
 #[test]
-fn tab_cycles_the_sidebar_through_its_three_lists() {
+fn the_mode_leader_selects_each_list() {
     let workspace = Fixture::new();
     let mut app = workspace.app();
     assert_eq!(app.sidebar_tab(), SidebarTab::Files, "files by default");
 
-    app.on_key(KeyCode::Tab).expect("tab");
-    assert_eq!(app.sidebar_tab(), SidebarTab::Commits);
-    app.on_key(KeyCode::Tab).expect("tab");
-    assert_eq!(app.sidebar_tab(), SidebarTab::Comments);
-    app.on_key(KeyCode::Tab).expect("tab round");
-    assert_eq!(
-        app.sidebar_tab(),
-        SidebarTab::Files,
-        "the cycle does not come back round"
-    );
+    for (letter, tab) in [
+        ('c', SidebarTab::Commits),
+        ('m', SidebarTab::Comments),
+        ('f', SidebarTab::Files),
+    ] {
+        app.on_key(KeyCode::Char(' ')).expect("mode leader");
+        app.on_key(KeyCode::Char(letter)).expect("the mode");
+        assert_eq!(app.sidebar_tab(), tab);
+        assert_eq!(app.focus(), Focus::Sidebar, "a mode lands on the sidebar");
+    }
 }
 
-/// From any focus, and without disturbing anything else: `Tab` is about what
-/// the left column *lists*, not about where the cursor is.
+/// The mode leader jumps to a list from any focus, and lands on the sidebar
+/// there without disturbing the file or line the reviewer had.
 #[rstest]
 #[case(&[])]
 #[case(&[KeyCode::Left])]
 #[case(&[KeyCode::Enter])]
-fn tab_switches_the_tab_from_any_focus(#[case] approach: &[KeyCode]) {
+fn the_mode_leader_selects_a_list_from_any_focus(#[case] approach: &[KeyCode]) {
     let workspace = Fixture::new();
     let mut app = workspace.app();
     write_comment(&mut app, "needs a doc");
     for key in approach {
         app.on_key(*key).expect("get into position");
     }
-    let (focus, file, line) = (app.focus(), app.file_index(), app.line_index());
+    let (file, line) = (app.file_index(), app.line_index());
 
-    app.on_key(KeyCode::Tab).expect("tab");
+    app.on_key(KeyCode::Char(' ')).expect("mode leader");
+    app.on_key(KeyCode::Char('c')).expect("commits");
 
     assert_eq!(app.sidebar_tab(), SidebarTab::Commits);
-    assert_eq!(app.focus(), focus, "tab moved the cursor to another pane");
+    assert_eq!(app.focus(), Focus::Sidebar, "a mode lands on the sidebar");
     assert_eq!((app.file_index(), app.line_index()), (file, line));
     assert_eq!(app.mode(), Mode::Browse);
 }
@@ -84,7 +84,6 @@ fn the_comment_browser_lists_every_comment_in_the_review() {
     write_comment(&mut app, "second finding");
 
     to_comments(&mut app);
-    app.on_key(KeyCode::Left).expect("focus the sidebar");
 
     assert_eq!(
         app.browsed_comment().expect("a first row").body,
@@ -123,7 +122,7 @@ fn enter_on_a_comment_row_jumps_to_its_code() {
     let mut app = workspace.app();
     // Comment on the second file, then walk away to the first.
     app.on_key(KeyCode::Char(']')).expect("next file");
-    app.on_key(KeyCode::Char('j')).expect("move down");
+    app.on_key(KeyCode::Down).expect("move down");
     let commented_file = app.file_index();
     let commented_line = app.line_index();
     write_comment(&mut app, "look at this");
@@ -177,8 +176,8 @@ fn a_jump_lands_on_the_line_the_comment_is_anchored_to() {
     assert_eq!(removed.right, Some(3), "{removed:?}");
 
     // Walk away, then come back through the browser.
-    app.on_key(KeyCode::Char('k')).expect("up");
-    app.on_key(KeyCode::Char('k')).expect("up");
+    app.on_key(KeyCode::Up).expect("up");
+    app.on_key(KeyCode::Up).expect("up");
     jump_to(&mut app, "a.rs", 2);
 
     assert_eq!(

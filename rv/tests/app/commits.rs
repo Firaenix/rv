@@ -67,11 +67,12 @@ fn down_to_a_change_with_files(app: &mut App) {
 }
 
 #[test]
-fn tab_reaches_the_commits_tab_between_the_files_and_the_comments() {
+fn the_mode_leader_reaches_the_commits_list() {
     let workspace = Fixture::new();
     let mut app = workspace.app();
 
-    app.on_key(KeyCode::Tab).expect("tab");
+    app.on_key(KeyCode::Char(' ')).expect("mode leader");
+    app.on_key(KeyCode::Char('c')).expect("commits");
 
     assert_eq!(app.sidebar_tab(), SidebarTab::Commits);
 }
@@ -174,6 +175,7 @@ fn t_switches_the_files_under_a_change_between_a_list_and_a_tree() {
     app.on_key(KeyCode::Left).expect("focus the sidebar");
 
     let flat = app.commit_nodes();
+    app.on_key(KeyCode::Char('v')).expect("view leader");
     app.on_key(KeyCode::Char('t')).expect("tree");
     let tree = app.commit_nodes();
 
@@ -609,6 +611,7 @@ fn a_directory_row_is_quieter_than_the_files_under_it() {
     let workspace = Fixture::nested();
     let mut app = workspace.app();
     app.on_key(KeyCode::Left).expect("focus the sidebar");
+    app.on_key(KeyCode::Char('v')).expect("view leader");
     app.on_key(KeyCode::Char('t')).expect("tree");
     // Off row 0, so the selection's own styling is not what is measured.
     app.on_key(KeyCode::Down).expect("next row");
@@ -707,9 +710,11 @@ fn i_puts_the_change_details_away_and_brings_them_back() {
         "nothing was shown to begin with"
     );
 
+    app.on_key(KeyCode::Char('v')).expect("view leader");
     app.on_key(KeyCode::Char('i')).expect("put it away");
     assert!(app.change_info().is_none(), "`i` hid nothing");
 
+    app.on_key(KeyCode::Char('v')).expect("view leader");
     app.on_key(KeyCode::Char('i')).expect("bring it back");
     assert!(app.change_info().is_some(), "`i` is a one-way door");
 }
@@ -835,7 +840,8 @@ fn switching_tabs_lands_on_the_selected_file() {
     app.on_key(KeyCode::Char(']')).expect("next file");
     let selected = app.files()[app.file_index()].path.clone();
 
-    app.on_key(KeyCode::Char('2')).expect("the commits tab");
+    app.on_key(KeyCode::Char(' ')).expect("mode leader");
+    app.on_key(KeyCode::Char('c')).expect("the commits mode");
     assert_eq!(app.sidebar_tab(), SidebarTab::Commits);
     let nodes = app.commit_nodes();
     let row = &nodes[app.sidebar_row()];
@@ -848,7 +854,8 @@ fn switching_tabs_lands_on_the_selected_file() {
         "the cursor did not land on the selected file"
     );
 
-    app.on_key(KeyCode::Char('1')).expect("the files tab");
+    app.on_key(KeyCode::Char(' ')).expect("mode leader");
+    app.on_key(KeyCode::Char('f')).expect("the files mode");
     assert_eq!(app.sidebar_tab(), SidebarTab::Files);
     assert_eq!(
         app.files()[app.file_index()].path,
@@ -862,15 +869,18 @@ fn switching_tabs_lands_on_the_selected_file() {
     );
 }
 
-/// `3` reaches the comments tab directly, and a repeated direct jump is inert.
+/// `Space m` reaches the comments mode directly, and a repeated jump is inert.
 #[test]
-fn number_keys_jump_straight_to_a_tab() {
+fn the_mode_leader_jumps_straight_to_a_mode() {
     let workspace = Fixture::new();
     let mut app = workspace.app();
-    app.on_key(KeyCode::Char('3')).expect("the comments tab");
+    app.on_key(KeyCode::Char(' ')).expect("mode leader");
+    app.on_key(KeyCode::Char('m')).expect("comments");
     assert_eq!(app.sidebar_tab(), SidebarTab::Comments);
-    app.on_key(KeyCode::Char('3')).expect("again");
+    app.on_key(KeyCode::Char(' ')).expect("mode leader");
+    app.on_key(KeyCode::Char('m')).expect("again");
     assert_eq!(app.sidebar_tab(), SidebarTab::Comments);
-    app.on_key(KeyCode::Char('1')).expect("files");
+    app.on_key(KeyCode::Char(' ')).expect("mode leader");
+    app.on_key(KeyCode::Char('f')).expect("files");
     assert_eq!(app.sidebar_tab(), SidebarTab::Files);
 }

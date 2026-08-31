@@ -11,18 +11,20 @@ use super::sidebar::BrowserRow;
 use super::status::NO_COMMENTS;
 
 impl App {
-    /// `Enter`: into the selected line's comment stack, from the comment
-    /// browser to the code the browsed comment is about, and in the file list
-    /// **into** the row under the cursor — a zoom, not a fold, which is
-    /// `Space`'s verb.
+    /// `Enter`: to the diff panel for whatever the cursor is on. In the file
+    /// list it opens the file under the cursor and follows it to the diff; in
+    /// the comment browser it jumps to the browsed comment's code; on a diff
+    /// line it steps into that line's comment stack.
+    ///
+    /// It no longer fires on a directory or a change: drilling into the tree is
+    /// `→`'s verb now, so `Enter` on a row that only holds others does nothing
+    /// rather than zooming.
     pub(super) fn on_enter(&mut self) -> Result<()> {
         if self.focus == Focus::Sidebar {
             if self.sidebar_tab == SidebarTab::Comments {
                 return self.enter_browser_row();
             }
-            if self.zoom_under_cursor() {
-                return Ok(());
-            }
+            return self.enter_file_under_cursor();
         }
         self.enter_stack();
         Ok(())
@@ -35,7 +37,7 @@ impl App {
     /// thing it can defensibly mean. Jumping to some comment under it would be
     /// picking one the reviewer did not point at; refusing outright would make
     /// a visible row inert.
-    fn enter_browser_row(&mut self) -> Result<()> {
+    pub(super) fn enter_browser_row(&mut self) -> Result<()> {
         match self.browser_rows().get(self.browser_index) {
             Some(BrowserRow::Comment(index)) => self.jump_to_comment(*index),
             Some(BrowserRow::File(path)) => self.open_file_named(&path.clone()),
@@ -68,17 +70,6 @@ impl App {
         self.status = format!("opened {path}");
         self.resettle_sidebar();
         Ok(())
-    }
-
-    /// `Space`: folds the row under the cursor where it holds things, and is
-    /// [`App::on_enter`] everywhere else — the two keys were one verb until the
-    /// zoom gave `Enter` a meaning of its own on a directory.
-    pub(super) fn fold_row(&mut self) -> Result<()> {
-        if let Some(key) = self.sidebar_fold_key() {
-            self.toggle_dir_fold(key);
-            return Ok(());
-        }
-        self.on_enter()
     }
 
     /// Steps the cursor into the selected line's comment stack.
@@ -216,7 +207,7 @@ impl App {
     /// rename, side rule and all.
     fn line_of_anchor(&self, anchor: &Anchor) -> Option<usize> {
         self.selected_diff()?;
-        let lines = self.displayed();
+        let lines = self.displayed_lines();
         (0..lines.len()).find(|index| {
             self.anchor_target(&lines[*index]).is_some_and(|target| {
                 target.path == anchor.file

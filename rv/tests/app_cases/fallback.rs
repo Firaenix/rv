@@ -170,7 +170,7 @@ fn the_fallback_path_navigates_comments_and_anchors() {
         );
 
         // ...and a comment on it anchors where the pane said it would.
-        press(app, KeyCode::Char('c'));
+        comment(app);
         prop_assert_eq!(app.mode(), Mode::Comment);
         type_text(app, "what about this line");
         press(app, KeyCode::Enter);

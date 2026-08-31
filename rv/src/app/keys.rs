@@ -11,7 +11,9 @@ use super::HelpStage;
 use super::Mode;
 use super::SidebarTab;
 use super::bindings::BINDINGS;
+use super::bindings::Binding;
 use super::bindings::Command;
+use super::bindings::Leader;
 
 /// How many percentage points one press of `<` or `>` moves the divider.
 ///
@@ -42,31 +44,18 @@ impl App {
         {
             return Ok(Action::Quit);
         }
-        // Shift+arrows are the plain arrows one layer deeper. In the sidebar
-        // they walk the *tree* — right into the folder or change under the
-        // cursor, left back out — and in the diff they scroll the text
-        // sideways, as `H` and `L` do. Answered here for the same reason
-        // Ctrl+C is: dropping the modifiers would turn Shift+Left into a
-        // plain Left and move the focus instead. Browse only — behind the
-        // keymap or in a mode that takes text, a shifted arrow must stay as
-        // inert as any other key there.
+        // Shift+arrows scroll the focused pane's text sideways. Answered here
+        // for the same reason Ctrl+C is: dropping the modifier would turn
+        // Shift+Left into a plain Left and drill the tree or move the focus
+        // instead. Browse only — behind the keymap or in a mode that takes
+        // text, a shifted arrow must stay as inert as any other key there.
         if event.modifiers.contains(KeyModifiers::SHIFT)
             && self.mode == Mode::Browse
             && self.help == HelpStage::Closed
         {
-            let in_tree = self.focus == super::Focus::Sidebar
-                && self.sidebar_tab != super::SidebarTab::Comments;
-            match (event.code, in_tree) {
-                (KeyCode::Right, true) => {
-                    self.zoom_into_under_cursor();
-                    return Ok(Action::Continue);
-                }
-                (KeyCode::Left, true) => {
-                    self.zoom_out();
-                    return Ok(Action::Continue);
-                }
-                (KeyCode::Left, false) => return self.run_command(Command::ScrollLeft),
-                (KeyCode::Right, false) => return self.run_command(Command::ScrollRight),
+            match event.code {
+                KeyCode::Left => return self.run_command(Command::ScrollLeft),
+                KeyCode::Right => return self.run_command(Command::ScrollRight),
                 _ => {}
             }
         }
@@ -145,6 +134,24 @@ impl App {
         };
     }
 
+    /// `v g`: groups each hunk's removals before its additions instead of
+    /// difftastic's interleaving. Session-only.
+    fn toggle_grouped(&mut self) {
+        self.grouped = !self.grouped;
+        self.status = if self.grouped {
+            "grouped diff — v g interleaves again".to_owned()
+        } else {
+            "interleaved diff — v g groups by side".to_owned()
+        };
+    }
+
+    /// `v b`: cycles the diff pane through both sides, the base alone, and the
+    /// head alone.
+    fn cycle_view_side(&mut self) {
+        self.view_side = self.view_side.next();
+        self.status = format!("showing {} — v b cycles", self.view_side.label());
+    }
+
     /// Moves the keymap by `delta` rows, which only ever moves anything on a
     /// terminal too small to show the whole table.
     pub(super) fn scroll_help(&mut self, delta: isize) {
@@ -157,7 +164,49 @@ impl App {
     /// from, so dispatching through it is what makes an undocumented binding
     /// unrepresentable. A key no row claims is inert.
     fn on_key_browse(&mut self, key: KeyCode) -> Result<Action> {
-        let Some(binding) = BINDINGS.iter().find(|binding| binding.codes.contains(&key)) else {
+        // A submenu is open: the key either runs one of its children or, on Esc
+        // or a key none of them claim, closes it. Either way the leader is
+        // cleared — a chord is one key deep, so a stray second key does not
+        // strand the reviewer in a menu.
+        if let Some(leader) = self.pending_leader.take() {
+            if let Some(binding) = BINDINGS
+                .iter()
+                .find(|binding| binding.leader == Some(leader) && binding.codes.contains(&key))
+            {
+                return self.run_command(binding.command);
+            }
+            return Ok(Action::Continue);
+        }
+
+        // A leader letter with children opens its submenu — unless the context
+        // leaves exactly one child that acts on the cursor, in which case the
+        // menu would be a question with one answer, so it is skipped and the
+        // child run, with the bar naming the choice it made.
+        if let Some(leader) = Leader::ALL
+            .iter()
+            .copied()
+            .find(|leader| key == KeyCode::Char(leader.key()))
+        {
+            let live: Vec<&Binding> = BINDINGS
+                .iter()
+                .filter(|binding| {
+                    binding.leader == Some(leader)
+                        && binding.command.targets_cursor()
+                        && self.binding_enabled(binding)
+                })
+                .collect();
+            if let [only] = live[..] {
+                self.status = format!("{} → {}", leader.label(), only.what);
+                return self.run_command(only.command);
+            }
+            self.pending_leader = Some(leader);
+            return Ok(Action::Continue);
+        }
+
+        let Some(binding) = BINDINGS
+            .iter()
+            .find(|binding| binding.leader.is_none() && binding.codes.contains(&key))
+        else {
             return Ok(Action::Continue);
         };
         self.run_command(binding.command)
@@ -168,8 +217,8 @@ impl App {
     fn run_command(&mut self, command: Command) -> Result<Action> {
         match command {
             Command::Quit => return Ok(Action::Quit),
-            Command::FocusLeft => self.focus_left(),
-            Command::FocusRight => self.focus_right(),
+            Command::FocusLeft => self.focus_left()?,
+            Command::FocusRight => self.focus_right()?,
             Command::Forward => self.move_forward()?,
             Command::Back => self.move_back()?,
             Command::PageForward => self.page_forward()?,
@@ -191,16 +240,15 @@ impl App {
             Command::Delete => self.begin_delete(),
             Command::Resolve => self.resolve_comment()?,
             Command::Abandon => self.abandon_comment()?,
-            Command::Export => self.export()?,
             Command::OpenEditor => return Ok(self.begin_edit()),
             Command::Fold => self.toggle_collapse(),
             // Focus-free, like `[` and `]`.
-            Command::SwitchTab => self.switch_tab()?,
-            Command::FilesTab => self.goto_tab(SidebarTab::Files)?,
-            Command::CommitsTab => self.goto_tab(SidebarTab::Commits)?,
-            Command::CommentsTab => self.goto_tab(SidebarTab::Comments)?,
+            Command::ToggleFocus => self.toggle_focus(),
+            Command::FilesTab => self.goto_mode(SidebarTab::Files)?,
+            Command::CommitsTab => self.goto_mode(SidebarTab::Commits)?,
+            Command::CommentsTab => self.goto_mode(SidebarTab::Comments)?,
+            Command::ModeDiff => self.focus = super::Focus::Diff,
             Command::Enter => self.on_enter()?,
-            Command::FoldRow => self.fold_row()?,
             Command::Escape => self.escape(),
             Command::Narrower => self.split = self.split.nudged(-NUDGE),
             Command::Wider => self.split = self.split.nudged(NUDGE),
@@ -212,6 +260,8 @@ impl App {
             Command::ToggleFullContext => self.toggle_full_context(),
             Command::Info => self.toggle_info(),
             Command::Refresh => self.refresh()?,
+            Command::GroupDiff => self.toggle_grouped(),
+            Command::BeforeAfter => self.cycle_view_side(),
             Command::Help => {
                 // The tip first: what `?` answers is "what can I do here", and
                 // the whole manual is one more press away.

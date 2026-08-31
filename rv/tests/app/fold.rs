@@ -78,7 +78,7 @@ fn from_the_stack_s_collapses_only_the_selected_box() {
     assert!(app.collapsed().contains(&first), "{:?}", app.collapsed());
     assert_eq!(app.collapsed().len(), 1, "the other box is untouched");
 
-    app.on_key(KeyCode::Char('j')).expect("select the second");
+    app.on_key(KeyCode::Down).expect("select the second");
     app.on_key(KeyCode::Char('s')).expect("collapse the second");
     assert_eq!(app.collapsed().len(), 2, "and now both are folded");
 }
@@ -105,7 +105,6 @@ fn from_the_comments_tab_s_folds_the_browsed_comment() {
     );
 
     to_comments(&mut app);
-    app.on_key(KeyCode::Left).expect("focus the sidebar");
     app.on_key(KeyCode::Char('s'))
         .expect("fold the browsed comment");
 
@@ -137,15 +136,14 @@ fn from_the_comments_tab_s_folds_the_browsed_comment_not_the_selected_lines() {
     let mut app = workspace.app();
     write_comment(&mut app, "first finding");
     let first = app.comments()[0].id.clone();
-    app.on_key(KeyCode::Char('j')).expect("next line");
+    app.on_key(KeyCode::Down).expect("next line");
     write_comment(&mut app, "second finding");
     let second = app.comments()[1].id.clone();
     assert_ne!(first, second);
-    app.on_key(KeyCode::Char('k'))
+    app.on_key(KeyCode::Up)
         .expect("back onto the first comment's line");
 
     to_comments(&mut app);
-    app.on_key(KeyCode::Left).expect("focus the sidebar");
     app.on_key(KeyCode::Down).expect("browse to the second");
     app.on_key(KeyCode::Char('s')).expect("fold it");
 
@@ -191,7 +189,6 @@ fn from_an_empty_comment_browser_s_says_so() {
     let mut app = workspace.app();
 
     to_comments(&mut app);
-    app.on_key(KeyCode::Left).expect("focus the sidebar");
     app.on_key(KeyCode::Char('s')).expect("s");
 
     assert!(app.collapsed().is_empty(), "{:?}", app.collapsed());
@@ -257,6 +254,7 @@ fn deleting_a_folded_comment_forgets_that_it_was_folded() {
     app.on_key(KeyCode::Char('s')).expect("fold it away");
     assert!(app.collapsed().contains(&id));
 
+    app.on_key(KeyCode::Char('c')).expect("comment leader");
     app.on_key(KeyCode::Char('d')).expect("ask");
     app.on_key(KeyCode::Char('y')).expect("confirm");
 

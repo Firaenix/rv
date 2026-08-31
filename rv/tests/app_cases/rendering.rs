@@ -49,7 +49,7 @@ fn the_highlighted_line_is_always_rendered() {
         let app = &mut *app.borrow_mut();
         rewind(app);
         press_n(app, KeyCode::Char(']'), long);
-        press_n(app, KeyCode::Char('j'), index);
+        press_n(app, KeyCode::Down, index);
         prop_assert_eq!(app.line_index(), index);
 
         let line = lines(app)[index].clone();
@@ -123,14 +123,14 @@ fn drawing_never_panics_at_any_size() {
         let app = &mut *app.borrow_mut();
         rewind(app);
         press_n(app, KeyCode::Char(']'), file);
-        press_n(app, KeyCode::Char('j'), downs);
+        press_n(app, KeyCode::Down, downs);
         // Only type once the box is actually open. `c` on a binary or empty
         // diff is refused, and the body would then be pressed *as browse keys*
         // — `[` and `j` and all — which moves the selection out from under the
         // case rather than filling a comment box.
         let typing = match &body {
             Some(body) => {
-                press(app, KeyCode::Char('c'));
+                comment(app);
                 let opened = app.mode() == Mode::Comment;
                 if opened {
                     type_text(app, body);
@@ -191,20 +191,20 @@ fn drawing_never_panics_with_comment_boxes_on_screen() {
             "a second finding, long enough that it has to wrap several times over in any pane \
              narrow enough to be worth sweeping",
         ] {
-            press(app, KeyCode::Char('c'));
+            comment(app);
             type_text(app, body);
             press(app, KeyCode::Enter);
         }
-        press(app, KeyCode::Char('j'));
-        press(app, KeyCode::Char('c'));
+        press(app, KeyCode::Down);
+        comment(app);
         type_text(app, "third finding");
         press(app, KeyCode::Enter);
     }
     assert_eq!(fixture.comments().len(), 3, "{:?}", fixture.comments());
 
     let key = prop_oneof![
-        Just(KeyCode::Char('j')),
-        Just(KeyCode::Char('k')),
+        Just(KeyCode::Down),
+        Just(KeyCode::Up),
         Just(KeyCode::Enter),
         Just(KeyCode::Esc),
         Just(KeyCode::Left),
