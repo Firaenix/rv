@@ -32,7 +32,7 @@ clap.workspace = true
 # dependency set does not churn when it does.
 crossterm = "0.29"
 ratatui = "0.30"
-rv-core = { path = "../rv-core", version = "1.1.0" }
+rv-core = { path = "../rv-core", version = "1.2.0" }
 serde_json.workspace = true
 
 [dev-dependencies]

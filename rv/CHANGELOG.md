@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0](https://github.com/Firaenix/rv/compare/v1.1.0...v1.2.0) - 2026-09-01
+
+### Added
+
+- *(rv)* tree navigation, Space mode-leader, and a layers-first ?
+- *(rv)* PgUp/PgDn/Home/End navigation and a Jump & scroll keymap section
+
+### Other
+
+- *(rv)* unify commits-view diff loading with the file list; add direct i key
+
 ## [1.1.0](https://github.com/Firaenix/rv/compare/v1.0.0...v1.1.0) - 2026-08-21
 
 ### Added
