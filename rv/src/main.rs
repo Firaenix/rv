@@ -242,6 +242,7 @@ fn run() -> Result<ExitCode> {
     match cli.command {
         None => {
             let config = config::load()?;
+            let settings = config::load_settings()?;
             App::run_with_config(
                 session::build(&repo_root, cli.from.as_deref(), head.as_deref())?,
                 if cli.no_difft {
@@ -250,6 +251,7 @@ fn run() -> Result<ExitCode> {
                     DiffEngine::Auto
                 },
                 &config,
+                &settings,
             )?;
             Ok(ExitCode::SUCCESS)
         }

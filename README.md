@@ -224,6 +224,20 @@ default already holds simply takes it, and the review says so when it opens;
 only a config that contradicts *itself* refuses to load. `Ctrl+C`,
 `Shift`+arrows and the `?` popup's own keys are not remappable.
 
+Session defaults — the display preferences you would otherwise re-toggle at
+the top of every review — live in `~/.config/rv/Config.toml`, every field
+optional:
+
+```toml
+tree = true            # open the file list as a tree
+sort = "added"         # natural | added | removed
+full_context = false   # open on changes-only
+grouped = true         # removals before additions in each hunk
+tint = false           # no proportion tint on sidebar rows
+counts = false         # no +n -n column
+sidebar_hidden = true  # open with the sidebar put away
+```
+
 **Browsing**
 
 Movement is the **arrows** (and the mouse) — there are no `hjkl` aliases. The

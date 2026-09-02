@@ -606,3 +606,9 @@ invisible on screen (`changes-only`, `grouped`, `before`/`after`) now ride
 the status bar whenever they are off their default, and cost no columns when
 they are not: a one-sided diff looks exactly like a normal diff, and the bar
 is the only place a reviewer can learn what the pane is *not* showing.
+
+**`~/.config/rv/Config.toml`** — session defaults, every field optional and
+an absent one keeping the built-in: `tree`, `sort`, `full_context`,
+`grouped`, `tint`, `counts` and `sidebar_hidden`. The same patch philosophy
+as the keymap, applied where `App::build` used to hardcode; a refresh keeps
+carrying the running session's own toggles, so the file speaks only at open.

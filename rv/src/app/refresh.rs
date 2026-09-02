@@ -63,7 +63,14 @@ impl App {
         let review = crate::session::build(&root, from.as_deref(), to.as_deref())?;
         let selected = self.selected_file().map(|file| file.path.clone());
 
-        let mut fresh = Self::build(review, self.engine, &crate::config::Config::default())?;
+        // The display preferences are carried from `self` below, so the
+        // settings file has nothing to add on a refresh.
+        let mut fresh = Self::build(
+            review,
+            self.engine,
+            &crate::config::Config::default(),
+            &crate::config::Settings::default(),
+        )?;
         std::mem::swap(&mut fresh.keymap, &mut self.keymap);
         fresh.split = self.split;
         fresh.tree = self.tree;

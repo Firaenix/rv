@@ -23,6 +23,7 @@ use super::keymap::Keymap;
 use super::paint;
 use super::status::HELP;
 use crate::config::Config;
+use crate::config::Settings;
 use crate::layout::Split;
 use crate::session::Review;
 use crate::statusbar;
@@ -41,21 +42,23 @@ impl App {
     /// inconvenience — which is the argument for the parameter, and a stronger one
     /// than the process-wide-and-impolite reasoning that used to stand here.
     pub fn open(review: Review, engine: super::DiffEngine) -> Result<Self> {
-        Self::build(review, engine, &Config::default())
+        Self::build(review, engine, &Config::default(), &Settings::default())
     }
 
     pub fn open_with_config(
         review: Review,
         engine: super::DiffEngine,
         config: &Config,
+        settings: &Settings,
     ) -> Result<Self> {
-        Self::build(review, engine, config)
+        Self::build(review, engine, config, settings)
     }
 
     pub(super) fn build(
         review: Review,
         engine: super::DiffEngine,
         config: &Config,
+        settings: &Settings,
     ) -> Result<Self> {
         let diffs = vec![None; review.files.len()];
         let blobs = vec![None; review.files.len()];
@@ -95,7 +98,7 @@ impl App {
             diffs,
             blobs,
             merges,
-            full_context: true,
+            full_context: settings.full_context.unwrap_or(true),
             merger: super::merges::Merger::default(),
             comments,
             file_index: 0,
@@ -107,10 +110,10 @@ impl App {
             comment_index: 0,
             collapsed,
             collapsed_dirs: HashSet::new(),
-            tree: false,
-            sort: Sort::default(),
-            tint: true,
-            counts: true,
+            tree: settings.tree.unwrap_or(false),
+            sort: settings.sort.map_or_else(Sort::default, Sort::from),
+            tint: settings.tint.unwrap_or(true),
+            counts: settings.counts.unwrap_or(true),
             zoom: Vec::new(),
             nodes_cache: std::cell::RefCell::new(None),
             sidebar_row: 0,
@@ -121,7 +124,7 @@ impl App {
             help: HelpStage::Closed,
             help_scroll: 0,
             pending_leader: None,
-            grouped: false,
+            grouped: settings.grouped.unwrap_or(false),
             view_side: super::viewside::ViewSide::default(),
             body_width: Cell::new(ui::default_body_width()),
             highlights: HashMap::new(),
@@ -150,7 +153,7 @@ impl App {
             refiner: diffs::Refiner::default(),
             info_dismissed: false,
             info_scroll: 0,
-            sidebar_hidden: false,
+            sidebar_hidden: settings.sidebar_hidden.unwrap_or(false),
             commits: commits::Commits::default(),
             pending_edit: None,
         };

@@ -50,15 +50,21 @@ impl App {
     /// the same reason: an `rv` that was piped somewhere has no terminal to
     /// take over, and that is a sentence too, not a panic.
     pub fn run(review: Review, engine: DiffEngine) -> Result<()> {
-        Self::run_with_config(review, engine, &crate::config::Config::default())
+        Self::run_with_config(
+            review,
+            engine,
+            &crate::config::Config::default(),
+            &crate::config::Settings::default(),
+        )
     }
 
     pub fn run_with_config(
         review: Review,
         engine: DiffEngine,
         config: &crate::config::Config,
+        settings: &crate::config::Settings,
     ) -> Result<()> {
-        let mut app = Self::open_with_config(review, engine, config)?;
+        let mut app = Self::open_with_config(review, engine, config, settings)?;
 
         install_panic_hook();
         let mut terminal = ratatui::try_init().context("could not start the terminal")?;

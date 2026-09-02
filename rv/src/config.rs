@@ -10,6 +10,13 @@
 //! spellings. The command vocabulary and the collision rules live in
 //! [`crate::app::keymap`], which is where the default table is.
 
+mod settings;
+
+pub use settings::Settings;
+pub use settings::SortName;
+pub use settings::load_settings;
+pub use settings::settings_path;
+
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
