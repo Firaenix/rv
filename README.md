@@ -236,6 +236,9 @@ grouped = true         # removals before additions in each hunk
 tint = false           # no proportion tint on sidebar rows
 counts = false         # no +n -n column
 sidebar_hidden = true  # open with the sidebar put away
+split = 40             # sidebar share of the width, in percent
+ascii = true           # ASCII status-bar separators (RV_ASCII as a setting)
+engine = "fallback"    # auto | fallback — --no-difft as a default
 ```
 
 **Browsing**

@@ -243,13 +243,19 @@ fn run() -> Result<ExitCode> {
         None => {
             let config = config::load()?;
             let settings = config::load_settings()?;
+            // The flag outranks the settings file: `--no-difft` on the command
+            // line is an answer for this run, whatever the default is.
+            let engine = if cli.no_difft {
+                DiffEngine::Fallback
+            } else {
+                match settings.engine {
+                    Some(config::EngineName::Fallback) => DiffEngine::Fallback,
+                    Some(config::EngineName::Auto) | None => DiffEngine::Auto,
+                }
+            };
             App::run_with_config(
                 session::build(&repo_root, cli.from.as_deref(), head.as_deref())?,
-                if cli.no_difft {
-                    DiffEngine::Fallback
-                } else {
-                    DiffEngine::Auto
-                },
+                engine,
                 &config,
                 &settings,
             )?;

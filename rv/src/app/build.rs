@@ -118,8 +118,10 @@ impl App {
             nodes_cache: std::cell::RefCell::new(None),
             sidebar_row: 0,
             stats,
-            ascii: statusbar::ascii_from_env(),
-            split: Split::default(),
+            // `RV_ASCII` set still wins — an environment override outranks a
+            // settings file the way a flag outranks both.
+            ascii: statusbar::ascii_from_env() || settings.ascii.unwrap_or(false),
+            split: settings.split.map_or_else(Split::default, Split::new),
             keymap,
             help: HelpStage::Closed,
             help_scroll: 0,

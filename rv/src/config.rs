@@ -12,6 +12,7 @@
 
 mod settings;
 
+pub use settings::EngineName;
 pub use settings::Settings;
 pub use settings::SortName;
 pub use settings::load_settings;

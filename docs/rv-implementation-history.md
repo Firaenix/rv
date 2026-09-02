@@ -612,3 +612,33 @@ an absent one keeping the built-in: `tree`, `sort`, `full_context`,
 `grouped`, `tint`, `counts` and `sidebar_hidden`. The same patch philosophy
 as the keymap, applied where `App::build` used to hardcode; a refresh keeps
 carrying the running session's own toggles, so the file speaks only at open.
+
+## 2026-09-02 (later) — the config file that was never read, and the browser that said nothing
+
+**The macOS config path** — `dirs::config_dir()` put the keybindings and
+settings files under `~/Library/Application Support` on macOS while every
+piece of documentation said `~/.config/rv`, so a macOS user's file was
+silently never read. Both paths now resolve `$XDG_CONFIG_HOME` then
+`~/.config` on every platform, the `dirs` dependency is gone, and an
+end-to-end test drives a scoped `[keys.comments]` bind from key press to
+confirmed deletion so the whole chain stays held.
+
+**The comment browser redesign** — a comment row used to lead with its file's
+path, which on a narrow sidebar clipped away the state and body — the only
+parts that say what the comment *is* — while repeating the heading directly
+above it. Rows are now `:line state · body`, the path lives only on the
+heading, and the browser is built by the same `tree::build` the files pane
+uses, so tree mode and the sort order shape both tabs identically —
+directory chains merged, files indented, comments one level deeper.
+Headings stay uncollapsible (inline-comments spec §3).
+
+**`line-diff` in the view-state segment** — the fallback engine's line diff
+looks exactly like a structural diff that happens to be line-shaped, so the
+bar now says which one is on screen, including during the moment before
+difftastic's answer replaces the fallback.
+
+**The last hardcoded defaults** — `Config.toml` gained `split` (the sidebar's
+opening share of the width), `ascii` (`RV_ASCII` as a setting; the variable
+still wins when set) and `engine` (`--no-difft` as a default; the flag still
+wins when passed). Precedence is one rule spelled three ways: a flag beats
+the environment beats the file beats the built-in.

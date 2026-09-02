@@ -28,6 +28,23 @@ pub struct Settings {
     pub counts: Option<bool>,
     /// Open with the sidebar put away.
     pub sidebar_hidden: Option<bool>,
+    /// The share of the width the sidebar starts with, in percent — what `+`
+    /// and `_` nudge. Clamped the way the keys are.
+    pub split: Option<u16>,
+    /// Draw the status bar's separators in ASCII — the `RV_ASCII` switch as a
+    /// setting; the environment variable still wins when set.
+    pub ascii: Option<bool>,
+    /// The diff engine to open with: `auto` (difftastic when it is on `PATH`,
+    /// the default) or `fallback` (the in-process line diff — `--no-difft` as
+    /// a default, which still wins as a flag).
+    pub engine: Option<EngineName>,
+}
+
+#[derive(Deserialize, Debug, Clone, Copy)]
+#[serde(rename_all = "lowercase")]
+pub enum EngineName {
+    Auto,
+    Fallback,
 }
 
 #[derive(Deserialize, Debug, Clone, Copy)]
@@ -80,7 +97,8 @@ mod tests {
     fn the_documented_fields_parse() {
         let settings: Settings = toml::from_str(
             "tree = true\nsort = \"added\"\nfull_context = false\ngrouped = true\n\
-             tint = false\ncounts = false\nsidebar_hidden = true\n",
+             tint = false\ncounts = false\nsidebar_hidden = true\nsplit = 40\n\
+             ascii = true\nengine = \"fallback\"\n",
         )
         .unwrap();
         assert_eq!(settings.tree, Some(true));
@@ -88,6 +106,14 @@ mod tests {
         assert_eq!(settings.full_context, Some(false));
         assert_eq!(settings.grouped, Some(true));
         assert_eq!(settings.sidebar_hidden, Some(true));
+        assert_eq!(settings.split, Some(40));
+        assert_eq!(settings.ascii, Some(true));
+        assert!(matches!(settings.engine, Some(EngineName::Fallback)));
+    }
+
+    #[test]
+    fn an_unknown_engine_is_an_error() {
+        assert!(toml::from_str::<Settings>("engine = \"difftastic!\"\n").is_err());
     }
 
     #[test]
