@@ -647,3 +647,7 @@ the environment beats the file beats the built-in.
 which: `rv config` opens `Config.toml`, `rv keymap` opens `keybindings.toml`
 (both seeded with commented defaults on first run and validated on editor
 exit), and the effective-map dump moved behind `rv keymap --show`.
+
+- The `rv-core` highlight test binary can SIGSEGV on ubuntu CI after every
+  test passes (tree-sitter teardown, intermittent). Rerunning has cleared it
+  every time; if it recurs, serialize that target or bump tree-sitter.
