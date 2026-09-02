@@ -41,11 +41,8 @@ use crate::app::Suppression;
 /// What the Comments tab says when the review has no comments in it yet.
 const NO_COMMENTS_YET: &str = "no comments yet";
 
-/// How far a comment row is indented under the file heading it belongs to.
-///
-/// Two columns, matching one level of the file list's tree indent, so the two
-/// lists read as the same column of the same interface.
-const COMMENT_INDENT: &str = "  ";
+/// The open-directory mark a tree heading carries, matching the files pane's.
+const DIR_MARK: &str = "▾  ";
 
 pub(super) fn draw_sidebar(frame: &mut Frame, app: &App, area: Rect) {
     let focused = app.focus() == Focus::Sidebar;
@@ -94,13 +91,21 @@ fn draw_comment_browser(frame: &mut Frame, app: &App, area: Rect, focused: bool)
     frame.render_stateful_widget(list, area, &mut state);
 }
 
-/// One row of the browser: a file heading, or a comment indented under one.
+/// One row of the browser: a directory of the tree, a file heading, or a
+/// comment indented under one.
 fn browser_row<'a>(app: &App, row: &BrowserRow, width: usize) -> ListItem<'a> {
     let (text, style) = match row {
-        BrowserRow::File(path) => (path.clone(), Style::default().add_modifier(Modifier::BOLD)),
-        BrowserRow::Comment(index) => match app.comments().get(*index) {
+        BrowserRow::Dir { label, depth } => (
+            format!("{}{DIR_MARK}{label}", "  ".repeat(*depth)),
+            Style::default().add_modifier(Modifier::BOLD),
+        ),
+        BrowserRow::File { label, depth, .. } => (
+            format!("{}{label}", "  ".repeat(*depth)),
+            Style::default().add_modifier(Modifier::BOLD),
+        ),
+        BrowserRow::Comment { index, depth } => match app.comments().get(*index) {
             Some(comment) => (
-                format!("{COMMENT_INDENT}{}", summary(comment)),
+                format!("{}{}", "  ".repeat(*depth), summary(comment)),
                 comment_style(comment),
             ),
             // A row addressing a comment the review does not have cannot happen
@@ -115,13 +120,14 @@ fn browser_row<'a>(app: &App, row: &BrowserRow, width: usize) -> ListItem<'a> {
     ))
 }
 
-/// One comment on one row: where it is, what state it is in, and the first line
-/// of what it says.
+/// One comment on one row: the line it is on, its state, and the first line of
+/// what it says. **No path** — the heading above the row already names the
+/// file, and a path here is what used to eat the whole width and leave the one
+/// part that says what the comment *is* clipped off the right edge.
 fn summary(comment: &Comment) -> String {
     let first = comment.body.lines().next().unwrap_or_default();
     format!(
-        "{}:{} {} {first}",
-        comment.anchor.file,
+        ":{} {} · {first}",
         comment.anchor.line,
         state_name(comment.state),
     )

@@ -39,9 +39,11 @@ impl App {
     /// a visible row inert.
     pub(super) fn enter_browser_row(&mut self) -> Result<()> {
         match self.browser_rows().get(self.browser_index) {
-            Some(BrowserRow::Comment(index)) => self.jump_to_comment(*index),
-            Some(BrowserRow::File(path)) => self.open_file_named(&path.clone()),
-            None => Ok(()),
+            Some(BrowserRow::Comment { index, .. }) => self.jump_to_comment(*index),
+            Some(BrowserRow::File { path, .. }) => self.open_file_named(&path.clone()),
+            // A directory row names no one file, so it can defensibly open
+            // nothing.
+            Some(BrowserRow::Dir { .. }) | None => Ok(()),
         }
     }
 

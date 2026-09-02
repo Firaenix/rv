@@ -206,8 +206,13 @@ fn comment_browser_keybindings(
     // which is deliberately `None` off the Comments tab: `Tab` is one of the
     // keys under test, and its case still has a browser cursor to assert about.
     let browsed = match &app.browser_rows()[app.browser_index()] {
-        BrowserRow::Comment(index) => app.comments()[*index].body.clone(),
-        BrowserRow::File(path) => panic!("{key:?} left the cursor on the {path} heading"),
+        BrowserRow::Comment { index, .. } => app.comments()[*index].body.clone(),
+        BrowserRow::File { path, .. } => {
+            panic!("{key:?} left the cursor on the {path} heading")
+        }
+        BrowserRow::Dir { label, .. } => {
+            panic!("{key:?} left the cursor on the {label} directory row")
+        }
     };
     assert_eq!(
         (browsed.as_str(), app.file_index()),

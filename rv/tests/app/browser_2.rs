@@ -52,7 +52,7 @@ fn the_browser_groups_comments_under_file_headings_in_file_and_line_order() {
 
     assert_eq!(
         rows,
-        vec!["a.rs", "  a.rs:1 open on a", "b.rs", "  b.rs:2 open on b"],
+        vec!["a.rs", "  :1 open · on a", "b.rs", "  :2 open · on b"],
         "the browser is not grouped by file in (file, line) order"
     );
 }
@@ -69,10 +69,10 @@ fn the_browsers_rows_are_headings_and_comments() {
         matches!(
             kinds.as_slice(),
             [
-                BrowserRow::File(first),
-                BrowserRow::Comment(_),
-                BrowserRow::File(second),
-                BrowserRow::Comment(_),
+                BrowserRow::File { path: first, .. },
+                BrowserRow::Comment { .. },
+                BrowserRow::File { path: second, .. },
+                BrowserRow::Comment { .. },
             ] if first == "a.rs" && second == "b.rs"
         ),
         "{kinds:?}"
@@ -141,7 +141,7 @@ fn a_click_below_a_heading_selects_the_comment_that_was_drawn_there() {
     // off-by-one of either sign lands somewhere else.
     let frame = frame_at(&app, 100, 24);
     let area = inner(areas(100, 24, Split::default()).sidebar);
-    let target = sidebar_row_for_in(&frame, area, "b.rs:2");
+    let target = sidebar_row_for_in(&frame, area, ":2 open");
     assert_eq!(
         target - area.y,
         3,
@@ -177,7 +177,10 @@ fn a_click_on_a_heading_selects_the_heading() {
         app.browsed_comment()
     );
     assert!(
-        matches!(app.browser_rows()[app.browser_index()], BrowserRow::File(_)),
+        matches!(
+            app.browser_rows()[app.browser_index()],
+            BrowserRow::File { .. }
+        ),
         "the click was moved off the row it landed on"
     );
 }
@@ -376,4 +379,60 @@ fn the_bar_drops_a_segment_whole_rather_than_cutting_a_word() {
             "the bar left part of the row bare at {width} columns: {bar:?}"
         );
     }
+}
+
+/// Tree mode shapes the browser's headings exactly as it shapes the file
+/// list: single-child directory chains merged into one row, files indented
+/// under them, comments one level deeper — and the flat list stays the flat
+/// list, whole paths and all.
+#[test]
+fn tree_mode_shapes_the_browser_like_the_file_list() {
+    let workspace = Fixture::new();
+    workspace.write("src/inner/x.rs", "fn x() {}\n");
+    workspace.jj(&["status"]); // snapshot the new file into the change
+    let mut app = workspace.app();
+
+    write_comment(&mut app, "root note");
+    app.on_key(KeyCode::Char(']')).expect("b.rs");
+    app.on_key(KeyCode::Char(']')).expect("src/inner/x.rs");
+    write_comment(&mut app, "nested note");
+
+    to_comments(&mut app);
+    let flat = app.browser_rows();
+    assert!(
+        matches!(
+            flat.as_slice(),
+            [
+                BrowserRow::File { path: first, depth: 0, .. },
+                BrowserRow::Comment { depth: 1, .. },
+                BrowserRow::File { path: second, label, depth: 0 },
+                BrowserRow::Comment { depth: 1, .. },
+            ] if first == "a.rs" && second == "src/inner/x.rs" && label == "src/inner/x.rs"
+        ),
+        "the flat browser stopped listing whole paths: {flat:?}"
+    );
+
+    // The toggle is the files pane's own; the browser follows it.
+    to_files(&mut app);
+    app.on_key(KeyCode::Char('v')).expect("view leader");
+    app.on_key(KeyCode::Char('t')).expect("tree mode");
+    to_comments(&mut app);
+
+    let tree = app.browser_rows();
+    assert!(
+        matches!(
+            tree.as_slice(),
+            [
+                BrowserRow::Dir { label: chain, depth: 0 },
+                BrowserRow::File { path: nested, label: name, depth: 1 },
+                BrowserRow::Comment { depth: 2, .. },
+                BrowserRow::File { path: root, depth: 0, .. },
+                BrowserRow::Comment { depth: 1, .. },
+            ] if chain == "src/inner"
+                && nested == "src/inner/x.rs"
+                && name == "x.rs"
+                && root == "a.rs"
+        ),
+        "the tree browser does not follow the file list's shape: {tree:?}"
+    );
 }

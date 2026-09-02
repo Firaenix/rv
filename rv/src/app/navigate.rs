@@ -110,7 +110,7 @@ impl App {
     pub(super) fn step_browser(&mut self, forward: bool, count: usize) {
         self.sidebar_scroll = None;
         let rows = self.browser_rows();
-        let is_comment = |row: &usize| matches!(rows[*row], BrowserRow::Comment(_));
+        let is_comment = |row: &usize| matches!(rows[*row], BrowserRow::Comment { .. });
         for _ in 0..count {
             let found = if forward {
                 (self.browser_index.saturating_add(1)..rows.len()).find(is_comment)
@@ -129,7 +129,7 @@ impl App {
         self.sidebar_scroll = None;
         let rows = self.browser_rows();
         let mut comments =
-            (0..rows.len()).filter(|row| matches!(rows[*row], BrowserRow::Comment(_)));
+            (0..rows.len()).filter(|row| matches!(rows[*row], BrowserRow::Comment { .. }));
         let landing = if forward {
             comments.next_back()
         } else {
