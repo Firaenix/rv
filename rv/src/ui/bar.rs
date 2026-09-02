@@ -170,5 +170,14 @@ fn view_state(app: &App) -> String {
         crate::app::ViewSide::Before => tokens.push("before"),
         crate::app::ViewSide::After => tokens.push("after"),
     }
+    // The fallback engine's line diff looks exactly like a structural diff
+    // that happens to be line-shaped, so the bar is the only place a reviewer
+    // can learn which one they are reading. Shown while it is what is on
+    // screen — including the moment before difftastic's answer lands.
+    if let Some(diff) = app.selected_diff()
+        && matches!(diff.source, rv_core::diff::DiffSource::Similar { .. })
+    {
+        tokens.push("line-diff");
+    }
     tokens.join(" · ")
 }
