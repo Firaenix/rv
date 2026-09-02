@@ -5,6 +5,7 @@ mod diffcmd;
 mod report;
 
 pub use configcmd::edit_config;
+pub use configcmd::edit_keymap;
 pub use configcmd::print_keymap;
 pub use diffcmd::diff;
 pub use report::check;

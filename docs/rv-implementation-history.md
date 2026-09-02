@@ -642,3 +642,8 @@ opening share of the width), `ascii` (`RV_ASCII` as a setting; the variable
 still wins when set) and `engine` (`--no-difft` as a default; the flag still
 wins when passed). Precedence is one rule spelled three ways: a flag beats
 the environment beats the file beats the built-in.
+
+**One command per file** — with two files the CLI's names had to say which is
+which: `rv config` opens `Config.toml`, `rv keymap` opens `keybindings.toml`
+(both seeded with commented defaults on first run and validated on editor
+exit), and the effective-map dump moved behind `rv keymap --show`.

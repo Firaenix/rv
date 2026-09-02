@@ -216,17 +216,17 @@ diff_toggle_full_context = "f"
 cursor_last_row = "e"
 ```
 
-`rv config` opens the file in `$EDITOR`, seeding it with the fully-commented
+`rv keymap` opens the file in `$EDITOR`, seeding it with the fully-commented
 defaults on first run — which is also where the command vocabulary lives —
-and validates it the moment the editor exits. `rv keymap` prints the
+and validates it the moment the editor exits; `rv keymap --show` prints the
 *effective* map, defaults and patch merged. A user bind that lands on a key a
 default already holds simply takes it, and the review says so when it opens;
 only a config that contradicts *itself* refuses to load. `Ctrl+C`,
 `Shift`+arrows and the `?` popup's own keys are not remappable.
 
 Session defaults — the display preferences you would otherwise re-toggle at
-the top of every review — live in `~/.config/rv/Config.toml`, every field
-optional:
+the top of every review — live in `~/.config/rv/Config.toml` (`rv config`
+opens it, seeded and validated the same way), every field optional:
 
 ```toml
 tree = true            # open the file list as a tree

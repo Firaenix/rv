@@ -157,14 +157,20 @@ enum Command {
         #[arg(long, value_name = "PATH")]
         out: Option<PathBuf>,
     },
-    /// Open the keybindings file (`~/.config/rv/keybindings.toml`) in $EDITOR.
+    /// Open the session defaults (`~/.config/rv/Config.toml`) in $EDITOR.
     ///
     /// A missing file is seeded with the fully-commented defaults first, and
     /// the result is validated the moment the editor exits.
     Config,
-    /// Print the effective keymap — the defaults plus the config's patch — as
-    /// the same TOML the config file speaks.
-    Keymap,
+    /// Open the keybindings (`~/.config/rv/keybindings.toml`) in $EDITOR —
+    /// seeded and validated the same way — or, with --show, print the
+    /// effective keymap: the defaults plus the file's patch, as the same TOML
+    /// the file speaks.
+    Keymap {
+        /// Print the effective keymap instead of opening the editor.
+        #[arg(long)]
+        show: bool,
+    },
     /// Report the range, its changes, its files and its comment counts.
     Status {
         /// Emit JSON instead of text.
@@ -312,8 +318,12 @@ fn run() -> Result<ExitCode> {
             commands::edit_config()?;
             Ok(ExitCode::SUCCESS)
         }
-        Some(Command::Keymap) => {
-            commands::print_keymap()?;
+        Some(Command::Keymap { show }) => {
+            if show {
+                commands::print_keymap()?;
+            } else {
+                commands::edit_keymap()?;
+            }
             Ok(ExitCode::SUCCESS)
         }
         Some(Command::Status { json, check }) => {
