@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.0](https://github.com/Firaenix/rv/compare/v1.4.0...v1.5.0) - 2026-09-02
+
+### Added
+
+- rv config and rv keymap each open their own file
+- split, ascii and engine defaults in Config.toml
+- the status bar says when the diff on screen is the line-based fallback
+- the comment browser conforms to tree mode and says what a comment is
+
+### Fixed
+
+- read keybindings.toml and Config.toml from ~/.config/rv on every platform
+
 ## [1.4.0](https://github.com/Firaenix/rv/compare/v1.3.0...v1.4.0) - 2026-09-02
 
 ### Added
