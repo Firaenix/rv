@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 53badef3feaf9fe734ffadd178127fb29234af5ab0ad86ce888d8a097c39f711 # shrinks to sequence = [Comment { id: "id", change_id: "0", commit_id: "0", anchor: Anchor { file: "", side: Left, line: 0, content_hash: "0", context: [], context_start: 1 }, body: "", state: Open, reply: None, settled_by: None }]
+cc 5f3ea5346c4f4b0c19bce2be423f6896ae21a147b5a0eb2a762edd7f3d81b746 # shrinks to ops = [Append(Comment { id: "id", change_id: "0", commit_id: "0", anchor: Anchor { file: "", side: Left, line: 0, content_hash: "0", context: [], context_start: 1 }, body: "", state: Open, reply: None, settled_by: None })]

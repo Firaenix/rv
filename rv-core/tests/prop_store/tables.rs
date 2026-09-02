@@ -29,16 +29,20 @@ fn markdown_is_written_inside_the_review_directory(#[case] relative_root: &str) 
     let tempdir = tempfile::tempdir().expect("create temp dir");
     let root = tempdir.path().join(relative_root);
     fs::create_dir_all(root.join(".git/info")).expect("create .git/info");
-    let store = Store::open(&root).expect("open store");
+    let store = Store::open(&root, "main").expect("open store");
 
     assert_eq!(
         store.markdown_path(),
-        root.join(".review").join("REVIEW-FEEDBACK.md")
+        root.join(".review")
+            .join("reviews")
+            .join("main")
+            .join("REVIEW-FEEDBACK.md")
     );
 
     store.write_markdown("a document").expect("write markdown");
     assert_eq!(
-        fs::read_to_string(root.join(".review/REVIEW-FEEDBACK.md")).expect("read markdown"),
+        fs::read_to_string(root.join(".review/reviews/main/REVIEW-FEEDBACK.md"))
+            .expect("read markdown"),
         "a document"
     );
     assert!(
@@ -96,7 +100,7 @@ fn ensure_excluded_exclude_file_cases(
     if let Some(contents) = existing {
         fs::write(&exclude, contents).expect("seed exclude file");
     }
-    let store = Store::open(repo.path()).expect("open store");
+    let store = Store::open(repo.path(), "main").expect("open store");
 
     let added = store.ensure_excluded().expect("ensure_excluded");
 
@@ -122,7 +126,7 @@ fn ensure_excluded_creates_missing_parents(#[case] preexisting: &[&str]) {
     for dir in preexisting {
         fs::create_dir_all(tempdir.path().join(dir)).expect("create dir");
     }
-    let store = Store::open(tempdir.path()).expect("open store");
+    let store = Store::open(tempdir.path(), "main").expect("open store");
 
     assert!(store.ensure_excluded().expect("ensure_excluded"));
 
@@ -165,7 +169,7 @@ fn ensure_excluded_creates_missing_parents(#[case] preexisting: &[&str]) {
 #[case::toml_syntax("[table]\nkey = \"value\" # comment")]
 fn session_fields_survive_toml_hostile_strings(#[case] text: &str) {
     let repo = repo_root();
-    let store = Store::open(repo.path()).expect("open store");
+    let store = Store::open(repo.path(), "main").expect("open store");
     let session = Session {
         revset: text.to_owned(),
         base_commit: "abc123def456".to_owned(),
@@ -181,7 +185,7 @@ fn session_fields_survive_toml_hostile_strings(#[case] text: &str) {
 
     store.write_review(&session).expect("write review");
 
-    let read_back = Store::open(repo.path())
+    let read_back = Store::open(repo.path(), "main")
         .expect("reopen store")
         .read_review()
         .expect("read review");
@@ -203,7 +207,7 @@ fn session_fields_survive_toml_hostile_strings(#[case] text: &str) {
 #[case(CommentState::Outdated, "outdated")]
 fn comment_state_wire_format(#[case] state: CommentState, #[case] expected: &str) {
     let repo = repo_root();
-    let store = Store::open(repo.path()).expect("open store");
+    let store = Store::open(repo.path(), "main").expect("open store");
     let comment = Comment {
         id: "id0".to_owned(),
         change_id: "nowwnlnmvkwo".to_owned(),
@@ -224,8 +228,8 @@ fn comment_state_wire_format(#[case] state: CommentState, #[case] expected: &str
 
     store.append_comment(&comment).expect("append comment");
 
-    let raw =
-        fs::read_to_string(repo.path().join(".review/session.toml")).expect("read session.toml");
+    let raw = fs::read_to_string(repo.path().join(".review/reviews/main/session.toml"))
+        .expect("read session.toml");
     assert!(
         raw.contains(&format!("state = \"{expected}\"")),
         "session.toml should spell {state:?} in kebab-case:\n{raw}"

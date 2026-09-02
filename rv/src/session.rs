@@ -138,7 +138,7 @@ fn resolve(repo_root: &Path, base: Option<&str>, head: Option<&str>) -> Result<R
         .files(&base_commit, &head_commit)
         .context("could not enumerate changed files")?;
 
-    let store = Store::open(repo_root)
+    let store = Store::open(repo_root, &rv_core::store::review_key(head))
         .with_context(|| format!("could not open {}/.review", repo_root.display()))?;
     store
         .ensure_excluded()

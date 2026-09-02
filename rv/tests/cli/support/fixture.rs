@@ -36,6 +36,16 @@ impl Fixture {
         self.tempdir.path()
     }
 
+    /// A handle on the sole stored review's directory — every fixture here
+    /// opens exactly one review.
+    pub fn store(&self) -> rv_core::store::Store {
+        let (key, _) = rv_core::store::Store::list_reviews(self.root())
+            .into_iter()
+            .next()
+            .expect("a stored review");
+        rv_core::store::Store::open(self.root(), &key).expect("open the store")
+    }
+
     /// Runs `jj` in the workspace and returns its stdout, panicking on failure.
     pub fn jj(&self, args: &[&str]) -> String {
         let output = Command::new("jj")

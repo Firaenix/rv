@@ -18,7 +18,7 @@ use super::sample_comment;
 #[test]
 fn session_toml_roundtrip() {
     let repo = repo_root();
-    let store = Store::open(repo.path()).expect("open store");
+    let store = Store::open(repo.path(), "main").expect("open store");
     let session = Session {
         revset: "trunk()..@".to_owned(),
         base_commit: "abc123def456".to_owned(),
@@ -34,7 +34,7 @@ fn session_toml_roundtrip() {
 
     store.write_review(&session).expect("write review");
 
-    let reopened = Store::open(repo.path()).expect("reopen store");
+    let reopened = Store::open(repo.path(), "main").expect("reopen store");
     let read_back = reopened.read_review().expect("read review");
 
     assert_eq!(read_back, session);
@@ -46,7 +46,7 @@ fn session_toml_roundtrip() {
 #[test]
 fn a_store_with_no_session_file_reads_as_an_empty_review() {
     let repo = repo_root();
-    let store = Store::open(repo.path()).expect("open store");
+    let store = Store::open(repo.path(), "main").expect("open store");
 
     assert_eq!(
         store.read_review().expect("read review"),
@@ -64,7 +64,7 @@ fn a_v1_review_migrates_every_comment_into_session_toml() {
     let repo = repo_root();
     write_legacy_review(&repo, &["a1b2c3d4", "e5f6a7b8", "9900aabb"]);
 
-    let store = Store::open(repo.path()).expect("open the v1.0.0 review");
+    let store = Store::open(repo.path(), "working-copy").expect("open the v1.0.0 review");
 
     let comments = store.comments().expect("read comments");
     assert_eq!(
@@ -120,7 +120,7 @@ fn an_interrupted_migration_loses_no_comment_from_either_side() {
         "the fixture must start with the comments only in comments.json"
     );
 
-    Store::open(repo.path()).expect("first open migrates");
+    Store::open(repo.path(), "working-copy").expect("first open migrates");
 
     // Killed between the rename and the unlink: session.toml holds the
     // comments and comments.json is still there. Put the file back to
@@ -128,7 +128,7 @@ fn an_interrupted_migration_loses_no_comment_from_either_side() {
     fs::write(repo.path().join(".review/comments.json"), &legacy_bytes)
         .expect("restore the file an interrupted unlink would have left");
 
-    let store = Store::open(repo.path()).expect("second open re-folds");
+    let store = Store::open(repo.path(), "working-copy").expect("second open re-folds");
 
     let comments = store.comments().expect("read comments");
     assert_eq!(
@@ -155,7 +155,7 @@ fn a_stored_comment_is_not_overwritten_by_its_legacy_twin() {
     let legacy_bytes =
         fs::read(repo.path().join(".review/comments.json")).expect("read the legacy file");
 
-    let store = Store::open(repo.path()).expect("migrate");
+    let store = Store::open(repo.path(), "working-copy").expect("migrate");
     let mut answered = store.comments().expect("read comments")[0].clone();
     answered.reply = Some("fixed in the next change".to_owned());
     answered.state = CommentState::Resolved;
@@ -163,7 +163,8 @@ fn a_stored_comment_is_not_overwritten_by_its_legacy_twin() {
 
     fs::write(repo.path().join(".review/comments.json"), &legacy_bytes)
         .expect("restore the stale legacy file");
-    let reopened = Store::open(repo.path()).expect("reopen over the stale legacy file");
+    let reopened =
+        Store::open(repo.path(), "working-copy").expect("reopen over the stale legacy file");
 
     let comments = reopened.comments().expect("read comments");
     assert_eq!(comments.len(), 1, "the twin must not be added beside it");
@@ -188,7 +189,7 @@ fn an_unreadable_legacy_file_is_reported_rather_than_skipped() {
     )
     .expect("write a damaged legacy file");
 
-    let opened = Store::open(repo.path());
+    let opened = Store::open(repo.path(), "working-copy");
 
     assert!(
         matches!(opened, Err(rv_core::store::Error::InvalidComments { .. })),

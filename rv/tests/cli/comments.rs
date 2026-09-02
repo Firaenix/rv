@@ -62,10 +62,7 @@ fn rv_comment_saves_an_anchored_comment_without_touching_the_export() {
 /// The comments as `session.toml` holds them — one file, read through the
 /// store rather than by parsing whichever file happens to back it.
 fn stored_comments(workspace: &Fixture) -> Vec<rv_core::store::Comment> {
-    rv_core::store::Store::open(workspace.root())
-        .expect("open the store")
-        .comments()
-        .expect("read the comments")
+    workspace.store().comments().expect("read the comments")
 }
 
 /// The refusals name what went wrong, because the caller is a program: a

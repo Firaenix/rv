@@ -340,13 +340,17 @@ impl Fixture {
         app
     }
 
-    /// A handle on `.review/` that shares nothing with the app's own.
+    /// A handle on `.review/` that shares nothing with the app's own — the
+    /// sole stored review's, since a fixture opens exactly one.
     pub fn store(&self) -> Store {
-        Store::open(self.root()).expect("open the store")
+        let (key, _) = Store::list_reviews(self.root())
+            .into_iter()
+            .next()
+            .expect("a stored review");
+        Store::open(self.root(), &key).expect("open the store")
     }
 
     pub fn markdown(&self) -> String {
-        fs::read_to_string(self.root().join(".review/REVIEW-FEEDBACK.md"))
-            .expect("read REVIEW-FEEDBACK.md")
+        fs::read_to_string(self.store().markdown_path()).expect("read REVIEW-FEEDBACK.md")
     }
 }

@@ -29,7 +29,7 @@ proptest! {
         sequence in comment_sequence(0..8),
     ) {
         let repo = repo_root();
-        let store = Store::open(repo.path()).expect("open store");
+        let store = Store::open(repo.path(), "main").expect("open store");
         for comment in &sequence {
             store.append_comment(comment).expect("append comment");
         }
@@ -46,7 +46,7 @@ proptest! {
         sequence in comment_sequence(1..8),
     ) {
         let repo = repo_root();
-        let store = Store::open(repo.path()).expect("open store");
+        let store = Store::open(repo.path(), "main").expect("open store");
         for comment in &sequence {
             store.append_comment(comment).expect("append comment");
         }
@@ -75,7 +75,7 @@ proptest! {
         mut replacement in comment(Just(String::new()), 12),
     ) {
         let repo = repo_root();
-        let store = Store::open(repo.path()).expect("open store");
+        let store = Store::open(repo.path(), "main").expect("open store");
         for comment in &initial {
             store.append_comment(comment).expect("append comment");
         }
@@ -105,7 +105,7 @@ proptest! {
         target in any::<prop::sample::Index>(),
     ) {
         let repo = repo_root();
-        let store = Store::open(repo.path()).expect("open store");
+        let store = Store::open(repo.path(), "main").expect("open store");
         for comment in &sequence {
             store.append_comment(comment).expect("append comment");
         }
@@ -151,8 +151,8 @@ proptest! {
     ) {
         let repo_a = repo_root();
         let repo_b = repo_root();
-        let store_a = Store::open(repo_a.path()).expect("open store a");
-        let store_b = Store::open(repo_b.path()).expect("open store b");
+        let store_a = Store::open(repo_a.path(), "main").expect("open store a");
+        let store_b = Store::open(repo_b.path(), "main").expect("open store b");
         for comment in &canonical {
             store_a.append_comment(comment).expect("append into a");
         }
@@ -198,7 +198,7 @@ proptest! {
     ) {
         let repo = repo_root();
         {
-            let store = Store::open(repo.path()).expect("open store");
+            let store = Store::open(repo.path(), "main").expect("open store");
             for op in &ops {
                 apply(&store, op).expect("apply op");
             }
@@ -210,7 +210,7 @@ proptest! {
             );
         }
 
-        let reopened = Store::open(repo.path()).expect("reopen store");
+        let reopened = Store::open(repo.path(), "main").expect("reopen store");
         prop_assert_eq!(reopened.comments().expect("read comments"), expected_comments(&ops));
         prop_assert_eq!(fs::read(reopened.markdown_path()).ok(), expected_markdown(&ops));
         prop_assert_eq!(
@@ -238,7 +238,7 @@ proptest! {
         file in hostile_text(24),
     ) {
         let repo = repo_root();
-        let store = Store::open(repo.path()).expect("open store");
+        let store = Store::open(repo.path(), "main").expect("open store");
         let mut comment = Comment {
             id: "id0".to_owned(),
             change_id: "abc123".to_owned(),
@@ -260,7 +260,7 @@ proptest! {
         // context — name that file, so hostile context is safe here.
         store.append_comment(&comment).expect("append comment");
 
-        let read_back = Store::open(repo.path())
+        let read_back = Store::open(repo.path(), "main")
             .expect("reopen store")
             .comments()
             .expect("read comments");

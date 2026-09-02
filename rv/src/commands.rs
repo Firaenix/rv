@@ -7,6 +7,29 @@ mod report;
 pub use configcmd::edit_config;
 pub use configcmd::edit_keymap;
 pub use configcmd::print_keymap;
+
+/// `rv reviews`: every review stored under this repo, one line each — the
+/// map a reviewer jumping between branches navigates by.
+pub fn reviews(repo_root: &Path) -> Result<()> {
+    let reviews = rv_core::store::Store::list_reviews(repo_root);
+    if reviews.is_empty() {
+        println!("no reviews stored — a bare `rv`, or `rv <bookmark>`, starts one");
+        return Ok(());
+    }
+    for (key, session) in reviews {
+        let open = session
+            .comments
+            .iter()
+            .filter(|comment| comment.state == CommentState::Open)
+            .count();
+        println!(
+            "{key}  {}  {} comments ({open} open)",
+            session.revset,
+            session.comments.len(),
+        );
+    }
+    Ok(())
+}
 pub use diffcmd::diff;
 pub use report::check;
 pub use report::comments;

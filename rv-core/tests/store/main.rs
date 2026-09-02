@@ -63,7 +63,7 @@ mod migration;
 #[test]
 fn ensure_excluded_adds_review_exactly_once() {
     let repo = repo_root();
-    let store = Store::open(repo.path()).expect("open store");
+    let store = Store::open(repo.path(), "main").expect("open store");
 
     let first = store.ensure_excluded().expect("first ensure_excluded");
     let second = store.ensure_excluded().expect("second ensure_excluded");
@@ -83,12 +83,12 @@ fn ensure_excluded_adds_review_exactly_once() {
 #[test]
 fn appended_comments_persist_immediately() {
     let repo = repo_root();
-    let store = Store::open(repo.path()).expect("open store");
+    let store = Store::open(repo.path(), "main").expect("open store");
     let comment = sample_comment("c1");
 
     store.append_comment(&comment).expect("append comment");
 
-    let reopened = Store::open(repo.path()).expect("reopen store");
+    let reopened = Store::open(repo.path(), "main").expect("reopen store");
     let comments = reopened.comments().expect("read comments");
 
     assert_eq!(comments, vec![comment]);
@@ -100,7 +100,7 @@ fn appended_comments_persist_immediately() {
 #[test]
 fn same_id_updates() {
     let repo = repo_root();
-    let store = Store::open(repo.path()).expect("open store");
+    let store = Store::open(repo.path(), "main").expect("open store");
     let mut first = sample_comment("c1");
     let second = sample_comment("c2");
     store.append_comment(&first).expect("append first");
@@ -127,7 +127,7 @@ fn same_id_updates() {
 #[test]
 fn distinct_ids_with_one_change_id_all_persist() {
     let repo = repo_root();
-    let store = Store::open(repo.path()).expect("open store");
+    let store = Store::open(repo.path(), "main").expect("open store");
 
     let mut first = sample_comment("c1");
     first.body = "first note on this change".to_owned();
@@ -163,13 +163,13 @@ fn distinct_ids_with_one_change_id_all_persist() {
 #[test]
 fn a_save_writes_only_session_toml() {
     let repo = repo_root();
-    let store = Store::open(repo.path()).expect("open store");
+    let store = Store::open(repo.path(), "main").expect("open store");
     let comment = sample_comment("c1");
 
     store.append_comment(&comment).expect("append comment");
 
-    let mut written: Vec<String> = fs::read_dir(repo.path().join(".review"))
-        .expect("read .review")
+    let mut written: Vec<String> = fs::read_dir(repo.path().join(".review/reviews/main"))
+        .expect("read the review's directory")
         .filter_map(Result::ok)
         .map(|entry| entry.file_name().to_string_lossy().into_owned())
         .collect();
@@ -194,7 +194,7 @@ fn a_save_writes_only_session_toml() {
 #[test]
 fn append_comment_leaves_no_stray_temp_files() {
     let repo = repo_root();
-    let store = Store::open(repo.path()).expect("open store");
+    let store = Store::open(repo.path(), "main").expect("open store");
 
     store
         .append_comment(&sample_comment("c1"))
@@ -220,7 +220,7 @@ fn append_comment_leaves_no_stray_temp_files() {
 #[test]
 fn interrupted_write_never_disturbs_the_last_good_session() {
     let repo = repo_root();
-    let store = Store::open(repo.path()).expect("open store");
+    let store = Store::open(repo.path(), "main").expect("open store");
     let good = sample_comment("c1");
     store.append_comment(&good).expect("append good comment");
 
@@ -246,7 +246,7 @@ fn interrupted_write_never_disturbs_the_last_good_session() {
 #[test]
 fn append_comment_shrinking_body_leaves_no_residual_bytes() {
     let repo = repo_root();
-    let store = Store::open(repo.path()).expect("open store");
+    let store = Store::open(repo.path(), "main").expect("open store");
 
     let mut long = sample_comment("c1");
     long.body = "x".repeat(500);
@@ -258,8 +258,8 @@ fn append_comment_shrinking_body_leaves_no_residual_bytes() {
     short.body = "y".to_owned();
     store.append_comment(&short).expect("append shrunk comment");
 
-    let on_disk =
-        fs::read_to_string(repo.path().join(".review/session.toml")).expect("read session.toml");
+    let on_disk = fs::read_to_string(repo.path().join(".review/reviews/main/session.toml"))
+        .expect("read session.toml");
     let expected = toml::to_string_pretty(&Session {
         comments: vec![short],
         ..Session::default()
@@ -275,7 +275,7 @@ fn append_comment_shrinking_body_leaves_no_residual_bytes() {
 #[test]
 fn removing_a_comment_drops_only_that_comment() {
     let repo = repo_root();
-    let store = Store::open(repo.path()).expect("open store");
+    let store = Store::open(repo.path(), "main").expect("open store");
     let survivor = sample_comment("c2");
     store
         .append_comment(&sample_comment("c1"))
@@ -285,7 +285,7 @@ fn removing_a_comment_drops_only_that_comment() {
     let removed = store.remove_comment("c1").expect("remove c1");
 
     assert!(removed, "remove_comment reports it removed something");
-    let left = Store::open(repo.path())
+    let left = Store::open(repo.path(), "main")
         .expect("reopen store")
         .comments()
         .expect("read comments");
@@ -303,7 +303,7 @@ fn removing_a_comment_drops_only_that_comment() {
 #[test]
 fn removing_an_unknown_id_is_not_an_error() {
     let repo = repo_root();
-    let store = Store::open(repo.path()).expect("open store");
+    let store = Store::open(repo.path(), "main").expect("open store");
     store
         .append_comment(&sample_comment("c1"))
         .expect("append c1");
@@ -324,7 +324,7 @@ fn removing_an_unknown_id_is_not_an_error() {
 #[test]
 fn remove_comment_leaves_no_stray_temp_files() {
     let repo = repo_root();
-    let store = Store::open(repo.path()).expect("open store");
+    let store = Store::open(repo.path(), "main").expect("open store");
     store
         .append_comment(&sample_comment("c1"))
         .expect("append c1");

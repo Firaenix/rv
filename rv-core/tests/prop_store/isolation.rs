@@ -40,7 +40,7 @@ proptest! {
         let before = if file_exists { seed.clone() } else { String::new() };
         let already = before.lines().filter(|line| *line == EXCLUDE_LINE).count();
 
-        let store = Store::open(repo.path()).expect("open store");
+        let store = Store::open(repo.path(), "main").expect("open store");
         let results: Vec<bool> = (0..calls)
             .map(|_| store.ensure_excluded().expect("ensure_excluded"))
             .collect();
@@ -103,7 +103,7 @@ proptest! {
         let exclude_path = repo.path().join(".git/info/exclude");
         fs::write(&exclude_path, &seed).expect("seed exclude file");
 
-        let store = Store::open(repo.path()).expect("open store");
+        let store = Store::open(repo.path(), "main").expect("open store");
         for op in &ops {
             apply(&store, op).expect("apply op");
         }
@@ -135,10 +135,10 @@ proptest! {
         let mut entitled: BTreeSet<PathBuf> = BTreeSet::new();
         entitled.insert(PathBuf::from(".git/info/exclude"));
         if wrote_the_review_file(&ops) {
-            entitled.insert(PathBuf::from(".review/session.toml"));
+            entitled.insert(PathBuf::from(".review/reviews/main/session.toml"));
         }
         if expected_markdown(&ops).is_some() {
-            entitled.insert(PathBuf::from(".review/REVIEW-FEEDBACK.md"));
+            entitled.insert(PathBuf::from(".review/reviews/main/REVIEW-FEEDBACK.md"));
         }
         prop_assert_eq!(relative_files(repo.path()), entitled);
     }
@@ -183,8 +183,8 @@ proptest! {
         }),
     ) {
         let repo = repo_root();
-        let first = Store::open(repo.path()).expect("open first handle");
-        let second = Store::open(repo.path()).expect("open second handle");
+        let first = Store::open(repo.path(), "main").expect("open first handle");
+        let second = Store::open(repo.path(), "main").expect("open second handle");
 
         for (op, to_first) in &plan {
             apply(if *to_first { &first } else { &second }, op).expect("apply op");
@@ -218,7 +218,7 @@ proptest! {
     ) {
         let repo = repo_root();
         {
-            let store = Store::open(repo.path()).expect("open store");
+            let store = Store::open(repo.path(), "main").expect("open store");
             for op in &ops {
                 apply(&store, op).expect("apply op");
             }
@@ -226,7 +226,7 @@ proptest! {
         let before = dir_snapshot(repo.path());
 
         for _ in 0..reopens {
-            Store::open(repo.path()).expect("reopen store");
+            Store::open(repo.path(), "main").expect("reopen store");
         }
 
         prop_assert_eq!(dir_snapshot(repo.path()), before);
@@ -250,13 +250,13 @@ proptest! {
         extra in comment(Just("extra".to_owned()), 12),
     ) {
         let repo = repo_root();
-        let store = Store::open(repo.path()).expect("open store");
+        let store = Store::open(repo.path(), "main").expect("open store");
         let mut review = review;
         review.comments = comments.clone();
         store.write_review(&review).expect("write review");
         store.write_markdown(&document).expect("write markdown");
 
-        let session_path = repo.path().join(".review/session.toml");
+        let session_path = repo.path().join(".review/reviews/main/session.toml");
         let markdown_path = store.markdown_path();
         let markdown_bytes = fs::read(&markdown_path).expect("read markdown");
 

@@ -132,14 +132,15 @@ fn stray_temp_files(dir: &Path) -> Vec<PathBuf> {
 }
 
 /// The one-file law (storage spec §2): whatever sequence of saves,
-/// settlements and deletions ran, the only thing under `.review/` is
-/// `session.toml` — plus `REVIEW-FEEDBACK.md` where an export was asked for.
-/// No `comments.json`, no `snapshots/`, and no second copy of an excerpt.
+/// settlements and deletions ran, the only thing under a review's directory
+/// (`.review/reviews/<key>/`) is `session.toml` — plus `REVIEW-FEEDBACK.md`
+/// where an export was asked for. No `comments.json`, no `snapshots/`, and no
+/// second copy of an excerpt.
 fn only_one_file(root: &Path) -> Result<(), proptest::test_runner::TestCaseError> {
     let unexpected: Vec<PathBuf> = relative_files(&root.join(".review"))
         .into_iter()
-        .filter(|path| path != Path::new("session.toml"))
-        .filter(|path| path != Path::new("REVIEW-FEEDBACK.md"))
+        .filter(|path| path != Path::new("reviews/main/session.toml"))
+        .filter(|path| path != Path::new("reviews/main/REVIEW-FEEDBACK.md"))
         .collect();
     prop_assert!(
         unexpected.is_empty(),

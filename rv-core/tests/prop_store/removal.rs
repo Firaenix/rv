@@ -28,7 +28,7 @@ use super::*;
 #[case::no_legacy_directory_exists(false)]
 fn removing_a_comment_is_idempotent_and_leaves_the_legacy_tree_alone(#[case] plant: bool) {
     let repo = repo_root();
-    let store = Store::open(repo.path()).expect("open store");
+    let store = Store::open(repo.path(), "main").expect("open store");
     store
         .append_comment(&fixed_comment("id0"))
         .expect("append id0");
@@ -71,7 +71,7 @@ fn removing_a_comment_is_idempotent_and_leaves_the_legacy_tree_alone(#[case] pla
 #[test]
 fn a_legacy_orphaned_snapshot_is_inert() {
     let repo = repo_root();
-    let store = Store::open(repo.path()).expect("open store");
+    let store = Store::open(repo.path(), "main").expect("open store");
     store
         .append_comment(&fixed_comment("id1"))
         .expect("append id1");
@@ -141,7 +141,7 @@ fn a_removal_whose_session_toml_cannot_be_written_deletes_nothing() {
     use std::os::unix::fs::PermissionsExt;
 
     let repo = repo_root();
-    let store = Store::open(repo.path()).expect("open store");
+    let store = Store::open(repo.path(), "main").expect("open store");
     store
         .append_comment(&fixed_comment("id0"))
         .expect("append id0");
@@ -154,8 +154,8 @@ fn a_removal_whose_session_toml_cannot_be_written_deletes_nothing() {
         // Running as root, or on a filesystem that ignores the mode bits.
         return;
     }
-    let review = repo.path().join(".review");
-    fs::set_permissions(&review, fs::Permissions::from_mode(0o500)).expect("chmod .review");
+    let review = repo.path().join(".review/reviews/main");
+    fs::set_permissions(&review, fs::Permissions::from_mode(0o500)).expect("chmod the review dir");
 
     let result = store.remove_comment("id0");
 

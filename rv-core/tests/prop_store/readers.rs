@@ -45,7 +45,7 @@ fn a_reader_holding_the_file_open_never_sees_a_later_write(
     use std::io::Read as _;
 
     let repo = repo_root();
-    let store = Store::open(repo.path()).expect("open store");
+    let store = Store::open(repo.path(), "main").expect("open store");
     store.write_markdown(original).expect("write markdown");
 
     let mut held = fs::File::open(store.markdown_path()).expect("open markdown before the rewrite");
@@ -76,11 +76,11 @@ fn a_reader_holding_session_toml_open_never_sees_a_later_append() {
     use std::io::Read as _;
 
     let repo = repo_root();
-    let store = Store::open(repo.path()).expect("open store");
+    let store = Store::open(repo.path(), "main").expect("open store");
     store
         .append_comment(&fixed_comment("id0"))
         .expect("append the first comment");
-    let path = repo.path().join(".review/session.toml");
+    let path = repo.path().join(".review/reviews/main/session.toml");
     let original = fs::read_to_string(&path).expect("read session.toml");
 
     let mut held = fs::File::open(&path).expect("open session.toml before the append");

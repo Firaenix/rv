@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 09f14795a20c1feef653858427f760c1e7378b6d0ca6f1275b4f6eedf8473ba0 # shrinks to sequence = [Comment { id: "id", change_id: "0", commit_id: "0", anchor: Anchor { file: "", side: Left, line: 0, content_hash: "0", context: [], context_start: 1 }, body: "", state: Open, reply: None, settled_by: None }], cut = Index(0)

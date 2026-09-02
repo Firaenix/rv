@@ -62,11 +62,8 @@ fn rendering_overwrites_the_document_without_reading_it_back() {
     session::write_markdown(&review).expect("first render");
 
     let replied = insert_reply(&workspace.markdown(), "because of the deadline");
-    fs::write(
-        workspace.root().join(".review/REVIEW-FEEDBACK.md"),
-        &replied,
-    )
-    .expect("write the reply into the document");
+    fs::write(workspace.store().markdown_path(), &replied)
+        .expect("write the reply into the document");
 
     let review = session::read(workspace.root(), None, None).expect("read");
     session::write_markdown(&review).expect("second render");
@@ -93,7 +90,7 @@ fn rendering_a_review_with_no_comments_still_writes() {
     session::write_markdown(&review).expect("render");
 
     assert!(
-        workspace.root().join(".review/REVIEW-FEEDBACK.md").exists(),
+        workspace.store().markdown_path().exists(),
         "an empty review rendered nothing at all"
     );
 }

@@ -171,6 +171,9 @@ enum Command {
         #[arg(long)]
         show: bool,
     },
+    /// List every review stored under this repo — one per reviewed head —
+    /// with its range and comment counts.
+    Reviews,
     /// Report the range, its changes, its files and its comment counts.
     Status {
         /// Emit JSON instead of text.
@@ -316,6 +319,10 @@ fn run() -> Result<ExitCode> {
         }
         Some(Command::Config) => {
             commands::edit_config()?;
+            Ok(ExitCode::SUCCESS)
+        }
+        Some(Command::Reviews) => {
+            commands::reviews(&repo_root)?;
             Ok(ExitCode::SUCCESS)
         }
         Some(Command::Keymap { show }) => {

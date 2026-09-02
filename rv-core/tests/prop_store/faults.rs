@@ -37,13 +37,13 @@ proptest! {
         cut in any::<prop::sample::Index>(),
     ) {
         let repo = repo_root();
-        let store = Store::open(repo.path()).expect("open store");
+        let store = Store::open(repo.path(), "main").expect("open store");
         for comment in &sequence {
             store.append_comment(comment).expect("append comment");
         }
         let expected = upsert_reduce(&sequence);
 
-        let path = repo.path().join(".review/session.toml");
+        let path = repo.path().join(".review/reviews/main/session.toml");
         let good = fs::read_to_string(&path).expect("read session.toml");
         let chars: Vec<char> = good.chars().collect();
         // `Index::index(len)` is in `0..len`, so this is always a strict prefix.
@@ -103,7 +103,7 @@ proptest! {
         newcomer in comment(prop::sample::select(id_pool(5)), 12),
     ) {
         let repo = repo_root();
-        let store = Store::open(repo.path()).expect("open store");
+        let store = Store::open(repo.path(), "main").expect("open store");
         store.write_markdown(&document).expect("write markdown");
 
         // The tree an earlier version's crash left behind: legacy orphans in a
@@ -163,8 +163,8 @@ proptest! {
 #[test]
 fn a_session_toml_that_cannot_be_read_is_an_error_not_silent_emptiness() {
     let repo = repo_root();
-    let store = Store::open(repo.path()).expect("open store");
-    let path = repo.path().join(".review/session.toml");
+    let store = Store::open(repo.path(), "main").expect("open store");
+    let path = repo.path().join(".review/reviews/main/session.toml");
     fs::create_dir(&path).expect("plant a directory at session.toml");
 
     let result = store.comments();
@@ -210,11 +210,11 @@ fn a_session_toml_the_process_may_not_open_is_an_error_not_silent_emptiness() {
     use std::os::unix::fs::PermissionsExt;
 
     let repo = repo_root();
-    let store = Store::open(repo.path()).expect("open store");
+    let store = Store::open(repo.path(), "main").expect("open store");
     store
         .append_comment(&fixed_comment("id0"))
         .expect("append comment");
-    let path = repo.path().join(".review/session.toml");
+    let path = repo.path().join(".review/reviews/main/session.toml");
 
     if !permission_bits_bite(repo.path()) {
         // Running as root, or on a filesystem that ignores the mode bits.

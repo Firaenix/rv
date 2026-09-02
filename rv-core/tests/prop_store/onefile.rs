@@ -27,7 +27,7 @@ proptest! {
         sequence in comment_sequence(1..6),
     ) {
         let repo = repo_root();
-        let store = Store::open(repo.path()).expect("open store");
+        let store = Store::open(repo.path(), "main").expect("open store");
         for comment in &sequence {
             store.append_comment(comment).expect("append comment");
         }
@@ -59,7 +59,7 @@ proptest! {
         ops in prop::collection::vec(append_or_remove(), 1..10),
     ) {
         let repo = repo_root();
-        let store = Store::open(repo.path()).expect("open store");
+        let store = Store::open(repo.path(), "main").expect("open store");
 
         let mut so_far: Vec<Op> = Vec::new();
         for op in &ops {
@@ -104,7 +104,7 @@ proptest! {
         ops in prop::collection::vec(op(), 1..8),
     ) {
         let repo = repo_root();
-        let store = Store::open(repo.path()).expect("open store");
+        let store = Store::open(repo.path(), "main").expect("open store");
         for op in &ops {
             apply(&store, op).expect("apply op");
         }
@@ -122,7 +122,7 @@ proptest! {
         documents in prop::collection::vec(hostile_text(64), 1..4),
     ) {
         let repo = repo_root();
-        let store = Store::open(repo.path()).expect("open store");
+        let store = Store::open(repo.path(), "main").expect("open store");
         for document in &documents {
             store.write_markdown(document).expect("write markdown");
         }
@@ -148,10 +148,10 @@ proptest! {
     #[test]
     fn session_toml_roundtrips_arbitrary_sessions(session in session(16, 4)) {
         let repo = repo_root();
-        let store = Store::open(repo.path()).expect("open store");
+        let store = Store::open(repo.path(), "main").expect("open store");
         store.write_review(&session).expect("write review");
 
-        let read_back = Store::open(repo.path())
+        let read_back = Store::open(repo.path(), "main")
             .expect("reopen store")
             .read_review()
             .expect("read review");
@@ -177,7 +177,7 @@ proptest! {
         copies in 1usize..5,
     ) {
         let repo = repo_root();
-        let store = Store::open(repo.path()).expect("open store");
+        let store = Store::open(repo.path(), "main").expect("open store");
         let mut twin = change.clone();
         twin.description = description;
         let mut changes = vec![change.clone(); copies];
@@ -208,7 +208,7 @@ proptest! {
     #[test]
     fn session_writes_are_last_write_wins(sessions in prop::collection::vec(session(12, 3), 1..4)) {
         let repo = repo_root();
-        let store = Store::open(repo.path()).expect("open store");
+        let store = Store::open(repo.path(), "main").expect("open store");
         for session in &sessions {
             store.write_review(session).expect("write review");
         }

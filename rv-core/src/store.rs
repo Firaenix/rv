@@ -159,30 +159,154 @@ pub struct Session {
     pub comments: Vec<Comment>,
 }
 
-/// A handle on the `.review/` directory under a repo root.
+/// The identity a review is stored under — what lets two branches be
+/// reviewed on one repo without clobbering each other.
+///
+/// The asked head's own name where it has one: a bookmark survives amends
+/// and rebases, which is exactly the lifetime a review's notes need. The
+/// anonymous working copy gets the one ambient `working-copy` review — `@`
+/// is wherever you are, and a review of "wherever I am" cannot be pinned to
+/// a branch without inventing an identity `jj` does not have. Sanitized to
+/// one path segment, so a revset expression asked as the head cannot escape
+/// `.review/reviews/`.
+#[must_use]
+pub fn review_key(asked_head: Option<&str>) -> String {
+    let raw = match asked_head {
+        Some(name) if name != "@" => name,
+        _ => return "working-copy".to_owned(),
+    };
+    let cleaned: String = raw
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || matches!(character, '.' | '_' | '-') {
+                character
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    let cleaned = cleaned.trim_start_matches(['.', '-']).to_owned();
+    if cleaned.is_empty() {
+        "review".to_owned()
+    } else {
+        cleaned
+    }
+}
+
+/// A handle on one review's directory — `.review/reviews/<key>/` — under a
+/// repo root.
+///
+/// One directory per review **key**, so two branches reviewed on one repo
+/// never clobber each other's session or comments: jumping between them
+/// reopens each review exactly where it was left.
 ///
 /// Holds no cached state: every method reads or writes the filesystem
 /// directly, which is what makes [`Store::append_comment`] write-through by
 /// construction rather than by extra bookkeeping.
 pub struct Store {
     root: PathBuf,
+    key: String,
 }
 
 impl Store {
-    /// Opens the store rooted at `root` (the repo root, holding `.jj/` and
-    /// `.git/`), creating `.review/` if it does not already exist and folding
-    /// a v1.0.0 `comments.json` into `session.toml` if one is there.
-    pub fn open(root: &Path) -> Result<Self, Error> {
+    /// Opens the review keyed `key` in the store rooted at `root` (the repo
+    /// root, holding `.jj/` and `.git/`), creating its directory if it does
+    /// not already exist.
+    ///
+    /// Two generations of migration run first, oldest debt first: a v1.0.0
+    /// sibling `comments.json` folds into `session.toml`, and a pre-keying
+    /// `.review/session.toml` moves into `reviews/<key>/` — under the key
+    /// being opened, because the single-session layout could only ever hold
+    /// the review the caller is asking for.
+    pub fn open(root: &Path, key: &str) -> Result<Self, Error> {
         let store = Self {
             root: root.to_owned(),
+            key: key.to_owned(),
         };
         let review_dir = store.review_dir();
         fs::create_dir_all(&review_dir).map_err(|source| Error::Io {
             path: review_dir,
             source,
         })?;
-        store.absorb_legacy_comments()?;
+        // The session moves first and names where it went, so the v1.0.0
+        // comment fold lands beside the scope it was written under — the two
+        // legacy files describe one review and must stay one review.
+        let migrated = store.absorb_legacy_session()?;
+        migrated
+            .as_ref()
+            .unwrap_or(&store)
+            .absorb_legacy_comments()?;
         Ok(store)
+    }
+
+    /// Every review stored under `root`, as `(key, session)` pairs — what
+    /// `rv reviews` lists. Keys are directory names under `.review/reviews/`;
+    /// an unreadable entry is skipped rather than sinking the list.
+    pub fn list_reviews(root: &Path) -> Vec<(String, Session)> {
+        let Ok(entries) = fs::read_dir(root.join(".review").join("reviews")) else {
+            return Vec::new();
+        };
+        let mut reviews: Vec<(String, Session)> = entries
+            .filter_map(std::result::Result::ok)
+            .filter_map(|entry| {
+                let key = entry.file_name().into_string().ok()?;
+                let store = Self {
+                    root: root.to_owned(),
+                    key: key.clone(),
+                };
+                let session = store.read_review().ok()?;
+                Some((key, session))
+            })
+            .collect();
+        reviews.sort_by(|a, b| a.0.cmp(&b.0));
+        reviews
+    }
+
+    /// Moves a pre-keying `.review/session.toml` (and its export) into the
+    /// directory of the review it *describes* — the key derived from its own
+    /// stored revset, not the key being opened, because the caller may be
+    /// opening a different review than the legacy file recorded. Runs once —
+    /// the legacy file's existence is the switch — and returns the store it
+    /// moved things into, so the v1.0.0 comment fold can follow it there.
+    fn absorb_legacy_session(&self) -> Result<Option<Self>, Error> {
+        let legacy_session = self.root.join(".review").join("session.toml");
+        let contents = match fs::read_to_string(&legacy_session) {
+            Ok(contents) => contents,
+            Err(source) if source.kind() == ErrorKind::NotFound => return Ok(None),
+            Err(source) => {
+                return Err(Error::Io {
+                    path: legacy_session,
+                    source,
+                });
+            }
+        };
+        // An unparsable legacy record still moves — under the key being
+        // opened, which is the best guess available — rather than sitting
+        // where every future open would trip over it.
+        let key = toml::from_str::<Session>(&contents)
+            .ok()
+            .and_then(|session| {
+                session
+                    .revset
+                    .rsplit_once("..")
+                    .map(|(_, head)| review_key(Some(head)))
+            })
+            .unwrap_or_else(|| self.key.clone());
+        let target = Self {
+            root: self.root.clone(),
+            key,
+        };
+        fs::create_dir_all(target.review_dir()).map_err(|source| Error::Io {
+            path: target.review_dir(),
+            source,
+        })?;
+        let io = |path: PathBuf| move |source| Error::Io { path, source };
+        fs::rename(&legacy_session, target.session_path()).map_err(io(legacy_session))?;
+        let legacy_markdown = self.root.join(".review").join("REVIEW-FEEDBACK.md");
+        if legacy_markdown.exists() {
+            fs::rename(&legacy_markdown, target.markdown_path()).map_err(io(legacy_markdown))?;
+        }
+        Ok(Some(target))
     }
 
     /// The repo root this store was opened at.
@@ -279,13 +403,13 @@ impl Store {
     }
 
     fn review_dir(&self) -> PathBuf {
-        self.root.join(".review")
+        self.root.join(".review").join("reviews").join(&self.key)
     }
 
     /// Where a v1.0.0 `.review/` kept its comments, read once by
     /// [`Store::absorb_legacy_comments`] and then deleted.
     pub(super) fn legacy_comments_path(&self) -> PathBuf {
-        self.review_dir().join("comments.json")
+        self.root.join(".review").join("comments.json")
     }
 
     fn session_path(&self) -> PathBuf {
