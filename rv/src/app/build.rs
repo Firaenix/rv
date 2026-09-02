@@ -93,6 +93,8 @@ impl App {
         let (stats, unreadable) = Self::measure(&review);
         let mut keymap = Keymap::from_config(config)?;
         let keymap_warnings = keymap.take_warnings();
+        let watch =
+            super::watch::Watch::new(settings.auto_refresh.unwrap_or(true), review.store.root());
         let mut app = Self {
             review,
             diffs,
@@ -123,6 +125,7 @@ impl App {
             ascii: statusbar::ascii_from_env() || settings.ascii.unwrap_or(false),
             split: settings.split.map_or_else(Split::default, Split::new),
             keymap,
+            watch,
             help: HelpStage::Closed,
             help_scroll: 0,
             pending_leader: None,

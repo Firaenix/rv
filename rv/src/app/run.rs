@@ -30,6 +30,9 @@ use std::time::Instant;
 use super::Action;
 use super::App;
 use super::DiffEngine;
+use super::HelpStage;
+use super::Mode;
+use super::watch::WATCH_INTERVAL;
 use crate::session::Review;
 use crate::ui;
 
@@ -90,6 +93,7 @@ impl App {
             let now = Instant::now();
             self.expire_alerts(now);
             self.expire_status(now);
+            self.auto_refresh(now);
             // Before the frame, so a parse that landed while the reviewer was
             // reading is painted on this pass rather than the next.
             self.collect_highlights();
@@ -106,9 +110,11 @@ impl App {
                 self.painting() || self.refining() || self.merging(),
             ) {
                 (Some(fade), true) => Some(fade.min(PAINT_POLL)),
-                (Some(fade), false) => Some(fade),
+                (Some(fade), false) => Some(self.bounded_by_watch(fade)),
                 (None, true) => Some(PAINT_POLL),
-                (None, false) => None,
+                // An idle loop still wakes for the watch — a review nobody is
+                // touching is exactly the one an agent is committing under.
+                (None, false) => self.watch.enabled().then_some(WATCH_INTERVAL),
             };
             if let Some(timeout) = deadline
                 && !event::poll(timeout).context("could not wait for an event")?
@@ -131,6 +137,39 @@ impl App {
                 Action::Edit => self.run_editor(terminal)?,
                 Action::Continue => {}
             }
+        }
+    }
+
+    /// One auto-refresh look: rate-limited by the watch, and only from browse
+    /// with nothing modal up — a confirmation or a half-typed comment must
+    /// never be yanked out from under the reviewer.
+    fn auto_refresh(&mut self, now: Instant) {
+        if self.mode != Mode::Browse
+            || self.help != HelpStage::Closed
+            || self.pending_leader.is_some()
+            || self.dragging
+        {
+            return;
+        }
+        let root = self.review.store.root().to_owned();
+        if !self.watch.moved(&root, now) {
+            return;
+        }
+        if let Err(error) = self.refresh() {
+            // An auto path must degrade to a sentence, not end the review.
+            self.raise(format!("auto-refresh failed: {error:#}"));
+        }
+        // The refresh's own snapshot moved the op head; without settling, it
+        // would schedule the next refresh forever.
+        self.watch.settle(&root);
+    }
+
+    /// The idle deadline, shortened so the watch still gets its look.
+    fn bounded_by_watch(&self, fade: Duration) -> Duration {
+        if self.watch.enabled() {
+            fade.min(WATCH_INTERVAL)
+        } else {
+            fade
         }
     }
 

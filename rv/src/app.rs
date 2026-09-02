@@ -57,6 +57,7 @@ mod stack;
 mod status;
 mod symbols;
 mod viewside;
+mod watch;
 mod zoom;
 
 pub use alerts::Alert;
@@ -234,6 +235,8 @@ pub struct App {
     /// pressed, its children are shown, and the following key either runs one of
     /// them or (on `Esc`, or a key none of them claim) cancels back to browsing.
     keymap: keymap::Keymap,
+    /// The op-head watch behind auto-refresh — see [`watch`].
+    watch: watch::Watch,
     pending_leader: Option<bindings::Leader>,
     /// Whether the diff pane groups each hunk's removals before its additions,
     /// the way a unified diff prints — rather than difftastic's interleaving of

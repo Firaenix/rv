@@ -651,3 +651,27 @@ exit), and the effective-map dump moved behind `rv keymap --show`.
 - The `rv-core` highlight test binary can SIGSEGV on ubuntu CI after every
   test passes (tree-sitter teardown, intermittent). Rerunning has cleared it
   every time; if it recurs, serialize that target or bump tree-sitter.
+
+## 2026-09-02 (evening) — several reviews at once, and a review that follows the repo
+
+**The keyed store** — `.review/` held exactly one `session.toml`, so opening
+a second branch re-pointed the record the first branch's comments sat
+beside. Every review now lives in `.review/reviews/<key>/`: a named head
+keys by its bookmark (stable across amends and rebases — the lifetime a
+review's notes need), the anonymous working copy keys as the one ambient
+`working-copy` review, and both pre-keying layouts migrate on first open —
+the legacy session moves under the key derived from its *own* recorded
+revset, and the v1.0.0 comment fold follows it there, so the two legacy
+files that described one review stay one review. `rv reviews` lists the
+lot. An earlier draft keyed anonymous reviews by head change id and was
+thrown out by its own tests: the head change moves every time a commit is
+stacked, which orphaned the comments mid-review.
+
+**Auto-refresh** — the event loop now watches jj's operation heads (one
+readdir every two seconds, following a secondary workspace's repo pointer)
+and refreshes the open review when they move: a commit, checkout, rebase or
+describe from anywhere — an agent's landing included — shows up without a
+keystroke, and the refresh's own snapshot picks up plain file edits. Only
+from browse with nothing modal up: a confirmation or half-typed comment is
+never yanked. The refresh re-baselines the watch so its own snapshot does
+not schedule the next refresh forever. `auto_refresh = false` turns it off.

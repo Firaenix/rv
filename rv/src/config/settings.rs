@@ -38,6 +38,9 @@ pub struct Settings {
     /// the default) or `fallback` (the in-process line diff — `--no-difft` as
     /// a default, which still wins as a flag).
     pub engine: Option<EngineName>,
+    /// Refresh the review by itself when the repository moves — a commit, a
+    /// checkout, a rebase, an agent's edit landing. On by default.
+    pub auto_refresh: Option<bool>,
 }
 
 #[derive(Deserialize, Debug, Clone, Copy)]

@@ -239,7 +239,23 @@ sidebar_hidden = true  # open with the sidebar put away
 split = 40             # sidebar share of the width, in percent
 ascii = true           # ASCII status-bar separators (RV_ASCII as a setting)
 engine = "fallback"    # auto | fallback — --no-difft as a default
+auto_refresh = false   # stop refreshing when the repo moves (on by default)
 ```
+
+### Several reviews at once
+
+Every reviewed head gets its own directory under `.review/reviews/`, so
+reviews never clobber each other: `rv feature-a` and `rv feature-b` are two
+independent sessions — comments, scope and export each — and jumping back to
+either finds it exactly where it was left. A bare `rv` is the one ambient
+`working-copy` review that follows `@` wherever you take it. `rv reviews`
+lists everything stored, with each review's range and comment counts.
+
+While the TUI is open, rv watches jj's operation log (one file-system read
+every two seconds) and refreshes itself when the repository moves — an
+agent's commit landing, a rebase, an edit snapshotted by any jj command —
+without ever interrupting a comment being typed or a confirmation being
+answered.
 
 **Browsing**
 

@@ -72,6 +72,7 @@ impl App {
             &crate::config::Settings::default(),
         )?;
         std::mem::swap(&mut fresh.keymap, &mut self.keymap);
+        std::mem::swap(&mut fresh.watch, &mut self.watch);
         fresh.split = self.split;
         fresh.tree = self.tree;
         fresh.sort = self.sort;

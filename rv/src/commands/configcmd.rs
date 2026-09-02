@@ -32,6 +32,7 @@ const SETTINGS_TEMPLATE: &str = "\
 # split = 40             # sidebar share of the width, in percent
 # ascii = true           # ASCII status-bar separators
 # engine = \"fallback\"    # auto | fallback
+# auto_refresh = false    # stop refreshing when the repo moves
 ";
 
 /// `rv config`: the session defaults, in `$EDITOR`.
