@@ -31,7 +31,6 @@ clap.workspace = true
 # The terminal stack. Unused until the TUI lands; declared here so the crate's
 # dependency set does not churn when it does.
 crossterm = "0.29"
-dirs = "6"
 ratatui = "0.30"
 rv-core = { path = "../rv-core", version = "1.4.0" }
 serde.workspace = true

@@ -209,3 +209,13 @@ fn every_command_has_a_unique_config_name() {
     names.dedup();
     assert_eq!(names.len(), total, "two commands share a config name");
 }
+
+#[test]
+fn repro_comments_pane_delete_bind() {
+    let map = keymap("[keys.comments]\ncomment_delete = \"d\"\n");
+    assert_eq!(
+        command_of(&map, None, KeyCode::Char('d'), Context::Comments)
+            .map(super::vocab::config_name),
+        Some("comment_delete"),
+    );
+}

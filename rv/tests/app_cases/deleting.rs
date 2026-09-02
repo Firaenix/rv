@@ -97,3 +97,45 @@ fn no_key_leaves_the_reviewer_stuck_at_a_confirmation() {
     });
     seen.assert_all();
 }
+
+/// The regression for the config-path bug's sibling claim: a user's
+/// `[keys.comments] comment_delete = "d"` really does put a bare `d` on the
+/// delete verb in the comments list — the whole chain, key to confirmation.
+#[test]
+fn a_scoped_direct_bind_reaches_delete_from_the_comments_list() {
+    let fixture = Fixture::multi();
+    let review = rv::session::build(fixture.root(), Some("@--"), None).expect("build the review");
+    let config =
+        rv::config::parse("[keys.comments]\ncomment_delete = \"d\"\n").expect("parse the config");
+    let mut app = rv::app::App::open_with_config(
+        review,
+        rv::app::DiffEngine::Structural,
+        &config,
+        &rv::config::Settings::default(),
+    )
+    .expect("open the reviewer");
+    app.finish_loading();
+    app.finish_merging();
+
+    comment(&mut app);
+    assert_eq!(app.mode(), Mode::Comment);
+    type_text(&mut app, "delete me with a bare d");
+    press(&mut app, KeyCode::Enter);
+    to_comments(&mut app);
+    // Row 0 is the file heading; the comment is the row under it.
+    press(&mut app, KeyCode::Down);
+
+    press(&mut app, KeyCode::Char('d'));
+    assert!(
+        matches!(app.mode(), Mode::ConfirmDelete { .. }),
+        "the scoped bind did not reach the delete verb: {:?} — {}",
+        app.mode(),
+        app.status(),
+    );
+    press(&mut app, KeyCode::Char('y'));
+    assert!(
+        fixture.comments().is_empty(),
+        "confirmed and yet still there: {:?}",
+        fixture.comments()
+    );
+}

@@ -49,7 +49,7 @@ impl From<SortName> for Sort {
 }
 
 pub fn settings_path() -> Option<PathBuf> {
-    dirs::config_dir().map(|dir| dir.join("rv").join("Config.toml"))
+    super::config_root().map(|dir| dir.join("rv").join("Config.toml"))
 }
 
 /// Reads the settings, or the empty patch when there is no file.

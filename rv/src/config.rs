@@ -92,7 +92,20 @@ enum RawKeys {
 }
 
 pub fn config_path() -> Option<PathBuf> {
-    dirs::config_dir().map(|dir| dir.join("rv").join("keybindings.toml"))
+    config_root().map(|dir| dir.join("rv").join("keybindings.toml"))
+}
+
+/// `$XDG_CONFIG_HOME`, or `~/.config` — on every platform, because that is
+/// the path every piece of rv's documentation names. `dirs::config_dir()`
+/// was the first cut and put the file under `~/Library/Application Support`
+/// on macOS, where nobody who read the docs would ever write it.
+pub(crate) fn config_root() -> Option<PathBuf> {
+    if let Some(xdg) = std::env::var_os("XDG_CONFIG_HOME")
+        && !xdg.is_empty()
+    {
+        return Some(PathBuf::from(xdg));
+    }
+    std::env::home_dir().map(|home| home.join(".config"))
 }
 
 /// Reads the config, or the empty patch when there is no file — a reviewer
