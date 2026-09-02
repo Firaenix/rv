@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.0](https://github.com/Firaenix/rv/compare/v1.5.0...v1.6.0) - 2026-09-02
+
+### Added
+
+- auto-refresh when the repository moves
+- several reviews at once — the store keys by reviewed head
+
+### Other
+
+- rewrite the README for a first look, with a recorded demo
+
 ## [1.5.0](https://github.com/Firaenix/rv/compare/v1.4.0...v1.5.0) - 2026-09-02
 
 ### Added
