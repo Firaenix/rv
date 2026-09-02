@@ -50,18 +50,19 @@ impl App {
     /// the same reason: an `rv` that was piped somewhere has no terminal to
     /// take over, and that is a sentence too, not a panic.
     pub fn run(review: Review, engine: DiffEngine) -> Result<()> {
-        let mut app = Self::open(review, engine)?;
+        Self::run_with_config(review, engine, &crate::config::Config::default())
+    }
 
-        // Before `try_init`, which chains its own restoring hook in front of
-        // whatever it finds.
+    pub fn run_with_config(
+        review: Review,
+        engine: DiffEngine,
+        config: &crate::config::Config,
+    ) -> Result<()> {
+        let mut app = Self::open_with_config(review, engine, config)?;
+
         install_panic_hook();
         let mut terminal = ratatui::try_init().context("could not start the terminal")?;
-        // Inside the guard below, not before it: a failure here must still go
-        // through the release and the restore.
         let result = capture_mouse().and_then(|()| app.event_loop(&mut terminal));
-        // Unconditional, and before the error is returned: a failed loop must
-        // still hand the shell back out of raw mode *and* no longer reporting
-        // where the pointer is.
         release_mouse();
         ratatui::restore();
         result

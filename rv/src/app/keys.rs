@@ -10,10 +10,16 @@ use super::App;
 use super::HelpStage;
 use super::Mode;
 use super::SidebarTab;
-use super::bindings::BINDINGS;
-use super::bindings::Binding;
+use super::bindings::AppCommand;
 use super::bindings::Command;
+use super::bindings::CommentCommand;
+use super::bindings::CursorCommand;
+use super::bindings::DiffCommand;
+use super::bindings::FilesCommand;
+use super::bindings::LayoutCommand;
 use super::bindings::Leader;
+use super::bindings::PaneCommand;
+use super::keymap::RuntimeBinding;
 
 /// How many percentage points one press of `<` or `>` moves the divider.
 ///
@@ -54,8 +60,12 @@ impl App {
             && self.help == HelpStage::Closed
         {
             match event.code {
-                KeyCode::Left => return self.run_command(Command::ScrollLeft),
-                KeyCode::Right => return self.run_command(Command::ScrollRight),
+                KeyCode::Left => {
+                    return self.run_command(Command::Cursor(CursorCommand::ScrollLeft));
+                }
+                KeyCode::Right => {
+                    return self.run_command(Command::Cursor(CursorCommand::ScrollRight));
+                }
                 _ => {}
             }
         }
@@ -164,38 +174,32 @@ impl App {
     /// from, so dispatching through it is what makes an undocumented binding
     /// unrepresentable. A key no row claims is inert.
     fn on_key_browse(&mut self, key: KeyCode) -> Result<Action> {
-        // A submenu is open: the key either runs one of its children or, on Esc
-        // or a key none of them claim, closes it. Either way the leader is
-        // cleared — a chord is one key deep, so a stray second key does not
-        // strand the reviewer in a menu.
         let context = self.context();
         if let Some(leader) = self.pending_leader.take() {
-            if let Some(binding) = BINDINGS.iter().find(|binding| {
-                binding.leader == Some(leader)
-                    && binding.codes.contains(&key)
-                    && shown_in(binding, context)
-            }) {
-                return self.run_command(binding.command);
+            if let Some(command) = self
+                .keymap
+                .lookup(Some(leader), key, context)
+                .map(|binding| binding.command)
+            {
+                return self.run_command(command);
             }
             return Ok(Action::Continue);
         }
 
-        // A leader letter with children opens its submenu — unless the context
-        // leaves exactly one child that acts on the cursor, in which case the
-        // menu would be a question with one answer, so it is skipped and the
-        // child run, with the bar naming the choice it made.
         if let Some(leader) = Leader::ALL
             .iter()
             .copied()
-            .find(|leader| key == KeyCode::Char(leader.key()))
+            .find(|leader| key == KeyCode::Char(self.keymap.leader_key(*leader)))
         {
-            let live: Vec<&Binding> = BINDINGS
+            let live: Vec<&RuntimeBinding> = self
+                .keymap
+                .bindings()
                 .iter()
                 .filter(|binding| {
                     binding.leader == Some(leader)
-                        && shown_in(binding, context)
+                        && rt_shown_in(binding, context)
                         && binding.command.targets_cursor()
-                        && self.binding_enabled(binding)
+                        && self.rt_binding_enabled(binding)
                 })
                 .collect();
             if let [only] = live[..] {
@@ -206,64 +210,115 @@ impl App {
             return Ok(Action::Continue);
         }
 
-        let Some(binding) = BINDINGS.iter().find(|binding| {
-            binding.leader.is_none() && binding.codes.contains(&key) && shown_in(binding, context)
-        }) else {
+        let Some(command) = self
+            .keymap
+            .lookup(None, key, context)
+            .map(|binding| binding.command)
+        else {
             return Ok(Action::Continue);
         };
-        self.run_command(binding.command)
+        self.run_command(command)
     }
 
-    /// Runs one row of [`BINDINGS`]. Exhaustive over [`Command`] by
-    /// construction, which is the other half of the table's anti-drift claim.
+    /// Runs one row of [`BINDINGS`]: one delegation per command group, each
+    /// exhaustive over its sub-enum, which is the other half of the table's
+    /// anti-drift claim.
     fn run_command(&mut self, command: Command) -> Result<Action> {
         match command {
-            Command::Quit => return Ok(Action::Quit),
-            Command::FocusLeft => self.focus_left()?,
-            Command::FocusRight => self.focus_right()?,
-            Command::Forward => self.move_forward()?,
-            Command::Back => self.move_back()?,
-            Command::PageForward => self.page_forward()?,
-            Command::PageBackward => self.page_backward()?,
-            Command::JumpFirst => self.jump_first()?,
-            Command::JumpLast => self.jump_last()?,
+            Command::Cursor(command) => self.run_cursor(command)?,
+            Command::Pane(command) => self.run_pane(command)?,
+            Command::Files(command) => self.run_files(command)?,
+            Command::Diff(command) => self.run_diff(command)?,
+            Command::Comment(command) => self.run_comment(command)?,
+            Command::Layout(command) => self.run_layout(command),
+            Command::App(command) => return self.run_app(command),
+        }
+        Ok(Action::Continue)
+    }
+
+    fn run_cursor(&mut self, command: CursorCommand) -> Result<()> {
+        match command {
+            CursorCommand::NextRow => self.move_forward()?,
+            CursorCommand::PrevRow => self.move_back()?,
+            CursorCommand::PageDown => self.page_forward()?,
+            CursorCommand::PageUp => self.page_backward()?,
+            CursorCommand::FirstRow => self.jump_first()?,
+            CursorCommand::LastRow => self.jump_last()?,
+            CursorCommand::ScrollLeft => self.hscroll_focused(-HSCROLL_STEP),
+            CursorCommand::ScrollRight => self.hscroll_focused(HSCROLL_STEP),
+        }
+        Ok(())
+    }
+
+    fn run_pane(&mut self, command: PaneCommand) -> Result<()> {
+        match command {
+            PaneCommand::FocusLeft => self.focus_left()?,
+            PaneCommand::FocusRight => self.focus_right()?,
+            PaneCommand::Open => self.on_enter()?,
+            PaneCommand::BackOut => self.escape(),
+            PaneCommand::CycleTab => self.cycle_mode()?,
+            PaneCommand::GotoFiles => self.goto_mode(SidebarTab::Files)?,
+            PaneCommand::GotoCommits => self.goto_mode(SidebarTab::Commits)?,
+            PaneCommand::GotoComments => self.goto_mode(SidebarTab::Comments)?,
+            PaneCommand::GotoDiff => self.focus = super::Focus::Diff,
+        }
+        Ok(())
+    }
+
+    fn run_files(&mut self, command: FilesCommand) -> Result<()> {
+        match command {
             // `[` and `]` consult no focus at all, so walking a review never
             // costs a trip through the sidebar.
-            Command::NextFile => self.select_file(self.file_index.saturating_add(1))?,
-            Command::PreviousFile => self.select_file(self.file_index.saturating_sub(1))?,
-            Command::NextHunk => self.next_hunk(),
-            Command::PreviousHunk => self.previous_hunk(),
-            Command::NextSymbol => self.next_symbol()?,
-            Command::PreviousSymbol => self.previous_symbol()?,
-            Command::ScrollLeft => self.hscroll_focused(-HSCROLL_STEP),
-            Command::ScrollRight => self.hscroll_focused(HSCROLL_STEP),
-            Command::Pick => self.begin_pick(),
-            Command::Comment => self.begin_comment(),
-            Command::Delete => self.begin_delete(),
-            Command::Resolve => self.resolve_comment()?,
-            Command::Abandon => self.abandon_comment()?,
-            Command::OpenEditor => return Ok(self.begin_edit()),
-            Command::Fold => self.toggle_collapse(),
-            Command::CycleMode => self.cycle_mode()?,
-            Command::FilesTab => self.goto_mode(SidebarTab::Files)?,
-            Command::CommitsTab => self.goto_mode(SidebarTab::Commits)?,
-            Command::CommentsTab => self.goto_mode(SidebarTab::Comments)?,
-            Command::ModeDiff => self.focus = super::Focus::Diff,
-            Command::Enter => self.on_enter()?,
-            Command::Escape => self.escape(),
-            Command::Narrower => self.split = self.split.nudged(-NUDGE),
-            Command::Wider => self.split = self.split.nudged(NUDGE),
-            Command::ToggleSidebar => self.toggle_sidebar(),
-            Command::ToggleTree => self.toggle_tree(),
-            Command::CycleSort => self.cycle_sort(),
-            Command::ToggleTint => self.toggle_tint(),
-            Command::ToggleCounts => self.toggle_counts(),
-            Command::ToggleFullContext => self.toggle_full_context(),
-            Command::Info => self.toggle_info(),
-            Command::Refresh => self.refresh()?,
-            Command::GroupDiff => self.toggle_grouped(),
-            Command::BeforeAfter => self.cycle_view_side(),
-            Command::Help => {
+            FilesCommand::Next => self.select_file(self.file_index.saturating_add(1))?,
+            FilesCommand::Prev => self.select_file(self.file_index.saturating_sub(1))?,
+            FilesCommand::ToggleTree => self.toggle_tree(),
+            FilesCommand::CycleSort => self.cycle_sort(),
+            FilesCommand::ToggleTint => self.toggle_tint(),
+            FilesCommand::ToggleCounts => self.toggle_counts(),
+        }
+        Ok(())
+    }
+
+    fn run_diff(&mut self, command: DiffCommand) -> Result<()> {
+        match command {
+            DiffCommand::NextHunk => self.next_hunk(),
+            DiffCommand::PrevHunk => self.previous_hunk(),
+            DiffCommand::NextSymbol => self.next_symbol()?,
+            DiffCommand::PrevSymbol => self.previous_symbol()?,
+            DiffCommand::FindSymbol => self.begin_pick(),
+            DiffCommand::ToggleFullContext => self.toggle_full_context(),
+            DiffCommand::GroupBySide => self.toggle_grouped(),
+            DiffCommand::CycleSide => self.cycle_view_side(),
+        }
+        Ok(())
+    }
+
+    fn run_comment(&mut self, command: CommentCommand) -> Result<()> {
+        match command {
+            CommentCommand::Write => self.begin_comment(),
+            CommentCommand::Delete => self.begin_delete(),
+            CommentCommand::Resolve => self.resolve_comment()?,
+            CommentCommand::Abandon => self.abandon_comment()?,
+            CommentCommand::ToggleFold => self.toggle_collapse(),
+        }
+        Ok(())
+    }
+
+    fn run_layout(&mut self, command: LayoutCommand) {
+        match command {
+            LayoutCommand::SidebarNarrower => self.split = self.split.nudged(-NUDGE),
+            LayoutCommand::SidebarWider => self.split = self.split.nudged(NUDGE),
+            LayoutCommand::ToggleSidebar => self.toggle_sidebar(),
+        }
+    }
+
+    fn run_app(&mut self, command: AppCommand) -> Result<Action> {
+        match command {
+            AppCommand::Quit => return Ok(Action::Quit),
+            AppCommand::OpenEditor => return Ok(self.begin_edit()),
+            AppCommand::Refresh => self.refresh()?,
+            AppCommand::ToggleChangeDetails => self.toggle_info(),
+            AppCommand::Help => {
                 // The tip first: what `?` answers is "what can I do here", and
                 // the whole manual is one more press away.
                 self.help = HelpStage::Tip;
@@ -276,9 +331,6 @@ impl App {
     }
 }
 
-/// Whether a binding is offered in `context`. Only the `Space` contextual menu's
-/// children are filtered — every other binding lists no contexts and is shown
-/// from anywhere.
-fn shown_in(binding: &Binding, context: super::Context) -> bool {
+fn rt_shown_in(binding: &RuntimeBinding, context: super::Context) -> bool {
     binding.contexts.is_empty() || binding.contexts.contains(&context)
 }

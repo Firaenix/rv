@@ -38,6 +38,7 @@ mod enabled;
 mod focus;
 mod fold;
 mod hunks;
+pub mod keymap;
 mod keys;
 mod measure;
 mod merges;
@@ -69,6 +70,7 @@ pub use bindings::BINDINGS;
 pub use bindings::Binding;
 pub use bindings::Group;
 pub use bindings::Leader;
+pub use keymap::Keymap;
 pub use mode::Action;
 pub use mode::Context;
 pub use mode::DiffEngine;
@@ -231,6 +233,7 @@ pub struct App {
     /// or [`None`] when the next key is read from the top level. A leader is
     /// pressed, its children are shown, and the following key either runs one of
     /// them or (on `Esc`, or a key none of them claim) cancels back to browsing.
+    keymap: keymap::Keymap,
     pending_leader: Option<bindings::Leader>,
     /// Whether the diff pane groups each hunk's removals before its additions,
     /// the way a unified diff prints — rather than difftastic's interleaving of

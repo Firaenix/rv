@@ -105,6 +105,11 @@ pub enum Role {
     /// away from `deleted comment at app.rs:42` would be showing itself in
     /// the reviewer's way.
     Busy,
+    /// The diff-view toggles that are off their default — `changes-only`,
+    /// `grouped`, `before`/`after` — and absent entirely when none are: the
+    /// one segment describing something a reviewer cannot verify by looking
+    /// at the pane, because a one-sided diff looks like a normal diff.
+    ViewState,
     /// The last thing that happened.
     Status,
     /// Right-aligned, and it names `?`.
@@ -129,15 +134,18 @@ impl Role {
             // Nice to know, never load-bearing: the position already says the
             // line, and the symbol is only present when the index is warm.
             Role::Symbol => 2,
-            Role::Scope => 3,
+            // Above the symbol: what the pane is *showing* cannot be read off
+            // the pane itself, so it outlives the nice-to-knows.
+            Role::ViewState => 3,
+            Role::Scope => 4,
             // Above the scope and below the position: a reviewer who has walked
             // into a change wants to know which one, and the revset is the same
             // sentence it was when they opened the review.
-            Role::Change => 4,
-            Role::Position => 5,
-            Role::Comments => 6,
-            Role::Mode => 7,
-            Role::Hint => 8,
+            Role::Change => 5,
+            Role::Position => 6,
+            Role::Comments => 7,
+            Role::Mode => 8,
+            Role::Hint => 9,
         }
     }
 
@@ -160,7 +168,7 @@ impl Role {
             // The bar's own ground: the mode is coloured by its ink, not its
             // block — see [`segments`].
             Role::Mode => Color::Black,
-            Role::Position | Role::Scope | Role::Hint => Color::DarkGray,
+            Role::Position | Role::Scope | Role::Hint | Role::ViewState => Color::DarkGray,
             Role::Symbol => Color::Gray,
             // Between the position and the scope, because that is what it is
             // between: narrower than the review, wider than one file.
@@ -263,6 +271,10 @@ pub struct View<'a> {
     /// full-file-context merge, and today the only kind. The Busy segment
     /// shows only while this is `true`.
     pub busy: bool,
+    /// The diff-view toggles off their default, already joined —
+    /// `changes-only · grouped · after` — or empty when the view is standard,
+    /// which drops the segment entirely.
+    pub view_state: String,
 }
 
 /// The bar's segments, left to right, skipping the ones with nothing to say.
@@ -312,6 +324,7 @@ pub fn segments(view: &View<'_>) -> Vec<Segment> {
         push(Role::Position, format!("{file}{line}{counter}{shape}"));
     }
     push(Role::Symbol, view.symbol.clone());
+    push(Role::ViewState, view.view_state.clone());
     // Before the scope: the change the cursor is in is the narrower and more
     // immediate fact, and the two are read together.
     push(Role::Change, view.change.clone());

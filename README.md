@@ -197,6 +197,33 @@ are *backgrounds*, and a syntax colour is always a *foreground*.
 
 ### Keybindings
 
+Every key below is the default, and almost all of them can be remapped in
+`~/.config/rv/keybindings.toml` — a *patch* over the defaults, where
+`command = "key"` moves a command onto a new key and frees its old one:
+
+```toml
+[leaders]
+goto = "g"                 # which key opens each leader's menu
+
+[keys]                     # direct keys, everywhere
+cursor_next_row = ["j", "Down"]
+app_quit = "Q"
+
+[keys.files]               # direct keys in one pane only
+diff_toggle_full_context = "f"
+
+[goto.diff]                # a leader's children, scoped to one pane
+cursor_last_row = "e"
+```
+
+`rv config` opens the file in `$EDITOR`, seeding it with the fully-commented
+defaults on first run — which is also where the command vocabulary lives —
+and validates it the moment the editor exits. `rv keymap` prints the
+*effective* map, defaults and patch merged. A user bind that lands on a key a
+default already holds simply takes it, and the review says so when it opens;
+only a config that contradicts *itself* refuses to load. `Ctrl+C`,
+`Shift`+arrows and the `?` popup's own keys are not remappable.
+
 **Browsing**
 
 Movement is the **arrows** (and the mouse) — there are no `hjkl` aliases. The

@@ -7,7 +7,6 @@
 
 use std::fs;
 
-use proptest::prelude::*;
 use rv_core::store::Comment;
 use rv_core::store::CommentState;
 use rv_core::store::Store;

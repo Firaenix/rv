@@ -150,5 +150,25 @@ fn status_view(app: &App, now: Instant) -> statusbar::View<'_> {
         // the eight-second rule the viewport spec asks for.
         status: app.status_line(now),
         busy: app.merging(),
+        view_state: view_state(app),
     }
+}
+
+/// The diff-view toggles that are off their default, joined for the bar's
+/// ViewState segment — empty in the standard view, so the segment costs no
+/// columns until something is actually different about what the pane shows.
+fn view_state(app: &App) -> String {
+    let mut tokens = Vec::new();
+    if !app.full_context() {
+        tokens.push("changes-only");
+    }
+    if app.grouped() {
+        tokens.push("grouped");
+    }
+    match app.view_side() {
+        crate::app::ViewSide::Diffed => {}
+        crate::app::ViewSide::Before => tokens.push("before"),
+        crate::app::ViewSide::After => tokens.push("after"),
+    }
+    tokens.join(" · ")
 }

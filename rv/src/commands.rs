@@ -1,8 +1,11 @@
 //! What each subcommand does, once the arguments are parsed.
 
+mod configcmd;
 mod diffcmd;
 mod report;
 
+pub use configcmd::edit_config;
+pub use configcmd::print_keymap;
 pub use diffcmd::diff;
 pub use report::check;
 pub use report::comments;

@@ -1,12 +1,3 @@
-//! The `?` keymap: a contextual tip in the corner, or the whole table over the
-//! panes.
-//!
-//! Both are drawn from [`BINDINGS`] rather than from lists of their own, which
-//! is what makes "a binding that exists cannot be undocumented" true rather
-//! than aspirational: there is no second table to forget to update. The tip is
-//! the rows whose [`Binding::contexts`] name the context the cursor is in; the
-//! full popup is every row, grouped.
-
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Modifier;
@@ -22,53 +13,49 @@ use ratatui::widgets::Paragraph;
 use super::BORDER_ROWS;
 use super::text::clip_spans;
 use crate::app::App;
-use crate::app::BINDINGS;
-use crate::app::Binding;
 use crate::app::Group;
 use crate::app::Leader;
+use crate::app::keymap::RuntimeBinding;
 
-/// Columns between the key column and its description, and between one column
-/// of the popup and the next.
 const HELP_GAP: usize = 2;
 
-/// One row of the popup: a group's heading, or one binding.
 enum HelpRow {
     Heading(&'static str),
     Key {
-        binding: &'static Binding,
+        chord: String,
+        what: String,
         enabled: bool,
     },
 }
 
-/// The binding a row carries, or `None` for a heading.
-fn row_binding(row: &HelpRow) -> Option<&'static Binding> {
+fn row_chord(row: &HelpRow) -> Option<&str> {
     match row {
-        HelpRow::Key { binding, .. } => Some(binding),
+        HelpRow::Key { chord, .. } => Some(chord),
         HelpRow::Heading(_) => None,
     }
 }
 
-/// How a binding is spelled in the full keymap: the chord a reviewer presses. A
-/// direct key is itself; a key under a leader is the leader then the key — `v f`.
-/// The `Space` leader is drawn as `⎵` here so its column stays as narrow as the
-/// letter leaders', which is what lets the map deal into three columns at 80x24.
-fn chord(binding: &Binding) -> String {
+fn rt_chord(binding: &RuntimeBinding, app: &App) -> String {
     match binding.leader {
-        Some(Leader::Mode) => format!("⎵ {}", binding.keys),
-        Some(leader) => format!("{} {}", leader.label(), binding.keys),
-        None => binding.keys.to_owned(),
+        Some(Leader::Mode) => format!("⎵ {}", binding.keys_label),
+        Some(leader) => {
+            let key = app.keymap().leader_key(leader);
+            let label = if key == ' ' {
+                "Space".to_owned()
+            } else {
+                key.to_string()
+            };
+            format!("{} {}", label, binding.keys_label)
+        }
+        None => binding.keys_label.clone(),
     }
 }
 
-/// One row of the layers overview `?` shows: how a key or a leader is spelled,
-/// and what it reaches.
 struct Layer {
     keys: &'static str,
     what: &'static str,
 }
 
-/// The layers overview: the handful of keys that move around, and the four
-/// leaders every other key hangs off. `?` shows this; `? ?` opens the whole map.
 const LAYERS: &[Layer] = &[
     Layer {
         keys: "↑↓",
@@ -108,11 +95,6 @@ const LAYERS: &[Layer] = &[
     },
 ];
 
-/// How big the tip wants to be, borders included: one row per layer, wide enough
-/// for its longest row and its own title.
-///
-/// Asked by [`crate::ui`] before the layout is computed, because only this
-/// module knows what the tip says; where the box goes is [`crate::layout`]'s.
 #[must_use]
 pub fn tip_size(app: &App) -> (u16, u16) {
     let keys = LAYERS
@@ -136,14 +118,10 @@ pub fn tip_size(app: &App) -> (u16, u16) {
     )
 }
 
-/// What the tip calls itself: where the reviewer is, and the way to the whole
-/// keymap.
 fn tip_title(app: &App) -> String {
     format!("▸ {} — ? ? all keys", app.context().name())
 }
 
-/// The layers overview: the leaders and the moves that reach every key, above
-/// the bar's `? help` hint. `? ?` unrolls the whole keymap.
 pub(super) fn draw_tip(frame: &mut Frame, app: &App, area: Rect) {
     let keys = LAYERS
         .iter()
@@ -183,8 +161,6 @@ pub(super) fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
     let width = usize::from(area.width.saturating_sub(BORDER_ROWS));
     let height = usize::from(area.height.saturating_sub(BORDER_ROWS));
     let text = help_text(app, width, height);
-    // The popup covers what is under it rather than blending with it: a keymap
-    // read through a diff is a keymap read twice.
     frame.render_widget(Clear, area);
     frame.render_widget(
         Paragraph::new(text).block(
@@ -196,26 +172,20 @@ pub(super) fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
     );
 }
 
-/// The keymap laid out in as many columns as `width` fits.
-///
-/// One column of twenty-one rows does not fit the fourteen a 70%-of-24-rows
-/// popup has, and 80x24 is what a reviewer over ssh actually has — so the
-/// columns are not decoration. The narrowest number of rows that fits is
-/// chosen, and a group is never split across a column boundary: a heading with
-/// nothing under it teaches nothing.
-///
-/// A popup too small for even that falls back to a single scrolling column, and
-/// [`scrolled`] is the only place [`App::help_scroll`] is used.
 fn help_text(app: &App, width: usize, height: usize) -> Text<'static> {
     let blocks = help_blocks(app);
-    // Measured over the rows actually shown, not every binding — the `Space`
-    // menu's children are excluded from the map, so counting them would widen
-    // the column for keys that never appear.
-    let shown = || blocks.iter().flatten().filter_map(row_binding);
-    let keys = shown().map(|b| chord(b).chars().count()).max().unwrap_or(0);
-    let what = shown().map(|b| b.what.chars().count()).max().unwrap_or(0);
+    let shown = || blocks.iter().flatten().filter_map(row_chord);
+    let keys = shown().map(|c| c.chars().count()).max().unwrap_or(0);
+    let what = blocks
+        .iter()
+        .flatten()
+        .filter_map(|row| match row {
+            HelpRow::Key { what, .. } => Some(what.chars().count()),
+            _ => None,
+        })
+        .max()
+        .unwrap_or(0);
     let column = keys + HELP_GAP + what;
-    // `(width + gap) / (column + gap)`: n columns need n-1 gaps between them.
     let columns = ((width + HELP_GAP) / (column + HELP_GAP)).max(1);
 
     let packed = (1..=height)
@@ -238,19 +208,19 @@ fn help_text(app: &App, width: usize, height: usize) -> Text<'static> {
     Text::from(lines)
 }
 
-/// One cell of the popup's grid, padded to the column's width so the ones under
-/// it line up.
-fn help_cell(row: Option<&&HelpRow>, keys: usize, what: usize) -> Vec<Span<'static>> {
-    let column = keys + HELP_GAP + what;
+fn help_cell(row: Option<&&HelpRow>, keys_w: usize, what_w: usize) -> Vec<Span<'static>> {
+    let column = keys_w + HELP_GAP + what_w;
     match row {
         None => vec![Span::raw(" ".repeat(column))],
         Some(HelpRow::Heading(heading)) => vec![Span::styled(
             format!("{heading:<column$}"),
             Style::default().add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
         )],
-        Some(HelpRow::Key { binding, enabled }) => {
-            // Dim rather than hidden: a reviewer should see that the key exists
-            // and that here is the wrong place for it.
+        Some(HelpRow::Key {
+            chord,
+            what,
+            enabled,
+        }) => {
             let (key_style, what_style) = if *enabled {
                 (
                     Style::default().add_modifier(Modifier::BOLD),
@@ -261,34 +231,30 @@ fn help_cell(row: Option<&&HelpRow>, keys: usize, what: usize) -> Vec<Span<'stat
                 (dim, dim)
             };
             vec![
-                Span::styled(format!("{:<keys$}", chord(binding)), key_style),
+                Span::styled(format!("{chord:<keys_w$}"), key_style),
                 Span::raw(" ".repeat(HELP_GAP)),
-                Span::styled(format!("{:<what$}", binding.what), what_style),
+                Span::styled(format!("{what:<what_w$}"), what_style),
             ]
         }
     }
 }
 
-/// The keymap as one block per [`Group`]: its heading, then its bindings in
-/// table order.
 fn help_blocks(app: &App) -> Vec<Vec<HelpRow>> {
     Group::ALL
         .iter()
         .map(|group| {
             let mut rows = vec![HelpRow::Heading(group.heading())];
             rows.extend(
-                BINDINGS
+                app.keymap()
+                    .bindings()
                     .iter()
-                    // The `Space` menu's children are duplicates reached through
-                    // their stable leader (`c d`, `v t`, …); the full map lists
-                    // them there, not twice.
                     .filter(|binding| {
-                        binding.group == *group
-                            && binding.leader != Some(crate::app::Leader::Context)
+                        binding.group == *group && binding.leader != Some(Leader::Context)
                     })
                     .map(|binding| HelpRow::Key {
-                        binding,
-                        enabled: app.binding_enabled(binding),
+                        chord: rt_chord(binding, app),
+                        what: binding.what.to_owned(),
+                        enabled: app.rt_binding_enabled(binding),
                     }),
             );
             rows
@@ -297,8 +263,6 @@ fn help_blocks(app: &App) -> Vec<Vec<HelpRow>> {
         .collect()
 }
 
-/// Deals `blocks` into columns of at most `rows` rows each, keeping every block
-/// whole. `None` when some block is taller than a column can be.
 fn pack(blocks: &[Vec<HelpRow>], rows: usize) -> Option<Vec<Vec<&HelpRow>>> {
     if rows == 0 {
         return None;
@@ -320,11 +284,6 @@ fn pack(blocks: &[Vec<HelpRow>], rows: usize) -> Option<Vec<Vec<&HelpRow>>> {
     Some(columns)
 }
 
-/// The fallback for a popup too small to hold the keymap however it is dealt:
-/// one column, `height` rows of it, starting `scroll` rows in.
-///
-/// Clamped here rather than in [`App`], which deliberately knows nothing about
-/// how big the terminal is: holding `j` down cannot scroll past the end.
 fn scrolled(blocks: &[Vec<HelpRow>], height: usize, scroll: usize) -> Vec<Vec<&HelpRow>> {
     let flat: Vec<&HelpRow> = blocks.iter().flatten().collect();
     let start = scroll.min(flat.len().saturating_sub(height));

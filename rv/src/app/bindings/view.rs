@@ -4,9 +4,14 @@
 
 use crossterm::event::KeyCode;
 
+use super::AppCommand;
 use super::Binding;
 use super::Command;
+use super::CommentCommand;
+use super::DiffCommand;
+use super::FilesCommand;
 use super::Group;
+use super::LayoutCommand;
 use super::Leader;
 
 pub(super) const VIEW: [Binding; 12] = [
@@ -17,7 +22,7 @@ pub(super) const VIEW: [Binding; 12] = [
         contexts: &[],
         what: "context",
         codes: &[KeyCode::Char('f')],
-        command: Command::ToggleFullContext,
+        command: Command::Diff(DiffCommand::ToggleFullContext),
     },
     Binding {
         keys: "g",
@@ -26,7 +31,7 @@ pub(super) const VIEW: [Binding; 12] = [
         contexts: &[],
         what: "group",
         codes: &[KeyCode::Char('g')],
-        command: Command::GroupDiff,
+        command: Command::Diff(DiffCommand::GroupBySide),
     },
     Binding {
         keys: "b",
@@ -35,7 +40,7 @@ pub(super) const VIEW: [Binding; 12] = [
         contexts: &[],
         what: "side",
         codes: &[KeyCode::Char('b')],
-        command: Command::BeforeAfter,
+        command: Command::Diff(DiffCommand::CycleSide),
     },
     Binding {
         keys: "t",
@@ -44,7 +49,7 @@ pub(super) const VIEW: [Binding; 12] = [
         contexts: &[],
         what: "list / tree",
         codes: &[KeyCode::Char('t')],
-        command: Command::ToggleTree,
+        command: Command::Files(FilesCommand::ToggleTree),
     },
     Binding {
         keys: "o",
@@ -53,7 +58,7 @@ pub(super) const VIEW: [Binding; 12] = [
         contexts: &[],
         what: "order",
         codes: &[KeyCode::Char('o')],
-        command: Command::CycleSort,
+        command: Command::Files(FilesCommand::CycleSort),
     },
     Binding {
         keys: "c",
@@ -62,7 +67,7 @@ pub(super) const VIEW: [Binding; 12] = [
         contexts: &[],
         what: "tint",
         codes: &[KeyCode::Char('c')],
-        command: Command::ToggleTint,
+        command: Command::Files(FilesCommand::ToggleTint),
     },
     Binding {
         keys: "#",
@@ -71,7 +76,7 @@ pub(super) const VIEW: [Binding; 12] = [
         contexts: &[],
         what: "counts",
         codes: &[KeyCode::Char('#')],
-        command: Command::ToggleCounts,
+        command: Command::Files(FilesCommand::ToggleCounts),
     },
     Binding {
         keys: "z",
@@ -80,7 +85,7 @@ pub(super) const VIEW: [Binding; 12] = [
         contexts: &[],
         what: "sidebar",
         codes: &[KeyCode::Char('z')],
-        command: Command::ToggleSidebar,
+        command: Command::Layout(LayoutCommand::ToggleSidebar),
     },
     Binding {
         keys: "<",
@@ -89,7 +94,7 @@ pub(super) const VIEW: [Binding; 12] = [
         contexts: &[],
         what: "narrower",
         codes: &[KeyCode::Char('<')],
-        command: Command::Narrower,
+        command: Command::Layout(LayoutCommand::SidebarNarrower),
     },
     Binding {
         keys: ">",
@@ -98,7 +103,7 @@ pub(super) const VIEW: [Binding; 12] = [
         contexts: &[],
         what: "wider",
         codes: &[KeyCode::Char('>')],
-        command: Command::Wider,
+        command: Command::Layout(LayoutCommand::SidebarWider),
     },
     Binding {
         keys: "i",
@@ -107,7 +112,7 @@ pub(super) const VIEW: [Binding; 12] = [
         contexts: &[],
         what: "details",
         codes: &[KeyCode::Char('i')],
-        command: Command::Info,
+        command: Command::App(AppCommand::ToggleChangeDetails),
     },
     Binding {
         keys: "r",
@@ -116,7 +121,7 @@ pub(super) const VIEW: [Binding; 12] = [
         contexts: &[],
         what: "refresh",
         codes: &[KeyCode::Char('r')],
-        command: Command::Refresh,
+        command: Command::App(AppCommand::Refresh),
     },
 ];
 
@@ -130,7 +135,7 @@ pub(super) const JUMPS: [Binding; 9] = [
         contexts: &[],
         what: "next hunk",
         codes: &[KeyCode::Down],
-        command: Command::NextHunk,
+        command: Command::Diff(DiffCommand::NextHunk),
     },
     Binding {
         keys: "↑",
@@ -139,7 +144,7 @@ pub(super) const JUMPS: [Binding; 9] = [
         contexts: &[],
         what: "prev hunk",
         codes: &[KeyCode::Up],
-        command: Command::PreviousHunk,
+        command: Command::Diff(DiffCommand::PrevHunk),
     },
     Binding {
         keys: "n",
@@ -148,7 +153,7 @@ pub(super) const JUMPS: [Binding; 9] = [
         contexts: &[],
         what: "next sym",
         codes: &[KeyCode::Char('n')],
-        command: Command::NextSymbol,
+        command: Command::Diff(DiffCommand::NextSymbol),
     },
     Binding {
         keys: "N",
@@ -157,7 +162,7 @@ pub(super) const JUMPS: [Binding; 9] = [
         contexts: &[],
         what: "prev sym",
         codes: &[KeyCode::Char('N')],
-        command: Command::PreviousSymbol,
+        command: Command::Diff(DiffCommand::PrevSymbol),
     },
     Binding {
         keys: "/",
@@ -166,7 +171,7 @@ pub(super) const JUMPS: [Binding; 9] = [
         contexts: &[],
         what: "find",
         codes: &[KeyCode::Char('/')],
-        command: Command::Pick,
+        command: Command::Diff(DiffCommand::FindSymbol),
     },
     Binding {
         keys: "c",
@@ -175,7 +180,7 @@ pub(super) const JUMPS: [Binding; 9] = [
         contexts: &[],
         what: "write a comment",
         codes: &[KeyCode::Char('c')],
-        command: Command::Comment,
+        command: Command::Comment(CommentCommand::Write),
     },
     Binding {
         keys: "d",
@@ -184,7 +189,7 @@ pub(super) const JUMPS: [Binding; 9] = [
         contexts: &[],
         what: "delete comment",
         codes: &[KeyCode::Char('d')],
-        command: Command::Delete,
+        command: Command::Comment(CommentCommand::Delete),
     },
     Binding {
         keys: "r",
@@ -193,7 +198,7 @@ pub(super) const JUMPS: [Binding; 9] = [
         contexts: &[],
         what: "resolve",
         codes: &[KeyCode::Char('r')],
-        command: Command::Resolve,
+        command: Command::Comment(CommentCommand::Resolve),
     },
     Binding {
         keys: "a",
@@ -202,6 +207,6 @@ pub(super) const JUMPS: [Binding; 9] = [
         contexts: &[],
         what: "abandon",
         codes: &[KeyCode::Char('a')],
-        command: Command::Abandon,
+        command: Command::Comment(CommentCommand::Abandon),
     },
 ];

@@ -19,8 +19,10 @@ use super::Mode;
 use super::SidebarTab;
 use super::commits;
 use super::diffs;
+use super::keymap::Keymap;
 use super::paint;
 use super::status::HELP;
+use crate::config::Config;
 use crate::layout::Split;
 use crate::session::Review;
 use crate::statusbar;
@@ -39,10 +41,22 @@ impl App {
     /// inconvenience — which is the argument for the parameter, and a stronger one
     /// than the process-wide-and-impolite reasoning that used to stand here.
     pub fn open(review: Review, engine: super::DiffEngine) -> Result<Self> {
-        Self::build(review, engine)
+        Self::build(review, engine, &Config::default())
     }
 
-    pub(super) fn build(review: Review, engine: super::DiffEngine) -> Result<Self> {
+    pub fn open_with_config(
+        review: Review,
+        engine: super::DiffEngine,
+        config: &Config,
+    ) -> Result<Self> {
+        Self::build(review, engine, config)
+    }
+
+    pub(super) fn build(
+        review: Review,
+        engine: super::DiffEngine,
+        config: &Config,
+    ) -> Result<Self> {
         let diffs = vec![None; review.files.len()];
         let blobs = vec![None; review.files.len()];
         let merges = (0..review.files.len()).map(|_| None).collect::<Vec<_>>();
@@ -74,6 +88,8 @@ impl App {
         // said out loud*, unstamped — opening a review has no more clock in
         // reach than a key press does.
         let (stats, unreadable) = Self::measure(&review);
+        let mut keymap = Keymap::from_config(config)?;
+        let keymap_warnings = keymap.take_warnings();
         let mut app = Self {
             review,
             diffs,
@@ -101,6 +117,7 @@ impl App {
             stats,
             ascii: statusbar::ascii_from_env(),
             split: Split::default(),
+            keymap,
             help: HelpStage::Closed,
             help_scroll: 0,
             pending_leader: None,
@@ -139,6 +156,9 @@ impl App {
         };
         for message in unreadable {
             app.raise(message);
+        }
+        for warning in keymap_warnings {
+            app.raise(warning);
         }
         app.load_selected()?;
         Ok(app)

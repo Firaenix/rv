@@ -6,6 +6,7 @@
 //! terminals.
 
 pub mod app;
+pub mod config;
 pub mod gradient;
 pub mod index;
 pub mod layout;

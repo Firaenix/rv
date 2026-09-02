@@ -575,3 +575,34 @@ appendix naming what was superseded by later rulings and what remains open.
 Every item on that list was closed on 2026-08-20 except one: **file-scoped
 comments** (§9 `Scope::File`, and with them commenting on binary files) is
 still unbuilt and still the only thing the five appendices call open.
+
+## 2026-09-02 — configurable keybindings, and the bar says what the pane is showing
+
+**The layered command enum** — the flat 43-variant `Command` became seven
+groups layered by *target*: `Cursor` (focus-relative movement), `Pane`,
+`Files`, `Diff`, `Comment`, `Layout` and `App`. The dispatch and the
+enabled-checks split into one delegation per group, each exhaustive over its
+sub-enum, so the anti-drift claim survived the restructure. Three axes stay
+deliberately separate: the leader a key is reached through, the enum layer it
+acts on, and the `?` popup group it is listed under.
+
+**`~/.config/rv/keybindings.toml`** — a patch over the defaults, never a
+replacement. `command = "key"` with the commands as the finite, validated
+vocabulary — named `<group>_<action>` so the prefix says what is acted on
+(`diff_toggle_full_context`, `cursor_next_row`) — and the keys as the user's
+choice, arrays allowed. Bare `[section]` binds everywhere; `[section.pane]`
+binds in one pane; `[leaders]` re-keys the submenus. Rebinding *moves* a
+command (its old key goes inert), `""` unbinds, and the collision policy is
+the plan's table verbatim: a user bind takes a defaulted key with a startup
+alert; a config that contradicts itself, or puts two leaders on one key, is
+the only thing that refuses to load. Unknown commands, panes and sections get
+did-you-mean errors, and the typing modes are rejected by name — their keys
+were never table-driven. `rv config` opens the file in `$EDITOR`, seeding the
+fully-commented default template on first run and validating on exit;
+`rv keymap` prints the effective map as TOML that reloads to itself.
+
+**The ViewState segment** — the three diff-view toggles whose state is
+invisible on screen (`changes-only`, `grouped`, `before`/`after`) now ride
+the status bar whenever they are off their default, and cost no columns when
+they are not: a one-sided diff looks exactly like a normal diff, and the bar
+is the only place a reviewer can learn what the pane is *not* showing.

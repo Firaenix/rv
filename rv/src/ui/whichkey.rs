@@ -18,9 +18,8 @@ use ratatui::widgets::Paragraph;
 
 use super::BORDER_ROWS;
 use crate::app::App;
-use crate::app::BINDINGS;
-use crate::app::Binding;
 use crate::app::Leader;
+use crate::app::keymap::RuntimeBinding;
 
 const GAP: usize = 2;
 
@@ -38,7 +37,7 @@ pub(super) fn draw(frame: &mut Frame, app: &App, area: Rect, bar: Rect) {
 
     let keys = entries
         .iter()
-        .map(|binding| binding.keys.chars().count())
+        .map(|binding| binding.keys_label.chars().count())
         .max()
         .unwrap_or(0);
     let title = format!("{} — {}", leader.label(), leader.title());
@@ -63,7 +62,7 @@ pub(super) fn draw(frame: &mut Frame, app: &App, area: Rect, bar: Rect) {
             Line::from(vec![
                 Span::raw(" "),
                 Span::styled(
-                    format!("{:<keys$}", binding.keys),
+                    format!("{:<keys$}", binding.keys_label),
                     Style::default().add_modifier(Modifier::BOLD),
                 ),
                 Span::raw(" ".repeat(GAP)),
@@ -86,14 +85,15 @@ pub(super) fn draw(frame: &mut Frame, app: &App, area: Rect, bar: Rect) {
 /// The leader's children that would do something from where the cursor is now.
 /// The contextual (`Space`) menu also drops children that do not belong to the
 /// current mode, so it shows only that mode's own actions.
-fn live_children(app: &App, leader: Leader) -> Vec<&'static Binding> {
+fn live_children(app: &App, leader: Leader) -> Vec<&RuntimeBinding> {
     let context = app.context();
-    BINDINGS
+    app.keymap()
+        .bindings()
         .iter()
         .filter(|binding| {
             binding.leader == Some(leader)
                 && (binding.contexts.is_empty() || binding.contexts.contains(&context))
-                && app.binding_enabled(binding)
+                && app.rt_binding_enabled(binding)
         })
         .collect()
 }

@@ -72,6 +72,7 @@ fn sample_view() -> View<'static> {
         open_comments: 4,
         status: "saved comment at app.rs:42",
         busy: false,
+        view_state: String::new(),
     }
 }
 
@@ -260,6 +261,31 @@ fn a_review_with_no_file_selected_still_renders() {
         line_width(&render(&bar, 40, false)),
         40,
         "and the bar is still a bar"
+    );
+}
+
+#[test]
+fn off_default_view_toggles_ride_the_bar() {
+    // A one-sided diff looks exactly like a normal diff, so the bar is the
+    // only place the reviewer can learn what the pane is *not* showing.
+    let bar = segments(&View {
+        view_state: "changes-only · grouped · after".to_owned(),
+        ..sample_view()
+    });
+    let segment = bar
+        .iter()
+        .find(|segment| segment.role == Role::ViewState)
+        .expect("an off-default view earns a segment");
+    assert_eq!(segment.text, "changes-only · grouped · after");
+}
+
+#[test]
+fn a_default_view_earns_no_segment_at_all() {
+    // Absence means the standard view — the common case costs no columns.
+    let bar = sample_segments();
+    assert!(
+        !bar.iter().any(|segment| segment.role == Role::ViewState),
+        "nothing to say, no segment: {bar:?}"
     );
 }
 

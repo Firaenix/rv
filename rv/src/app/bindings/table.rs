@@ -5,11 +5,18 @@
 
 use crossterm::event::KeyCode;
 
+use super::AppCommand;
 use super::Binding;
 use super::Command;
+use super::CommentCommand;
 use super::Context;
+use super::CursorCommand;
+use super::DiffCommand;
+use super::FilesCommand;
 use super::Group;
+use super::LayoutCommand;
 use super::Leader;
+use super::PaneCommand;
 use super::view::JUMPS;
 use super::view::VIEW;
 
@@ -67,7 +74,7 @@ const HEAD: [Binding; 35] = [
         contexts: ANY,
         what: "next row",
         codes: &[KeyCode::Down],
-        command: Command::Forward,
+        command: Command::Cursor(CursorCommand::NextRow),
     },
     Binding {
         keys: "↑",
@@ -76,7 +83,7 @@ const HEAD: [Binding; 35] = [
         contexts: ANY,
         what: "prev row",
         codes: &[KeyCode::Up],
-        command: Command::Back,
+        command: Command::Cursor(CursorCommand::PrevRow),
     },
     Binding {
         keys: "←",
@@ -85,7 +92,7 @@ const HEAD: [Binding; 35] = [
         contexts: ANY,
         what: "out / up",
         codes: &[KeyCode::Left],
-        command: Command::FocusLeft,
+        command: Command::Pane(PaneCommand::FocusLeft),
     },
     Binding {
         keys: "→",
@@ -94,7 +101,7 @@ const HEAD: [Binding; 35] = [
         contexts: ANY,
         what: "into / open",
         codes: &[KeyCode::Right],
-        command: Command::FocusRight,
+        command: Command::Pane(PaneCommand::FocusRight),
     },
     Binding {
         keys: "PgDn",
@@ -103,7 +110,7 @@ const HEAD: [Binding; 35] = [
         contexts: ANY,
         what: "page down",
         codes: &[KeyCode::PageDown],
-        command: Command::PageForward,
+        command: Command::Cursor(CursorCommand::PageDown),
     },
     Binding {
         keys: "PgUp",
@@ -112,7 +119,7 @@ const HEAD: [Binding; 35] = [
         contexts: ANY,
         what: "page up",
         codes: &[KeyCode::PageUp],
-        command: Command::PageBackward,
+        command: Command::Cursor(CursorCommand::PageUp),
     },
     Binding {
         keys: "Home",
@@ -121,7 +128,7 @@ const HEAD: [Binding; 35] = [
         contexts: ANY,
         what: "first row",
         codes: &[KeyCode::Home],
-        command: Command::JumpFirst,
+        command: Command::Cursor(CursorCommand::FirstRow),
     },
     Binding {
         keys: "End",
@@ -130,7 +137,7 @@ const HEAD: [Binding; 35] = [
         contexts: ANY,
         what: "last row",
         codes: &[KeyCode::End],
-        command: Command::JumpLast,
+        command: Command::Cursor(CursorCommand::LastRow),
     },
     Binding {
         keys: "]",
@@ -139,7 +146,7 @@ const HEAD: [Binding; 35] = [
         contexts: ANY,
         what: "next file",
         codes: &[KeyCode::Char(']')],
-        command: Command::NextFile,
+        command: Command::Files(FilesCommand::Next),
     },
     Binding {
         keys: "[",
@@ -148,7 +155,7 @@ const HEAD: [Binding; 35] = [
         contexts: ANY,
         what: "prev file",
         codes: &[KeyCode::Char('[')],
-        command: Command::PreviousFile,
+        command: Command::Files(FilesCommand::Prev),
     },
     Binding {
         keys: "Enter",
@@ -157,7 +164,7 @@ const HEAD: [Binding; 35] = [
         contexts: ANY,
         what: "open / into",
         codes: &[KeyCode::Enter],
-        command: Command::Enter,
+        command: Command::Pane(PaneCommand::Open),
     },
     Binding {
         keys: "Tab",
@@ -166,7 +173,7 @@ const HEAD: [Binding; 35] = [
         contexts: ANY,
         what: "next mode",
         codes: &[KeyCode::Tab],
-        command: Command::CycleMode,
+        command: Command::Pane(PaneCommand::CycleTab),
     },
     Binding {
         keys: "s",
@@ -175,7 +182,7 @@ const HEAD: [Binding; 35] = [
         contexts: ANY,
         what: "fold",
         codes: &[KeyCode::Char('s')],
-        command: Command::Fold,
+        command: Command::Comment(CommentCommand::ToggleFold),
     },
     // Direct on the diff, where a full-file toggle is the reviewer's most common
     // reach; still under `v f` and the diff's `Space f` from anywhere.
@@ -186,7 +193,7 @@ const HEAD: [Binding; 35] = [
         contexts: &[Context::Diff],
         what: "full context",
         codes: &[KeyCode::Char('f')],
-        command: Command::ToggleFullContext,
+        command: Command::Diff(DiffCommand::ToggleFullContext),
     },
     // Direct in the commits list, where the change tooltip is the reviewer's
     // most common reach; still under `v i` from anywhere.
@@ -197,7 +204,7 @@ const HEAD: [Binding; 35] = [
         contexts: &[Context::Commits],
         what: "details",
         codes: &[KeyCode::Char('i')],
-        command: Command::Info,
+        command: Command::App(AppCommand::ToggleChangeDetails),
     },
     Binding {
         keys: "E",
@@ -206,7 +213,7 @@ const HEAD: [Binding; 35] = [
         contexts: ANY,
         what: "edit ($EDITOR)",
         codes: &[KeyCode::Char('E')],
-        command: Command::OpenEditor,
+        command: Command::App(AppCommand::OpenEditor),
     },
     Binding {
         keys: "+",
@@ -215,7 +222,7 @@ const HEAD: [Binding; 35] = [
         contexts: ANY,
         what: "wider",
         codes: &[KeyCode::Char('+')],
-        command: Command::Wider,
+        command: Command::Layout(LayoutCommand::SidebarWider),
     },
     Binding {
         keys: "_",
@@ -224,7 +231,7 @@ const HEAD: [Binding; 35] = [
         contexts: ANY,
         what: "narrower",
         codes: &[KeyCode::Char('_')],
-        command: Command::Narrower,
+        command: Command::Layout(LayoutCommand::SidebarNarrower),
     },
     Binding {
         keys: "Esc",
@@ -233,7 +240,7 @@ const HEAD: [Binding; 35] = [
         contexts: ANY,
         what: "back out",
         codes: &[KeyCode::Esc],
-        command: Command::Escape,
+        command: Command::Pane(PaneCommand::BackOut),
     },
     Binding {
         keys: "?",
@@ -242,7 +249,7 @@ const HEAD: [Binding; 35] = [
         contexts: ANY,
         what: "keys",
         codes: &[KeyCode::Char('?')],
-        command: Command::Help,
+        command: Command::App(AppCommand::Help),
     },
     Binding {
         keys: "q",
@@ -251,7 +258,7 @@ const HEAD: [Binding; 35] = [
         contexts: ANY,
         what: "quit the review",
         codes: &[KeyCode::Char('q')],
-        command: Command::Quit,
+        command: Command::App(AppCommand::Quit),
     },
     // ── Space: the contextual menu ───────────────────────────────────────────
     // Files & commits lists: the view toggles for a file tree.
@@ -262,7 +269,7 @@ const HEAD: [Binding; 35] = [
         contexts: LISTS,
         what: "list / tree",
         codes: &[KeyCode::Char('t')],
-        command: Command::ToggleTree,
+        command: Command::Files(FilesCommand::ToggleTree),
     },
     Binding {
         keys: "o",
@@ -271,7 +278,7 @@ const HEAD: [Binding; 35] = [
         contexts: LISTS,
         what: "order",
         codes: &[KeyCode::Char('o')],
-        command: Command::CycleSort,
+        command: Command::Files(FilesCommand::CycleSort),
     },
     Binding {
         keys: "#",
@@ -280,7 +287,7 @@ const HEAD: [Binding; 35] = [
         contexts: LISTS,
         what: "counts",
         codes: &[KeyCode::Char('#')],
-        command: Command::ToggleCounts,
+        command: Command::Files(FilesCommand::ToggleCounts),
     },
     Binding {
         keys: "c",
@@ -289,7 +296,7 @@ const HEAD: [Binding; 35] = [
         contexts: LISTS,
         what: "tint",
         codes: &[KeyCode::Char('c')],
-        command: Command::ToggleTint,
+        command: Command::Files(FilesCommand::ToggleTint),
     },
     // Diff: the toggles that change how the change itself is shown.
     Binding {
@@ -299,7 +306,7 @@ const HEAD: [Binding; 35] = [
         contexts: &[Context::Diff],
         what: "group",
         codes: &[KeyCode::Char('g')],
-        command: Command::GroupDiff,
+        command: Command::Diff(DiffCommand::GroupBySide),
     },
     Binding {
         keys: "b",
@@ -308,7 +315,7 @@ const HEAD: [Binding; 35] = [
         contexts: &[Context::Diff],
         what: "side",
         codes: &[KeyCode::Char('b')],
-        command: Command::BeforeAfter,
+        command: Command::Diff(DiffCommand::CycleSide),
     },
     Binding {
         keys: "f",
@@ -317,7 +324,7 @@ const HEAD: [Binding; 35] = [
         contexts: &[Context::Diff],
         what: "context",
         codes: &[KeyCode::Char('f')],
-        command: Command::ToggleFullContext,
+        command: Command::Diff(DiffCommand::ToggleFullContext),
     },
     // On a comment: the verbs that settle it.
     Binding {
@@ -327,7 +334,7 @@ const HEAD: [Binding; 35] = [
         contexts: COMMENTED,
         what: "delete comment",
         codes: &[KeyCode::Char('d')],
-        command: Command::Delete,
+        command: Command::Comment(CommentCommand::Delete),
     },
     Binding {
         keys: "r",
@@ -336,7 +343,7 @@ const HEAD: [Binding; 35] = [
         contexts: COMMENTED,
         what: "resolve",
         codes: &[KeyCode::Char('r')],
-        command: Command::Resolve,
+        command: Command::Comment(CommentCommand::Resolve),
     },
     Binding {
         keys: "a",
@@ -345,7 +352,7 @@ const HEAD: [Binding; 35] = [
         contexts: COMMENTED,
         what: "abandon",
         codes: &[KeyCode::Char('a')],
-        command: Command::Abandon,
+        command: Command::Comment(CommentCommand::Abandon),
     },
     // ── m: mode ──────────────────────────────────────────────────────────────
     Binding {
@@ -355,7 +362,7 @@ const HEAD: [Binding; 35] = [
         contexts: ANY,
         what: "files",
         codes: &[KeyCode::Char('f')],
-        command: Command::FilesTab,
+        command: Command::Pane(PaneCommand::GotoFiles),
     },
     Binding {
         keys: "c",
@@ -364,7 +371,7 @@ const HEAD: [Binding; 35] = [
         contexts: ANY,
         what: "commits",
         codes: &[KeyCode::Char('c')],
-        command: Command::CommitsTab,
+        command: Command::Pane(PaneCommand::GotoCommits),
     },
     Binding {
         keys: "o",
@@ -373,7 +380,7 @@ const HEAD: [Binding; 35] = [
         contexts: ANY,
         what: "comments",
         codes: &[KeyCode::Char('o')],
-        command: Command::CommentsTab,
+        command: Command::Pane(PaneCommand::GotoComments),
     },
     Binding {
         keys: "d",
@@ -382,6 +389,6 @@ const HEAD: [Binding; 35] = [
         contexts: ANY,
         what: "diff",
         codes: &[KeyCode::Char('d')],
-        command: Command::ModeDiff,
+        command: Command::Pane(PaneCommand::GotoDiff),
     },
 ];

@@ -32,6 +32,7 @@ use clap::Parser;
 use clap::Subcommand;
 use rv::app::App;
 use rv::app::DiffEngine;
+use rv::config;
 use rv::session;
 use rv_core::model::Side;
 use rv_core::store::CommentState;
@@ -156,6 +157,14 @@ enum Command {
         #[arg(long, value_name = "PATH")]
         out: Option<PathBuf>,
     },
+    /// Open the keybindings file (`~/.config/rv/keybindings.toml`) in $EDITOR.
+    ///
+    /// A missing file is seeded with the fully-commented defaults first, and
+    /// the result is validated the moment the editor exits.
+    Config,
+    /// Print the effective keymap — the defaults plus the config's patch — as
+    /// the same TOML the config file speaks.
+    Keymap,
     /// Report the range, its changes, its files and its comment counts.
     Status {
         /// Emit JSON instead of text.
@@ -232,13 +241,15 @@ fn run() -> Result<ExitCode> {
     let read = || session::read(&repo_root, cli.from.as_deref(), head.as_deref());
     match cli.command {
         None => {
-            App::run(
+            let config = config::load()?;
+            App::run_with_config(
                 session::build(&repo_root, cli.from.as_deref(), head.as_deref())?,
                 if cli.no_difft {
                     DiffEngine::Fallback
                 } else {
                     DiffEngine::Auto
                 },
+                &config,
             )?;
             Ok(ExitCode::SUCCESS)
         }
@@ -287,6 +298,14 @@ fn run() -> Result<ExitCode> {
         }
         Some(Command::Render { out }) => {
             render(&read()?, out.as_deref())?;
+            Ok(ExitCode::SUCCESS)
+        }
+        Some(Command::Config) => {
+            commands::edit_config()?;
+            Ok(ExitCode::SUCCESS)
+        }
+        Some(Command::Keymap) => {
+            commands::print_keymap()?;
             Ok(ExitCode::SUCCESS)
         }
         Some(Command::Status { json, check }) => {

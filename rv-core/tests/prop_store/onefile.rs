@@ -7,7 +7,6 @@
 
 use std::fs;
 
-use proptest::prelude::*;
 use rv_core::store::Session;
 use rv_core::store::Store;
 

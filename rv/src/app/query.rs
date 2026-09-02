@@ -243,4 +243,8 @@ impl App {
     pub fn pending_leader(&self) -> Option<super::Leader> {
         self.pending_leader
     }
+
+    pub fn keymap(&self) -> &super::keymap::Keymap {
+        &self.keymap
+    }
 }

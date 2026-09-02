@@ -10,7 +10,6 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::PathBuf;
 
-use proptest::prelude::*;
 use rv_core::store::Store;
 
 use super::*;

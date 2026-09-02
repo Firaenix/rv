@@ -8,7 +8,6 @@
 use std::fs;
 use std::path::Path;
 
-use proptest::prelude::*;
 use rv_core::store::Comment;
 use rv_core::store::Store;
 

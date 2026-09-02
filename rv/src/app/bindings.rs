@@ -64,7 +64,7 @@ impl Group {
 
 /// The leader a binding sits under: a first keystroke that opens a which-key
 /// submenu, after which the binding's own `codes` are the second keystroke.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Leader {
     /// `Space`: the contextual menu — its children are whichever actions suit
     /// the mode the reviewer is in, filtered by [`Binding::contexts`].
@@ -153,56 +153,96 @@ pub struct Binding {
     pub(super) command: Command,
 }
 
-/// What running one row of [`BINDINGS`] does.
+/// What running one row of [`BINDINGS`] does, layered by what it acts on.
 ///
 /// An enum rather than a string or a function pointer: that is what makes the
 /// dispatch match exhaustive, so a row cannot name a command nothing answers.
+/// The layer is the target — `Cursor` commands are **focus-relative** (they
+/// move whichever pane holds the cursor), while `Diff`/`Files`/`Comment`
+/// commands act on that thing regardless of where the focus is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Command {
-    Forward,
-    Back,
-    PageForward,
-    PageBackward,
-    JumpFirst,
-    JumpLast,
-    NextFile,
-    PreviousFile,
-    NextHunk,
-    PreviousHunk,
-    NextSymbol,
-    PreviousSymbol,
+    Cursor(CursorCommand),
+    Pane(PaneCommand),
+    Files(FilesCommand),
+    Diff(DiffCommand),
+    Comment(CommentCommand),
+    Layout(LayoutCommand),
+    App(AppCommand),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum CursorCommand {
+    NextRow,
+    PrevRow,
+    PageDown,
+    PageUp,
+    FirstRow,
+    LastRow,
     ScrollLeft,
     ScrollRight,
-    Pick,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum PaneCommand {
     FocusLeft,
     FocusRight,
-    CycleMode,
-    FilesTab,
-    CommitsTab,
-    CommentsTab,
-    ModeDiff,
-    Enter,
-    Escape,
-    Comment,
-    Delete,
-    Resolve,
-    Abandon,
-    OpenEditor,
-    Fold,
-    Narrower,
-    Wider,
-    ToggleSidebar,
+    Open,
+    BackOut,
+    CycleTab,
+    GotoFiles,
+    GotoCommits,
+    GotoComments,
+    GotoDiff,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum FilesCommand {
+    Next,
+    Prev,
     ToggleTree,
     CycleSort,
     ToggleTint,
     ToggleCounts,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum DiffCommand {
+    NextHunk,
+    PrevHunk,
+    NextSymbol,
+    PrevSymbol,
+    FindSymbol,
     ToggleFullContext,
-    Info,
-    Refresh,
-    GroupDiff,
-    BeforeAfter,
+    GroupBySide,
+    CycleSide,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum CommentCommand {
+    Write,
+    Delete,
+    Resolve,
+    Abandon,
+    /// Folds the comment under the cursor — or a sidebar directory, the one
+    /// dual-target key in the map.
+    ToggleFold,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum LayoutCommand {
+    SidebarWider,
+    SidebarNarrower,
+    ToggleSidebar,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum AppCommand {
     Help,
     Quit,
+    Refresh,
+    OpenEditor,
+    ToggleChangeDetails,
 }
 
 impl Command {
@@ -210,28 +250,19 @@ impl Command {
     /// *ambient* (a view or session change). Only cursor-targeting children
     /// count when a leader decides it can skip its submenu for one live child.
     pub(super) fn targets_cursor(self) -> bool {
-        matches!(
-            self,
-            Command::Comment
-                | Command::Delete
-                | Command::Resolve
-                | Command::Abandon
-                | Command::OpenEditor
-                | Command::NextHunk
-                | Command::PreviousHunk
-                | Command::NextSymbol
-                | Command::PreviousSymbol
-                | Command::Pick
-                | Command::Fold
-                | Command::Enter
-                | Command::Forward
-                | Command::Back
-                | Command::PageForward
-                | Command::PageBackward
-                | Command::JumpFirst
-                | Command::JumpLast
-                | Command::ScrollLeft
-                | Command::ScrollRight
-        )
+        match self {
+            Command::Cursor(_) | Command::Comment(_) => true,
+            Command::Diff(command) => matches!(
+                command,
+                DiffCommand::NextHunk
+                    | DiffCommand::PrevHunk
+                    | DiffCommand::NextSymbol
+                    | DiffCommand::PrevSymbol
+                    | DiffCommand::FindSymbol
+            ),
+            Command::Pane(command) => matches!(command, PaneCommand::Open),
+            Command::App(command) => matches!(command, AppCommand::OpenEditor),
+            Command::Files(_) | Command::Layout(_) => false,
+        }
     }
 }
