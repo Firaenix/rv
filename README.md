@@ -1,15 +1,41 @@
 # rv
 
-A terminal code reviewer for [Jujutsu](https://jj-vcs.github.io/jj/) stacks.
+**Review code on your disk, not on a forge.** A terminal reviewer for
+[Jujutsu](https://jj-vcs.github.io/jj/) stacks — structural diffs, inline
+comments, and a CLI that makes the same review a coding agent's task list.
+
+![a review in rv: structural diff, inline comment, live status bar](docs/media/demo.gif)
 
 `rv` reads a range of jj changes out of your local repository, shows you the
-diff, and lets you attach comments to individual lines. Those comments live in
-`.review/`, and the same CLI is a coding agent's whole interface to them: the
-agent reads the review with `rv comments --json`, fixes the code, answers with
-`rv reply`, and ticks work off with `rv resolve` — no file parsing anywhere.
+diff — [difftastic](https://difftastic.wilfred.me.uk/)'s language-aware
+structural diff, syntax-highlighted, with full-file context — and lets you
+attach comments to individual lines. Those comments live in `.review/`,
+anchored to content rather than line numbers, so they survive rebases and
+amends.
+
+The same CLI is a coding agent's whole interface to the review: the agent
+reads it with `rv comments --json`, fixes the code, answers with `rv reply`,
+and ticks work off with `rv resolve` — no file parsing anywhere, and
+`rv status --check` is the poll loop. You review in one pane; the agent
+works through your findings in another; `rv` refreshes itself as the
+commits land.
 
 It is a review tool for the work sitting on your disk right now — before it
 becomes a pull request, or instead of ever becoming one.
+
+- **Structural diffs** — difftastic under the hood, with an honest
+  line-diff fallback that names itself in the status bar
+- **Comments that survive history rewrites** — content-anchored, with a
+  three-tier re-anchoring cascade before a comment is ever marked outdated
+- **A review per branch** — `rv feature-a` and `rv feature-b` are
+  independent sessions; jump between them and each is where you left it
+- **Auto-refresh** — the reviewer watches jj's operation log and follows
+  commits, rebases and checkouts as they happen
+- **An agent loop with no glue code** — JSON out, replies and resolutions
+  in, one exit code to poll
+- **Configurable** — remap any key in `keybindings.toml`, set your session
+  defaults in `Config.toml`, or use it stock with zero setup
+- **No forge, no network, no accounts** — it never leaves your machine
 
 ## What rv is not
 
@@ -23,10 +49,10 @@ becomes a pull request, or instead of ever becoming one.
 - **No history mutation.** `rv` opens the repository read-only. It never starts
   a transaction and never writes inside `.jj/`. The only things it writes are
   `.review/` and one line appended to `.git/info/exclude`.
-- **No user configuration.** `rv` deliberately ignores your jj config — your
+- **No jj-config coupling.** `rv` deliberately ignores your jj config — your
   `revset-aliases`, your `ui.diff.tool`, all of it. It behaves the same on a
-  fresh jj install as on a heavily customised one. The one knob is the
-  `RV_NO_DIFFT` environment variable below.
+  fresh jj install as on a heavily customised one. Its own configuration
+  lives in `~/.config/rv/` and every bit of it is optional.
 
 ## Requirements
 
@@ -368,6 +394,8 @@ line has no number on that side, `rv` refuses to save rather than anchoring it
 somewhere approximate, and says so in the status line.
 
 ### Inline comments
+
+![the comment browser: every finding, one Enter from its code](docs/media/shot-comments.png)
 
 A saved comment is drawn **beneath the line it is anchored to**, in a blue
 bordered box indented to the diff's gutter, titled with the comment's id and its
