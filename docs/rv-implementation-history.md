@@ -675,3 +675,38 @@ keystroke, and the refresh's own snapshot picks up plain file edits. Only
 from browse with nothing modal up: a confirmation or half-typed comment is
 never yanked. The refresh re-baselines the watch so its own snapshot does
 not schedule the next refresh forever. `auto_refresh = false` turns it off.
+
+## 2026-09-08 — a `tracing` sink, a dropped-merge race, and commit-view context
+
+**`.review/rv.log`** — every alert `App::raise`/`App::alert` puts up, and
+every panic, now also goes through `tracing::error!`, sunk to
+`.review/rv.log` by a subscriber installed once at TUI startup and filtered
+by `RUST_LOG` (`error` by default). A toast fades in five seconds; the log
+does not, so a reviewer who missed it — or an agent watching the file —
+still has it. `#[tracing::instrument]` plus `debug!` calls were added
+across the action-handling paths (file and commit selection, comment
+save/settle/delete, the view toggles) so `RUST_LOG=debug` traces which
+file, line, commit and comment id a keystroke touched — the thing that
+actually found the next bug.
+
+**The merger's dropped-request race** — `f` (full-file context) went
+silently, permanently inert on specific files. The merger holds one slot,
+mirroring the diff refiner; replacing a queued request left the replaced
+file's `MergeState::Pending` in place on the theory the worker was already
+running it, which was only true when the worker had actually grabbed the
+job. When a second file's merge landed in the slot first, the first file's
+`Pending` was a lie — and unlike the refiner, nothing ever re-kicked a
+*dropped merge* on return to the file, only a dropped refinement. Fixed by
+rolling a bumped target's merge state back to `None` (the same state a
+non-eligible diff already leaves), which the existing return-to-file path
+now recognises and re-kicks — traced from the reviewer's own session log,
+not reproduced synthetically first.
+
+**Commit-view full context** — a second, unrelated silent gap the same log
+line exposed: the commits tab's diffs were never merged at all — a
+follow-on this history already named as deferred. `App::merges` is keyed by
+file index; the commits view keys by pair, so it now has its own
+`App::commit_merges` map, and `start_merge`/`apply_merged` generalised over
+`diffs::Target` (File or Commit) the same way the refiner already does, one
+worker for both. `App::base_lines`/`context_bailed` read whichever the
+selected view names.

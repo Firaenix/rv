@@ -62,14 +62,25 @@ impl App {
     /// that, and the fallback case carries every line as `Context` under a note
     /// saying the difference is elsewhere. Refusing it would mean refusing a
     /// line the reviewer is looking at.
+    #[tracing::instrument(level = "debug", skip(self))]
     fn commit_comment(&mut self) -> Result<()> {
         let comment = match self.prepare_comment()? {
             Ok(comment) => comment,
             Err(reason) => {
+                tracing::debug!(reason, "commit_comment: refused");
                 self.status = reason;
                 return Ok(());
             }
         };
+        tracing::debug!(
+            id = comment.id,
+            file = comment.anchor.file,
+            line = comment.anchor.line,
+            side = ?comment.anchor.side,
+            change = comment.change_id,
+            commit = comment.commit_id,
+            "commit_comment: saved"
+        );
 
         // `prepare_comment` saved it through `session::save_comment`, export
         // refresh included; what is left is the screen. A new box adds rows to

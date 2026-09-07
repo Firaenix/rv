@@ -103,8 +103,11 @@ impl App {
 
     /// Puts `message` up, unless it is already up: the same failure raised
     /// twice is one thing that went wrong, and `x · x` says nothing the first
-    /// `x` did not.
+    /// `x` did not. Either way the message is emitted at `tracing::error!` —
+    /// the toast is transient, the log at `.review/rv.log` is what survives
+    /// the session. See [`super::errorlog`] for the sink.
     fn push_alert(&mut self, message: String, raised: Option<Instant>) {
+        tracing::error!("{message}");
         if self.alerts.iter().any(|alert| alert.message == message) {
             return;
         }

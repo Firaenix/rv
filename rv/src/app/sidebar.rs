@@ -71,10 +71,12 @@ impl App {
 
     /// Shows `tab` in the left column, without touching the focus — the inner
     /// half of [`App::goto_mode`], and the path `Tab`'s panel swap does not take.
+    #[tracing::instrument(level = "debug", skip(self))]
     pub(super) fn goto_tab(&mut self, tab: SidebarTab) -> Result<()> {
         if tab == self.sidebar_tab {
             return Ok(());
         }
+        tracing::debug!(?tab, "goto_tab");
         self.sidebar_tab = tab;
         // A zoom is an address in the tab it was made in; carried across it
         // would go dormant here and ambush the reviewer on the way back.

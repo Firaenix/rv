@@ -10,17 +10,20 @@
 //!
 //! # Design
 //!
-//! * The merge is computed **once per file**, cached in `App::merges`
-//!   parallel to `App::blobs`.
+//! * The merge is computed **once per target**, cached in `App::merges`
+//!   (parallel to `App::blobs`, indexed by file) or `App::commit_merges`
+//!   (parallel to `App::commit_blobs`, keyed by pair) — one worker handles
+//!   both, the target riding along in the request the same way
+//!   [`super::diffs::Refiner`] carries it.
 //! * While the merge is [`MergeState::Pending`] — the sub-second between
 //!   requesting it and its answer landing — [`App::displayed_lines`] returns
 //!   the diff's own changed-only lines. That is the shipped-before-this-
 //!   feature view, which is a fallback the reviewer has already seen and
 //!   which by construction always exists.
-//! * The status bar draws a `preparing full view` segment while the selected
-//!   file is [`MergeState::Pending`]; on [`MergeState::Ready`] the pane swaps
-//!   to the full view without a keystroke, and on [`MergeState::Bailed`] the
-//!   title-suffix "context unavailable" (§4.4) reports the decline.
+//! * The status bar draws a `preparing full view` segment while the shown
+//!   target is [`MergeState::Pending`]; on [`MergeState::Ready`] the pane
+//!   swaps to the full view without a keystroke, and on [`MergeState::Bailed`]
+//!   the title-suffix "context unavailable" (§4.4) reports the decline.
 //!
 //! # Single-slot, latest-wins
 //!
@@ -43,9 +46,10 @@ use rv_core::diff::compute_line_oriented;
 use rv_core::diff::merge_context;
 
 use super::App;
+use super::diffs::Target;
 
-/// What `App::merges[file]` holds while the merge is inflight, done, or
-/// declined.
+/// What `App::merges[file]` (or `App::commit_merges[pair]`) holds while the
+/// merge is inflight, done, or declined.
 ///
 /// See the module doc for how the three states drive the reviewer's view.
 #[derive(Debug)]
@@ -74,7 +78,7 @@ pub(super) enum MergeState {
 /// error: it is one of three legitimate outcomes the reviewer needs told
 /// apart from the other two.
 pub(super) struct Merged {
-    pub(super) file: usize,
+    pub(super) target: Target,
     pub(super) outcome: MergeOutcome,
 }
 
@@ -93,7 +97,7 @@ pub(super) enum MergeOutcome {
 
 /// A single-slot merge request.
 struct Request {
-    file: usize,
+    target: Target,
     /// The diff whose changed-lines drive the walk. Cloned into the request
     /// because the worker runs off the main thread and does not borrow from
     /// [`App`], and [`FileDiff`]'s `Vec<DiffLine>` is what the walk reads —
@@ -166,16 +170,34 @@ impl App {
     /// context) and empty ones (nothing to anchor from, §4.5): those files
     /// stay `merges[file] = None`, which [`App::displayed_lines`] treats the
     /// same as `Pending`, so the pane still draws the diff's own lines.
+    ///
+    /// A dropped-in-the-slot request also rolls its target back to `None`
+    /// rather than leaving it `Pending`: the worker holds one slot (below),
+    /// and a request queued for target A that gets replaced by target B
+    /// before the worker grabs it never runs — A's `Pending` would
+    /// otherwise lie forever, since [`super::navigate::load_selected`] and
+    /// [`super::commit_diff::App::select_commit_file`] only re-kick a
+    /// dropped *refinement* on return, not a dropped *merge*. Rolling back
+    /// to `None` makes the return-to-target re-kick this too. Mirrors
+    /// [`super::diffs::App::refine_target`]'s handling of its own dropped
+    /// requests.
+    #[tracing::instrument(level = "debug", skip(self))]
     pub(super) fn start_merge(&mut self, file: usize) {
+        let path = self.review.files.get(file).map(|f| f.path.clone());
         let Some(diff) = self.diffs.get(file).and_then(Option::as_ref) else {
+            tracing::debug!(?path, "start_merge: diff not loaded yet, skipping");
             return;
         };
         // The merge is only meaningful for a difftastic answer with lines to
         // walk from — mirrors the guard in [`super::context::build`].
         if !matches!(diff.source, DiffSource::Difftastic { .. }) || diff.lines.is_empty() {
-            if let Some(slot) = self.merges.get_mut(file) {
-                *slot = None;
-            }
+            tracing::debug!(
+                ?path,
+                source = ?diff.source,
+                lines = diff.lines.len(),
+                "start_merge: not a mergeable difftastic diff"
+            );
+            self.set_merge_state(Target::File(file), None);
             return;
         }
         let (base, head) = match self.blobs.get(file).and_then(Option::as_ref) {
@@ -183,26 +205,102 @@ impl App {
             None => (Vec::new(), Vec::new()),
         };
         let diff = diff.clone();
+        self.start_merge_for(Target::File(file), diff, base, head);
+    }
 
-        if let Some(slot) = self.merges.get_mut(file) {
-            *slot = Some(MergeState::Pending);
+    /// The commits-view counterpart of [`App::start_merge`] — same guards,
+    /// same slot, same drop-rollback, keyed by pair instead of file index.
+    #[tracing::instrument(level = "debug", skip(self))]
+    pub(super) fn start_commit_merge(&mut self, pair: usize) {
+        let Some(diff) = self.commit_diffs.get(&pair) else {
+            tracing::debug!(pair, "start_commit_merge: diff not loaded yet, skipping");
+            return;
+        };
+        if !matches!(diff.source, DiffSource::Difftastic { .. }) || diff.lines.is_empty() {
+            tracing::debug!(
+                pair,
+                source = ?diff.source,
+                lines = diff.lines.len(),
+                "start_commit_merge: not a mergeable difftastic diff"
+            );
+            self.set_merge_state(Target::Commit(pair), None);
+            return;
         }
+        let (base, head) = match self.commit_blobs.get(&pair) {
+            Some((base, head)) => (base.clone(), head.clone()),
+            None => (Vec::new(), Vec::new()),
+        };
+        let diff = diff.clone();
+        self.start_merge_for(Target::Commit(pair), diff, base, head);
+    }
+
+    /// Shared body of [`App::start_merge`] and [`App::start_commit_merge`]:
+    /// queues `target`'s merge, replacing whatever was waiting.
+    fn start_merge_for(&mut self, target: Target, diff: FileDiff, base: Vec<u8>, head: Vec<u8>) {
+        self.set_merge_state(target, Some(MergeState::Pending));
 
         self.start_merger();
-        let (slot, waiting) = &*self.merger.slot;
-        if let Ok(mut held) = slot.lock() {
-            // Replaced, not queued: the reviewer has scrolled past whatever
-            // was in there. Its `Pending` flag stays: the worker was
-            // finishing it anyway, and the reviewer may scroll back — a
-            // dropped request whose flag was cleared would show the fallback
-            // forever on the returned-to file.
-            *held = Some(Job::Merge(Request {
-                file,
+        // The dropped target, if any, is read out of the lock scope and
+        // rolled back after: `set_merge_state` needs `&mut self` as a whole,
+        // which the borrow on `self.merger.slot` below would otherwise
+        // still be alive for.
+        let dropped_target = {
+            let (slot, waiting) = &*self.merger.slot;
+            let Ok(mut held) = slot.lock() else {
+                return;
+            };
+            let previous = held.replace(Job::Merge(Request {
+                target,
                 diff,
                 base,
                 head,
             }));
             waiting.notify_one();
+            match previous {
+                Some(Job::Merge(dropped)) if dropped.target != target => Some(dropped.target),
+                _ => None,
+            }
+        };
+        match dropped_target {
+            Some(dropped_target) => {
+                tracing::debug!(
+                    ?dropped_target,
+                    "start_merge: replaced a queued request the worker never grabbed; \
+                     rolling its merge state back to None so a return re-kicks it"
+                );
+                self.set_merge_state(dropped_target, None);
+            }
+            None => tracing::debug!(?target, "start_merge: queued"),
+        }
+    }
+
+    /// Writes `state` for `target` into whichever storage it belongs to —
+    /// `merges[file]`, indexed, or `commit_merges[pair]`, a map. `None`
+    /// means the same thing in both: not attempted, or rolled back.
+    fn set_merge_state(&mut self, target: Target, state: Option<MergeState>) {
+        match target {
+            Target::File(file) => {
+                if let Some(slot) = self.merges.get_mut(file) {
+                    *slot = state;
+                }
+            }
+            Target::Commit(pair) => match state {
+                Some(state) => {
+                    self.commit_merges.insert(pair, state);
+                }
+                None => {
+                    self.commit_merges.remove(&pair);
+                }
+            },
+        }
+    }
+
+    /// Reads whatever [`App::set_merge_state`] last wrote for `target`. Read
+    /// by [`super::diffview`] to decide what the pane draws.
+    pub(super) fn merge_state_of(&self, target: Target) -> Option<&MergeState> {
+        match target {
+            Target::File(file) => self.merges.get(file).and_then(Option::as_ref),
+            Target::Commit(pair) => self.commit_merges.get(&pair),
         }
     }
 
@@ -249,7 +347,7 @@ impl App {
                 };
                 if sender
                     .send(Merged {
-                        file: request.file,
+                        target: request.target,
                         outcome,
                     })
                     .is_err()
@@ -272,6 +370,7 @@ impl App {
         arrived
     }
 
+    #[tracing::instrument(level = "debug", skip(self, merged), fields(target = ?merged.target))]
     fn apply_merged(&mut self, merged: Merged) {
         let outcome = merged.outcome;
         let line_oriented = matches!(
@@ -281,35 +380,56 @@ impl App {
                 ..
             }
         );
-        // Copy the retry-succeeded flag onto the file's DiffSource so
+        match &outcome {
+            MergeOutcome::Ready { lines, line_oriented } => tracing::debug!(
+                lines = lines.len(),
+                line_oriented,
+                "apply_merged: Ready"
+            ),
+            MergeOutcome::Bailed => tracing::debug!("apply_merged: Bailed"),
+        }
+        // Copy the retry-succeeded flag onto the diff's DiffSource so
         // [`crate::ui::diff::title`] can label the pane as line-diff-composed
         // (§4.6). Only mutate the flag; the `language` is the first
         // invocation's answer and stays put — see the enum's own doc.
-        if line_oriented
-            && let Some(Some(diff)) = self.diffs.get_mut(merged.file)
-            && let DiffSource::Difftastic {
-                line_oriented: flag,
-                ..
-            } = &mut diff.source
-        {
-            *flag = true;
+        match merged.target {
+            Target::File(file) => {
+                if line_oriented
+                    && let Some(Some(diff)) = self.diffs.get_mut(file)
+                    && let DiffSource::Difftastic {
+                        line_oriented: flag,
+                        ..
+                    } = &mut diff.source
+                {
+                    *flag = true;
+                }
+            }
+            Target::Commit(pair) => {
+                if line_oriented
+                    && let Some(diff) = self.commit_diffs.get_mut(&pair)
+                    && let DiffSource::Difftastic {
+                        line_oriented: flag,
+                        ..
+                    } = &mut diff.source
+                {
+                    *flag = true;
+                }
+            }
         }
-        if let Some(slot) = self.merges.get_mut(merged.file) {
-            *slot = Some(match outcome {
+        self.set_merge_state(
+            merged.target,
+            Some(match outcome {
                 MergeOutcome::Ready { lines, .. } => MergeState::Ready(lines),
                 MergeOutcome::Bailed => MergeState::Bailed,
-            });
-        }
+            }),
+        );
     }
 
     /// Blocks until the selected file's merge has landed. The reviewer never
     /// calls this; the event loop swaps as results arrive. Tests use it to
     /// look at a finished merge without racing the worker.
     pub fn finish_merging(&mut self) {
-        while matches!(
-            self.merges.get(self.file_index).and_then(Option::as_ref),
-            Some(MergeState::Pending)
-        ) {
+        while matches!(self.merge_state_of(self.shown_target()), Some(MergeState::Pending)) {
             match self.merger.results.recv() {
                 Ok(merged) => self.apply_merged(merged),
                 Err(_) => return,
@@ -317,14 +437,12 @@ impl App {
         }
     }
 
-    /// Whether the selected file's merge is still running. Read by the
-    /// status bar and by the event loop's paint poll.
+    /// Whether the diff on screen's merge is still running — the file's or,
+    /// in the commits view, the selected pair's ([`App::shown_target`]).
+    /// Read by the status bar and by the event loop's paint poll.
     #[must_use]
     pub fn merging(&self) -> bool {
-        matches!(
-            self.merges.get(self.file_index).and_then(Option::as_ref),
-            Some(MergeState::Pending)
-        )
+        matches!(self.merge_state_of(self.shown_target()), Some(MergeState::Pending))
     }
 }
 

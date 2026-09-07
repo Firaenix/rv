@@ -151,6 +151,7 @@ impl App {
             commit_pair: None,
             commit_diffs: HashMap::new(),
             commit_blobs: HashMap::new(),
+            commit_merges: HashMap::new(),
             symbol_index: crate::index::Index::default(),
             indexed_scope: None,
             refining: HashSet::new(),

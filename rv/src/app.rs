@@ -34,6 +34,7 @@ mod delete;
 mod diffs;
 mod diffview;
 mod editor;
+mod errorlog;
 mod enabled;
 mod focus;
 mod fold;
@@ -61,6 +62,7 @@ mod watch;
 mod zoom;
 
 pub use alerts::Alert;
+pub use errorlog::subscriber as error_log_subscriber;
 pub use changes::ChangeInfo;
 pub use sidebar::BrowserRow;
 pub use sidebar::Suppression;
@@ -316,6 +318,12 @@ pub struct App {
     /// The `(old, new)` bytes each `commit_diffs` entry was computed from,
     /// keyed the same way — see `blobs`' doc comment for why this exists.
     commit_blobs: HashMap<usize, (Vec<u8>, Vec<u8>)>,
+    /// The full-file-context merge for each `commit_diffs` entry, keyed the
+    /// same way — the commits-view counterpart of `merges`. A pair absent
+    /// here is the same "not yet attempted, or not eligible" state `merges`
+    /// spells with `None`; there is no separate empty variant because a
+    /// `HashMap` already has one.
+    commit_merges: HashMap<usize, merges::MergeState>,
     /// The symbols in scope, and which scope they were indexed for.
     ///
     /// Two fields rather than an `Option<(Scope, Index)>` because the index is

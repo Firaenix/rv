@@ -69,6 +69,7 @@ impl App {
     ) -> Result<()> {
         let mut app = Self::open_with_config(review, engine, config, settings)?;
 
+        super::errorlog::install(app.review.store.root());
         install_panic_hook();
         let mut terminal = ratatui::try_init().context("could not start the terminal")?;
         let result = capture_mouse().and_then(|()| app.event_loop(&mut terminal));
@@ -222,7 +223,9 @@ fn release_mouse() {
     let _ = execute!(std::io::stdout(), DisableMouseCapture);
 }
 
-/// Makes a panic restore the terminal before it prints.
+/// Makes a panic restore the terminal before it prints, and records the
+/// panic through `tracing::error!` so the subscriber at `.review/rv.log`
+/// keeps it after the terminal has scrolled past.
 ///
 /// The previous hook runs afterwards, so the message and backtrace land on a
 /// terminal that has left raw mode and the alternate screen. Mouse reporting
@@ -232,6 +235,7 @@ fn install_panic_hook() {
     std::panic::set_hook(Box::new(move |info| {
         release_mouse();
         ratatui::restore();
+        tracing::error!("panic: {info}");
         previous(info);
     }));
 }

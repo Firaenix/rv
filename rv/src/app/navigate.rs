@@ -256,10 +256,13 @@ impl App {
     /// `]` at the bottom no-ops rather than errors. The file reopens where it
     /// was left, re-clamped on the way in because it was clamped against
     /// whatever the diff was when it was written.
+    #[tracing::instrument(level = "debug", skip(self))]
     pub(super) fn select_file(&mut self, index: usize) -> Result<()> {
         if index >= self.review.files.len() || index == self.file_index {
             return Ok(());
         }
+        let path = self.review.files.get(index).map(|f| f.path.clone());
+        tracing::debug!(?path, index, "select_file");
         self.point_at_file(index);
         self.load_selected()?;
         self.set_cursor_row(self.cursor_row());
@@ -281,6 +284,7 @@ impl App {
     /// Both sides are read at their own path and their own commit, so a rename
     /// diffs its base-side source against its head-side target rather than
     /// against a file that does not exist.
+    #[tracing::instrument(level = "debug", skip(self))]
     pub(super) fn load_selected(&mut self) -> Result<()> {
         let Some(file) = self.review.files.get(self.file_index) else {
             return Ok(());
@@ -295,7 +299,24 @@ impl App {
                 && !self.refining.contains(&super::diffs::Target::File(file))
                 && !self.refined.contains(&super::diffs::Target::File(file))
             {
+                tracing::debug!(file, "load_selected: re-requesting a dropped refinement");
                 self.request_refinement(file)?;
+            }
+            // A merge whose request was dropped by the merger's own slot
+            // (see `start_merge`'s doc) is rolled back to `None`, the same
+            // state a non-difftastic or empty diff leaves behind. Only the
+            // dropped case is worth re-kicking: a diff that is genuinely
+            // difftastic-with-lines and still `None` here was never merged
+            // at all.
+            let eligible = matches!(
+                self.diffs[file].as_ref().map(|d| &d.source),
+                Some(rv_core::diff::DiffSource::Difftastic { .. })
+            ) && self.diffs[file]
+                .as_ref()
+                .is_some_and(|d| !d.lines.is_empty());
+            if eligible && self.merges.get(file).and_then(Option::as_ref).is_none() {
+                tracing::debug!(file, "load_selected: re-kicking a dropped merge");
+                self.start_merge(file);
             }
             return Ok(());
         }

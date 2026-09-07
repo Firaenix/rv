@@ -135,8 +135,22 @@ impl App {
     /// wants to see less on a big file, or who has hit a "context
     /// unavailable" file where the merge legitimately declined and wants
     /// the changed-only view without the title suffix.
+    #[tracing::instrument(level = "debug", skip(self))]
     fn toggle_full_context(&mut self) {
         self.set_full_context(!self.full_context());
+        let target = self.merge_target();
+        let merge_state = match self.merge_state_of(target) {
+            Some(super::merges::MergeState::Ready(lines)) => format!("Ready({} lines)", lines.len()),
+            Some(super::merges::MergeState::Pending) => "Pending".to_owned(),
+            Some(super::merges::MergeState::Bailed) => "Bailed".to_owned(),
+            None => "None".to_owned(),
+        };
+        tracing::debug!(
+            ?target,
+            full_context = self.full_context(),
+            merge_state,
+            "toggle_full_context"
+        );
         self.status = if self.full_context() {
             "full-file context — f shows only the changes".to_owned()
         } else {
@@ -146,8 +160,10 @@ impl App {
 
     /// `v g`: groups each hunk's removals before its additions instead of
     /// difftastic's interleaving. Session-only.
+    #[tracing::instrument(level = "debug", skip(self))]
     fn toggle_grouped(&mut self) {
         self.grouped = !self.grouped;
+        tracing::debug!(grouped = self.grouped, "toggle_grouped");
         self.status = if self.grouped {
             "grouped diff — v g interleaves again".to_owned()
         } else {
@@ -157,8 +173,10 @@ impl App {
 
     /// `v b`: cycles the diff pane through both sides, the base alone, and the
     /// head alone.
+    #[tracing::instrument(level = "debug", skip(self))]
     fn cycle_view_side(&mut self) {
         self.view_side = self.view_side.next();
+        tracing::debug!(side = self.view_side.label(), "cycle_view_side");
         self.status = format!("showing {} — v b cycles", self.view_side.label());
     }
 

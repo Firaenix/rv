@@ -867,6 +867,52 @@ fn switching_tabs_lands_on_the_selected_file() {
     );
 }
 
+/// Full-file context reaches the commits view too, not only the branch's own
+/// diff: the merge is cached per pair in `App::commit_merges`, mirroring
+/// `App::merges` for the file view (`docs/rv-implementation-history.md`,
+/// the commit-view merge follow-on).
+#[test]
+fn full_context_reaches_the_commits_view_too() {
+    // `Fixture::new` already adds `a.rs` as `SOURCE`; a second change
+    // rewrites its one line in place, so the newest change's diff of it is
+    // a genuine changed-only pair rather than a whole-file add.
+    let workspace = Fixture::new();
+    workspace.write("a.rs", "fn a() {\n    let x = 2;\n}\n");
+    workspace.jj(&["describe", "-m", "rewrite a line in place"]);
+    workspace.jj(&["new"]);
+
+    let mut app = workspace.app();
+    to_commits(&mut app);
+    // Newest first: the first file row belongs to "rewrite a line in
+    // place", the change whose diff is a genuine changed-only pair rather
+    // than a whole-file add.
+    down_to_a_file(&mut app);
+    app.on_key(KeyCode::Enter).expect("open the row");
+    app.finish_loading();
+    app.finish_merging();
+
+    assert!(
+        !app.context_bailed(),
+        "the commits-view merge declined unexpectedly"
+    );
+    // Changed-only would be two rows (the `Removed`/`Added` pair alone);
+    // full context adds the untouched opening and closing lines around it.
+    let lines = app.displayed_lines();
+    assert_eq!(
+        lines.len(),
+        4,
+        "full context did not reach the commits view: {lines:?}"
+    );
+    assert!(
+        lines.iter().any(|line| line.text == "fn a() {"),
+        "the untouched opening line is missing: {lines:?}"
+    );
+    assert!(
+        lines.iter().any(|line| line.text == "}"),
+        "the untouched closing line is missing: {lines:?}"
+    );
+}
+
 /// `m o` reaches the comments mode directly, and a repeated jump is inert.
 #[test]
 fn the_mode_leader_jumps_straight_to_a_mode() {

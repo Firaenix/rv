@@ -77,6 +77,7 @@ impl App {
     /// Only a lowercase `y` confirms. Every ambiguity resolves toward keeping
     /// the comment, because one of the two mistakes is recoverable by pressing
     /// `d` again and the other is not recoverable at all.
+    #[tracing::instrument(level = "debug", skip(self))]
     pub(super) fn on_key_confirm_delete(&mut self, key: KeyCode) -> Result<Action> {
         let Mode::ConfirmDelete { id, label } = std::mem::replace(&mut self.mode, Mode::Browse)
         else {
@@ -85,6 +86,7 @@ impl App {
         };
 
         if key != KeyCode::Char('y') {
+            tracing::debug!(id, label, "delete: cancelled");
             self.status = format!("deletion cancelled, {label} kept");
             return Ok(Action::Continue);
         }
@@ -100,6 +102,7 @@ impl App {
             .store
             .remove_comment(&id)
             .with_context(|| format!("could not delete the comment at {label}"))?;
+        tracing::debug!(id, label, removed, "delete: confirmed");
         self.reload_comments()?;
         // A folded comment that is gone is not folded, it is gone: leaving the
         // id behind would fold a later comment that hashed to it — the same

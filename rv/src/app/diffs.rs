@@ -59,7 +59,7 @@ enum Job {
 /// but the work of turning two blobs into a structural diff is identical, so
 /// one worker does both and the target rides along to say which slot the answer
 /// is for.
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(super) enum Target {
     File(usize),
     Commit(usize),
@@ -240,6 +240,9 @@ impl App {
             }
             Target::Commit(pair) => {
                 self.commit_diffs.insert(pair, refined.diff);
+                // As the File arm above: the two engines emit different
+                // lines, so a refined diff needs its own merge.
+                self.start_commit_merge(pair);
             }
         }
         self.refining.remove(&refined.target);

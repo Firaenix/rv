@@ -15,6 +15,7 @@ use rv_core::model::Side;
 
 use super::App;
 use super::ViewSide;
+use super::diffs::Target;
 use super::merges::MergeState;
 use crate::rows;
 use crate::rows::Plan;
@@ -57,18 +58,14 @@ impl App {
     /// # Cache and fallback
     ///
     /// The full-file merge is computed once per file by a background worker
-    /// and cached in `App::merges`. While it is inflight — or while the
-    /// reviewer has turned `f` off, or the diff is one the merger does not
-    /// run over at all — this returns the diff's own `lines` directly,
-    /// which is the changed-only view that shipped before the full-file
-    /// feature and is guaranteed to exist. The pane swaps to the full view
-    /// when the merge lands, with no keystroke.
-    ///
-    /// The commit-view diffs are not cached in `App::merges` (that Vec is
-    /// parallel to `App::diffs`, and the commits view keys by pair, not by
-    /// file). They fall back to the diff's own lines while the merge would
-    /// have to be computed synchronously here — a follow-on if commit-view
-    /// perf becomes a complaint, which the shipped version does not report.
+    /// and cached in `App::merges`, or, in the commits view, once per pair in
+    /// `App::commit_merges` — [`App::merge_state_of`] reads whichever one
+    /// `target` names. While it is inflight — or while the reviewer has
+    /// turned `f` off, or the diff is one the merger does not run over at
+    /// all — this returns the diff's own `lines` directly, which is the
+    /// changed-only view that shipped before the full-file feature and is
+    /// guaranteed to exist. The pane swaps to the full view when the merge
+    /// lands, with no keystroke.
     pub fn base_lines(&self) -> &[DiffLine] {
         let Some(diff) = self.selected_diff() else {
             return &[];
@@ -76,10 +73,7 @@ impl App {
         if !self.full_context {
             return &diff.lines;
         }
-        if self.showing_commit_view() {
-            return &diff.lines;
-        }
-        match self.merges.get(self.file_index).and_then(Option::as_ref) {
+        match self.merge_state_of(self.merge_target()) {
             Some(MergeState::Ready(lines)) => lines,
             // Pending, Bailed, or not-yet-requested: the changed-only view
             // is the fallback the module doc names.
@@ -111,13 +105,10 @@ impl App {
     /// suffix can never appear on a file the merge was never asked about,
     /// nor on one the reviewer turned the merge off for with `f`.
     pub fn context_bailed(&self) -> bool {
-        if !self.full_context || self.showing_commit_view() {
+        if !self.full_context {
             return false;
         }
-        matches!(
-            self.merges.get(self.file_index).and_then(Option::as_ref),
-            Some(MergeState::Bailed)
-        )
+        matches!(self.merge_state_of(self.merge_target()), Some(MergeState::Bailed))
     }
 
     /// Whether the branch-view diff is displaced by a commit-view one for
@@ -129,6 +120,22 @@ impl App {
                 self.commit_diffs.contains_key(&pair)
                     && self.commit_path(pair) == self.selected_file().map(|file| file.path.as_str())
             })
+    }
+
+    /// Which merge [`App::base_lines`] and [`App::context_bailed`] read —
+    /// the selected pair's in the commits view, the selected file's
+    /// otherwise. Kept as the same question [`App::showing_commit_view`]
+    /// answers rather than [`super::diffs::App::shown_target`]'s slightly
+    /// looser one (that one does not require the pair's diff to already be
+    /// cached), so a merge is never looked up for a pair `selected_diff`
+    /// itself would not have shown.
+    pub(super) fn merge_target(&self) -> Target {
+        if self.showing_commit_view() {
+            // `showing_commit_view` just confirmed `commit_pair` is `Some`.
+            Target::Commit(self.commit_pair.unwrap_or_default())
+        } else {
+            Target::File(self.file_index)
+        }
     }
 
     /// Whether the reviewer has the `f` toggle set to show full-file context.

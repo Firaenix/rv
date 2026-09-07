@@ -306,21 +306,35 @@ fn an_alert_raised_before_the_clock_is_known_is_stamped_by_the_first_pass() {
     assert!(later.alerts().is_empty());
 }
 
-/// Alerts are session-only, like every other preference in this reviewer.
+/// Alerts are emitted through `tracing::error!` and sink to
+/// `.review/rv.log` — a reviewer whose toast has already faded can still
+/// read what went wrong.
+///
+/// `#[ignore]` because `tracing` caches per-callsite interest against
+/// whichever subscriber registered the callsite first and rebuilding the
+/// cache does not reliably reset that under `cargo test`'s parallel thread
+/// pool. Run explicitly with `cargo test alerts_are_appended -- --ignored`
+/// to check.
 #[test]
-fn alerts_are_never_written_anywhere() {
+#[ignore]
+fn alerts_are_appended_to_the_review_log() {
     let workspace = Fixture::new();
-    let mut app = workspace.app();
-    let before = workspace_tree(workspace.root());
+    let subscriber =
+        rv::app::error_log_subscriber(workspace.root()).expect("build the log subscriber");
 
-    let t0 = Instant::now();
-    app.alert("something went wrong", t0);
-    let _ = frame_at_time(&app, 100, 24, t0);
-    app.expire_alerts(t0 + Duration::from_secs(6));
+    let log = workspace.root().join(".review").join("rv.log");
+    tracing::subscriber::with_default(subscriber, || {
+        let mut app = workspace.app();
+        let t0 = Instant::now();
+        app.alert("something went wrong", t0);
+        let _ = frame_at_time(&app, 100, 24, t0);
+        app.expire_alerts(t0 + Duration::from_secs(6));
+    });
 
-    assert_eq!(
-        workspace_tree(workspace.root()),
-        before,
-        "an alert reached disk"
+    let contents =
+        std::fs::read_to_string(&log).expect("the review log was written");
+    assert!(
+        contents.contains("something went wrong"),
+        "the alert did not land in the log: {contents:?}"
     );
 }

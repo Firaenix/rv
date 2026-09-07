@@ -25,10 +25,13 @@ impl App {
     /// A pair whose path is not in the bookmark's own list is passed over: it
     /// was touched by a change and undone by a later one, so the range has no
     /// file to select.
+    #[tracing::instrument(level = "debug", skip(self))]
     pub(super) fn select_commit_file(&mut self, pair: usize) -> Result<()> {
         let Some(path) = self.commit_path(pair).map(str::to_owned) else {
+            tracing::debug!(pair, "select_commit_file: no path for this row");
             return Ok(());
         };
+        tracing::debug!(pair, path, "select_commit_file");
         // Point at the file without the bookmark's diff of it — the change's own
         // diff, loaded below, is what this view shows.
         if let Some(index) = self.review.files.iter().position(|file| file.path == path)
@@ -58,6 +61,20 @@ impl App {
                 && !self.refined.contains(&super::diffs::Target::Commit(pair))
             {
                 self.refine_commit(pair)?;
+            }
+            // The commits-view counterpart of `load_selected`'s dropped-merge
+            // re-kick: a merge whose request was replaced in the merger's
+            // slot before the worker grabbed it rolls back to no entry here
+            // (`start_merge`'s doc). Only worth re-kicking when the cached
+            // diff is genuinely eligible — see `start_commit_merge`'s own
+            // guard for what that means.
+            let eligible = self.commit_diffs.get(&pair).is_some_and(|diff| {
+                matches!(diff.source, rv_core::diff::DiffSource::Difftastic { .. })
+                    && !diff.lines.is_empty()
+            });
+            if eligible && !self.commit_merges.contains_key(&pair) {
+                tracing::debug!(pair, "load_commit_diff: re-kicking a dropped merge");
+                self.start_commit_merge(pair);
             }
             return Ok(());
         }
@@ -91,6 +108,12 @@ impl App {
         self.commit_diffs.insert(pair, diff);
         self.parse_highlights(from, base_path.clone(), old.as_deref());
         self.parse_highlights(to, head_path.clone(), new.as_deref());
+        // Kicked unconditionally, as `load_selected` kicks the file-view
+        // merge: for `DiffEngine::Structural` the diff just stored is
+        // already difftastic's and the merge proceeds now; for `Auto` it is
+        // still the fast fallback and this bails, to be re-kicked below
+        // once the refined diff lands.
+        self.start_commit_merge(pair);
         if self.engine() == super::DiffEngine::Auto {
             self.refine_target(super::diffs::Target::Commit(pair), head_path, old, new);
         }

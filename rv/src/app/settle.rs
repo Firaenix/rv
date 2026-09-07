@@ -39,6 +39,7 @@ impl App {
 
     /// Moves the comment under the cursor to `wanted`, or back to `Open` when
     /// it is already there — which is what makes both keys their own undo.
+    #[tracing::instrument(level = "debug", skip(self))]
     fn settle(&mut self, wanted: CommentState, verb: &str) -> Result<()> {
         let Some(comment) = self.settle_target() else {
             self.status = match (self.focus, self.sidebar_tab) {
@@ -59,6 +60,7 @@ impl App {
             wanted
         };
 
+        tracing::debug!(id, label, state = ?state, "settle");
         self.review
             .store
             .settle_comment(&id, state, SettledBy::User)
