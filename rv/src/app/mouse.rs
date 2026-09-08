@@ -95,6 +95,13 @@ impl App {
         self.painted.set(painted);
     }
 
+    /// The rectangles the last frame was painted with. A test that resolves a
+    /// gesture resolves it against the same geometry the hit test reads.
+    #[must_use]
+    pub fn painted_layout(&self) -> Layout {
+        self.painted.get()
+    }
+
     /// The button going down: on the divider it takes hold of it, and anywhere
     /// else it is a choice.
     fn on_press(&mut self, painted: &Layout, column: u16, row: u16) -> Result<()> {

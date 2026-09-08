@@ -57,7 +57,12 @@ fn a_degraded_pane_says_why_it_is_degraded() {
 /// guess as a fact would look like on screen.
 #[test]
 fn an_unusable_difft_is_not_labelled_like_a_chosen_fallback() {
-    let chosen = rv::ui::title(&fallback(FallbackReason::NotAttempted), Some("Rust"), false, false);
+    let chosen = rv::ui::title(
+        &fallback(FallbackReason::NotAttempted),
+        Some("Rust"),
+        false,
+        false,
+    );
 
     for reason in [
         FallbackReason::NotInstalled,
@@ -103,7 +108,10 @@ fn the_other_titles_are_unchanged() {
         source: DiffSource::Binary,
         ..fallback(FallbackReason::NotAttempted)
     };
-    assert_eq!(rv::ui::title(&binary, None, false, false), "ctx.rs — binary");
+    assert_eq!(
+        rv::ui::title(&binary, None, false, false),
+        "ctx.rs — binary"
+    );
 
     assert_eq!(
         rv::ui::title(&fallback(FallbackReason::NotInstalled), None, false, false),

@@ -735,3 +735,39 @@ own second invocation. `MergeState::Bailed` is believed unreachable in
 practice now, for any file with real text on both sides, but stays rather
 than being deleted — named explicitly as the design spec's own §4.5 already
 does for its own deferred case.
+
+## The click's own receipt: a correctness property for the sidebar mouse
+
+The safety fuzz `no_gesture_panics_quits_or_destroys_a_comment` proves the
+mouse can be pointed at anything with no panic, no quit and no lost comment.
+It cannot prove the click opened the *right* thing — the Commits-tab bug it
+was written around would have sailed through it — and it never left the files
+list, so a whole row kind went unfuzzed. Two additions close both halves.
+
+The fuzz now generates a tab with every gesture and walks the sidebar there
+before pointing, so file rows, change rows, comment rows and browser headings
+all get pointer traffic across the three lists.
+
+The new property, `clicking_a_file_row_selects_that_rows_file`, states the
+claim the safety fuzz cannot: click a file row and the file selected is the
+one drawn at that row. Its oracle is the node under the pointer, read off the
+same `nodes()` list the renderer painted, translated by the tab — a bookmark
+file's own path in the Files list, `commit_path(pair)` under a change. A
+click in the pane but past the last row is kept as its own arm (select
+nothing), and a `Coverage` receipt fails the run if any arm — either tab, the
+below-the-list case, or the interesting one — went unsampled.
+
+The fixture is where this was won. On the single-change `multi` fixture the
+property *passed while the bug was put back in*: one change means the pair
+order and the bookmark's file order are the same order, so the two index
+spaces agree everywhere and no translation looks wrong. `Fixture::stack`
+splits four files across two changes, newest listed first, so pair 0 is
+`c.rs` while bookmark 0 is `a.rs` — and the mutation (routing the click back
+through `select_file`) fails on the first row it samples, shrinking to a
+one-click counterexample. That disagreement arm is what the coverage receipt
+demands be sampled; without it the property is a pass on a fixture that
+cannot tell right from wrong.
+
+`App::painted_layout` was added for the test: the rectangles `note_layout`
+records are private, and a gesture resolved against a recomputed layout is
+not a gesture resolved against the frame that was drawn.

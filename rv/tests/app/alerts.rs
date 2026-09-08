@@ -331,8 +331,7 @@ fn alerts_are_appended_to_the_review_log() {
         app.expire_alerts(t0 + Duration::from_secs(6));
     });
 
-    let contents =
-        std::fs::read_to_string(&log).expect("the review log was written");
+    let contents = std::fs::read_to_string(&log).expect("the review log was written");
     assert!(
         contents.contains("something went wrong"),
         "the alert did not land in the log: {contents:?}"

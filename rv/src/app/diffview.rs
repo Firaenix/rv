@@ -108,7 +108,10 @@ impl App {
         if !self.full_context {
             return false;
         }
-        matches!(self.merge_state_of(self.merge_target()), Some(MergeState::Bailed))
+        matches!(
+            self.merge_state_of(self.merge_target()),
+            Some(MergeState::Bailed)
+        )
     }
 
     /// Whether full-file context for the selected target came from

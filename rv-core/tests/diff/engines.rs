@@ -339,14 +339,8 @@ fn whole_file_diff_always_accounts_for_every_line_of_both_sides() {
 
     let merged = whole_file_diff(Some(old), Some(new));
 
-    let old_covered: Vec<u32> = merged
-        .iter()
-        .filter_map(|line| line.left)
-        .collect();
-    let new_covered: Vec<u32> = merged
-        .iter()
-        .filter_map(|line| line.right)
-        .collect();
+    let old_covered: Vec<u32> = merged.iter().filter_map(|line| line.left).collect();
+    let new_covered: Vec<u32> = merged.iter().filter_map(|line| line.right).collect();
     assert_eq!(
         old_covered,
         (1..=5).collect::<Vec<_>>(),
@@ -358,8 +352,9 @@ fn whole_file_diff_always_accounts_for_every_line_of_both_sides() {
         "every new-side line number must appear exactly once, in order: {merged:?}"
     );
     assert!(
-        merged.iter().any(|line| line.kind == LineKind::Context
-            && line.text == "fn a() {"),
+        merged
+            .iter()
+            .any(|line| line.kind == LineKind::Context && line.text == "fn a() {"),
         "the untouched opening line is missing: {merged:?}"
     );
 }

@@ -34,8 +34,8 @@ mod delete;
 mod diffs;
 mod diffview;
 mod editor;
-mod errorlog;
 mod enabled;
+mod errorlog;
 mod focus;
 mod fold;
 mod hunks;
@@ -62,8 +62,8 @@ mod watch;
 mod zoom;
 
 pub use alerts::Alert;
-pub use errorlog::subscriber as error_log_subscriber;
 pub use changes::ChangeInfo;
+pub use errorlog::subscriber as error_log_subscriber;
 pub use sidebar::BrowserRow;
 pub use sidebar::Suppression;
 

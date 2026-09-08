@@ -401,7 +401,10 @@ impl App {
             }
         );
         match &outcome {
-            MergeOutcome::Ready { lines, line_oriented } => {
+            MergeOutcome::Ready {
+                lines,
+                line_oriented,
+            } => {
                 tracing::debug!(lines = lines.len(), line_oriented, "apply_merged: Ready");
             }
             MergeOutcome::ReadyFallback(lines) => {
@@ -453,7 +456,10 @@ impl App {
     /// calls this; the event loop swaps as results arrive. Tests use it to
     /// look at a finished merge without racing the worker.
     pub fn finish_merging(&mut self) {
-        while matches!(self.merge_state_of(self.shown_target()), Some(MergeState::Pending)) {
+        while matches!(
+            self.merge_state_of(self.shown_target()),
+            Some(MergeState::Pending)
+        ) {
             match self.merger.results.recv() {
                 Ok(merged) => self.apply_merged(merged),
                 Err(_) => return,
@@ -466,7 +472,10 @@ impl App {
     /// Read by the status bar and by the event loop's paint poll.
     #[must_use]
     pub fn merging(&self) -> bool {
-        matches!(self.merge_state_of(self.shown_target()), Some(MergeState::Pending))
+        matches!(
+            self.merge_state_of(self.shown_target()),
+            Some(MergeState::Pending)
+        )
     }
 }
 

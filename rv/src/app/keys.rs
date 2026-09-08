@@ -140,7 +140,9 @@ impl App {
         self.set_full_context(!self.full_context());
         let target = self.merge_target();
         let merge_state = match self.merge_state_of(target) {
-            Some(super::merges::MergeState::Ready(lines)) => format!("Ready({} lines)", lines.len()),
+            Some(super::merges::MergeState::Ready(lines)) => {
+                format!("Ready({} lines)", lines.len())
+            }
             Some(super::merges::MergeState::ReadyFallback(lines)) => {
                 format!("ReadyFallback({} lines)", lines.len())
             }

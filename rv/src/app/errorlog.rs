@@ -34,8 +34,7 @@ pub fn subscriber(root: &Path) -> Option<impl Subscriber + Send + Sync + 'static
 }
 
 fn build(file: File) -> impl Subscriber + Send + Sync + 'static {
-    let filter =
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("error"));
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("error"));
     fmt::Subscriber::builder()
         .with_writer(file)
         .with_ansi(false)

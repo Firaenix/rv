@@ -938,7 +938,8 @@ fn clicking_a_commit_file_row_selects_that_files_own_diff() {
         .to_owned();
 
     let click_row = sidebar_pane_row(&app, 100, 24, u16::try_from(row).expect("a small row"));
-    app.on_mouse(click(3, click_row)).expect("click the file row");
+    app.on_mouse(click(3, click_row))
+        .expect("click the file row");
 
     assert_eq!(
         app.selected_file().expect("a file").path,

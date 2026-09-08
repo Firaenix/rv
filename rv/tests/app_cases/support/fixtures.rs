@@ -159,10 +159,33 @@ impl Fixture {
         fixture
     }
 
+    /// Four files and two changes, one change per pair of them.
+    ///
+    /// `App::open` reviews `@--..@`, so both changes are in the review: the
+    /// bookmark's file list is all four sorted by path, while the commits tab
+    /// lists the *newest* change's files first. The two index spaces therefore
+    /// disagree from the first row down — the only fixture here where they do,
+    /// and the one a click test needs to tell a pair index from a file index.
+    pub fn stack() -> Self {
+        let fixture = Self::init();
+        for name in ["a.rs", "b.rs", "c.rs", "d.rs"] {
+            fixture.write(name, "fn placeholder() {}\n");
+        }
+        fixture.jj(&["describe", "-m", "base change"]);
+        fixture.jj(&["new"]);
+        fixture.write("a.rs", "fn a() {\n    1;\n}\n");
+        fixture.write("b.rs", "fn b() {\n    1;\n}\n");
+        fixture.jj(&["describe", "-m", "the first pair"]);
+        fixture.jj(&["new"]);
+        fixture.write("c.rs", "fn c() {\n    1;\n}\n");
+        fixture.write("d.rs", "fn d() {\n    1;\n}\n");
+        fixture.jj(&["describe", "-m", "the second pair"]);
+        fixture
+    }
+
     pub fn root(&self) -> &Path {
         self.tempdir.path()
     }
-
     pub fn jj(&self, args: &[&str]) -> String {
         let output = Command::new("jj")
             .args(args)
