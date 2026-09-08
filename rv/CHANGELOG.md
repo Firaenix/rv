@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.0](https://github.com/Firaenix/rv/compare/v1.6.1...v1.7.0) - 2026-09-08
+
+### Added
+
+- *(rv)* whole-file diff fallback when difftastic can't pair a reformatted region
+
 ## [1.6.1](https://github.com/Firaenix/rv/compare/v1.6.0...v1.6.1) - 2026-09-08
 
 ### Fixed
