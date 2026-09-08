@@ -116,6 +116,7 @@ impl App {
             sort: settings.sort.map_or_else(Sort::default, Sort::from),
             tint: settings.tint.unwrap_or(true),
             counts: settings.counts.unwrap_or(true),
+            wrap_commit_subjects: settings.wrap_commit_subjects.unwrap_or(false),
             zoom: Vec::new(),
             nodes_cache: std::cell::RefCell::new(None),
             sidebar_row: 0,

@@ -41,6 +41,10 @@ pub struct Settings {
     /// Refresh the review by itself when the repository moves — a commit, a
     /// checkout, a rebase, an agent's edit landing. On by default.
     pub auto_refresh: Option<bool>,
+    /// Wrap a commit row's hash and subject onto as many rows as it takes,
+    /// in the commits list, rather than clipping the subject to one. Off by
+    /// default — one row per commit is what fits the most changes on screen.
+    pub wrap_commit_subjects: Option<bool>,
 }
 
 #[derive(Deserialize, Debug, Clone, Copy)]

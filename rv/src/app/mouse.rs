@@ -134,7 +134,17 @@ impl App {
                 match self.nodes().get(index).map(|node| &node.kind) {
                     Some(NodeKind::File { index }) => {
                         let index = *index;
-                        self.select_file(index)?;
+                        // Not `select_file` directly: in the Commits tab a
+                        // `NodeKind::File`'s index is a pair into
+                        // `commit_index().pairs`, not a bookmark-file index —
+                        // the same dispatch `Enter`'s `select_node_file`
+                        // already does for the keyboard. Calling `select_file`
+                        // unconditionally here picked whatever bookmark file
+                        // happened to sit at that same numeric index, which
+                        // is a different file whenever the two index spaces
+                        // disagree — the mouse equivalent of a comment landing
+                        // on the wrong line.
+                        self.select_node_file(index)?;
                     }
                     // The same verb `s` has on the same row.
                     Some(NodeKind::Dir { .. } | NodeKind::Commit { .. }) => self.toggle_collapse(),

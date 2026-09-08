@@ -67,6 +67,12 @@ impl App {
         self.tint
     }
 
+    /// Whether a commit row wraps its hash and subject onto as many rows as
+    /// it takes. Session-only.
+    pub fn wrap_commit_subjects(&self) -> bool {
+        self.wrap_commit_subjects
+    }
+
     /// Whether the sidebar shows its `+n -n` column. Session-only.
     pub fn counts_shown(&self) -> bool {
         self.counts

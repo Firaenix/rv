@@ -88,6 +88,7 @@ impl App {
         // split and the sort, and losing it on `R` would silently reset a
         // reviewer's chosen view.
         fresh.set_full_context(self.full_context());
+        fresh.wrap_commit_subjects = self.wrap_commit_subjects;
 
         // The file, not the index: a rebased stack lists files in a new order,
         // and index 3 of the new list is not what the reviewer was reading.

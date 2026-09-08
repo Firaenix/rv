@@ -101,15 +101,19 @@ fn structure_style(node: &Node) -> Style {
 
 /// A change row's name, cut down to what `names` columns can hold.
 ///
-/// Three forms, widest first: both ids and the subject, both ids, the change id
-/// alone. `None` for any other row, and for a change row whose full form already
-/// fits.
+/// Four forms, widest first: both ids and the whole subject, both ids and as
+/// much of the subject as fits (clipped, never dropped outright), both ids
+/// alone, the change id alone. `None` for any other row, and for a change row
+/// whose full form already fits.
 ///
 /// The ids come before the subject because they are what a reviewer *acts* on —
 /// pasted into `jj show`, typed to select the change — and the subject is on the
 /// bar whenever the cursor is in the change anyway. And an id is kept whole or
 /// dropped: `e…` is not a commit hash, it is a hash-shaped hole, and a row that
-/// prints one invites a paste that cannot work.
+/// prints one invites a paste that cannot work. The subject has no such
+/// constraint — nothing is pasted from it — so a subject that almost fits is
+/// clipped rather than dropped: a row reading `refactor(rv): review sweep…`
+/// still says something a blank space after the ids does not.
 fn fit_commit(node: &Node, head: &str, lead: usize, names: usize) -> Option<String> {
     let NodeKind::Commit {
         short_change,
@@ -126,7 +130,13 @@ fn fit_commit(node: &Node, head: &str, lead: usize, names: usize) -> Option<Stri
         return None;
     }
     let ids = format!("{short_change} {short_commit}");
-    let text = if ids.chars().count() <= room {
+    let ids_len = ids.chars().count();
+    let text = if room > ids_len + 1 {
+        // Room for the ids, the separating space, and at least the clip
+        // marker: keep the ids whole and clip the subject into what is left.
+        let subject_room = room - ids_len - 1;
+        format!("{ids} {}", clip(subject, subject_room))
+    } else if ids_len <= room {
         ids
     } else {
         short_change.clone()

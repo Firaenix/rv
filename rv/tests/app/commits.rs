@@ -913,6 +913,74 @@ fn full_context_reaches_the_commits_view_too() {
     );
 }
 
+/// A mouse click on a commits-tab file row selects *that* file's own diff,
+/// not the bookmark file that happens to share its row's numeric index.
+/// `NodeKind::File`'s index is a pair into `CommitIndex` in this tab — a
+/// different space from `App::files()`'s — and `click_sidebar` used to route
+/// both through `select_file` unconditionally, which quietly opened whichever
+/// bookmark file happened to sit at that same number instead of the file
+/// under the pointer.
+#[test]
+fn clicking_a_commit_file_row_selects_that_files_own_diff() {
+    let workspace = two_changes();
+    let mut app = workspace.app();
+    to_commits(&mut app);
+    down_to_a_file(&mut app);
+    let row = app.sidebar_row();
+
+    let nodes = app.commit_nodes();
+    let NodeKind::File { index: pair } = nodes[row].kind else {
+        panic!("the cursor did not land on a file row: {:?}", nodes[row]);
+    };
+    let expected_path = app
+        .commit_path(pair)
+        .expect("a path for this row's pair")
+        .to_owned();
+
+    let click_row = sidebar_pane_row(&app, 100, 24, u16::try_from(row).expect("a small row"));
+    app.on_mouse(click(3, click_row)).expect("click the file row");
+
+    assert_eq!(
+        app.selected_file().expect("a file").path,
+        expected_path,
+        "the click selected a different file than the row it landed on"
+    );
+}
+
+/// A subject too long for its row is clipped with an ellipsis, not dropped
+/// outright: `fit_commit` used to have only "ids + whole subject" and
+/// "ids only" tiers, so a subject that almost fit vanished completely the
+/// moment it did not fully fit, rather than showing however much did.
+#[test]
+fn a_long_subject_is_clipped_rather_than_dropped() {
+    let workspace = Fixture::new();
+    workspace.jj(&[
+        "describe",
+        "-m",
+        "refactor(libs/p2p-protocol+queue+tui-components+earnings-protocol): \
+         review sweep — trim comments",
+    ]);
+    let mut app = workspace.app();
+    to_commits(&mut app);
+
+    // Wide enough for the ids and part of the subject, not wide enough for
+    // the whole ~100-character subject — the exact gap the fix closes.
+    let frame = frame_at(&app, 400, 24);
+    let text = buffer_text(&frame);
+    assert!(
+        text.contains("refactor(libs"),
+        "the subject is missing entirely rather than clipped: {text}"
+    );
+    assert!(
+        !text.contains("trim comments"),
+        "this width was meant to be too narrow for the whole subject: {text}"
+    );
+    assert!(
+        text.contains('…'),
+        "a subject that does not fully fit must say so: {text}"
+    );
+}
+
 /// `m o` reaches the comments mode directly, and a repeated jump is inert.
 #[test]
 fn the_mode_leader_jumps_straight_to_a_mode() {

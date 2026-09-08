@@ -195,6 +195,11 @@ pub struct App {
     /// Whether a sidebar row's name is tinted by its change's proportion —
     /// green through the seam to red, across the text itself.
     tint: bool,
+    /// Whether a commit row in the commits list wraps its hash and subject
+    /// onto as many rows as it takes, rather than clipping the subject to
+    /// one. Commits-only, unlike `tint`/`counts`: a file or directory row
+    /// has no subject to wrap.
+    wrap_commit_subjects: bool,
     /// Where the sidebar is zoomed into, innermost last — see [`zoom`].
     zoom: Vec<zoom::Zoom>,
     /// The built sidebar rows, memoized against a fingerprint of what shapes

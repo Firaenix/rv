@@ -261,6 +261,7 @@ full_context = false   # open on changes-only
 grouped = true         # removals before additions in each hunk
 tint = false           # no proportion tint on sidebar rows
 counts = false         # no +n -n column
+wrap_commit_subjects = true  # wrap commit rows instead of clipping them
 sidebar_hidden = true  # open with the sidebar put away
 split = 40             # sidebar share of the width, in percent
 ascii = true           # ASCII status-bar separators (RV_ASCII as a setting)
