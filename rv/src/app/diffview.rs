@@ -74,7 +74,7 @@ impl App {
             return &diff.lines;
         }
         match self.merge_state_of(self.merge_target()) {
-            Some(MergeState::Ready(lines)) => lines,
+            Some(MergeState::Ready(lines) | MergeState::ReadyFallback(lines)) => lines,
             // Pending, Bailed, or not-yet-requested: the changed-only view
             // is the fallback the module doc names.
             _ => &diff.lines,
@@ -109,6 +109,20 @@ impl App {
             return false;
         }
         matches!(self.merge_state_of(self.merge_target()), Some(MergeState::Bailed))
+    }
+
+    /// Whether full-file context for the selected target came from
+    /// `similar`'s whole-file diff — both difftastic-based attempts
+    /// declined, and this recovered where [`App::context_bailed`] used to
+    /// be the last word. `ui/diff.rs::title` reads this to name the engine.
+    pub fn context_via_fallback(&self) -> bool {
+        if !self.full_context {
+            return false;
+        }
+        matches!(
+            self.merge_state_of(self.merge_target()),
+            Some(MergeState::ReadyFallback(_))
+        )
     }
 
     /// Whether the branch-view diff is displaced by a commit-view one for

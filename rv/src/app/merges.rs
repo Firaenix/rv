@@ -21,9 +21,11 @@
 //!   feature view, which is a fallback the reviewer has already seen and
 //!   which by construction always exists.
 //! * The status bar draws a `preparing full view` segment while the shown
-//!   target is [`MergeState::Pending`]; on [`MergeState::Ready`] the pane
-//!   swaps to the full view without a keystroke, and on [`MergeState::Bailed`]
-//!   the title-suffix "context unavailable" (§4.4) reports the decline.
+//!   target is [`MergeState::Pending`]; on [`MergeState::Ready`] or
+//!   [`MergeState::ReadyFallback`] the pane swaps to the full view without a
+//!   keystroke, labelled by which engine built it. [`MergeState::Bailed`]
+//!   remains as the honest "nothing worked" answer, believed unreachable in
+//!   practice now that [`MergeState::ReadyFallback`] exists — see its doc.
 //!
 //! # Single-slot, latest-wins
 //!
@@ -44,6 +46,7 @@ use rv_core::diff::DiffSource;
 use rv_core::diff::FileDiff;
 use rv_core::diff::compute_line_oriented;
 use rv_core::diff::merge_context;
+use rv_core::diff::whole_file_diff;
 
 use super::App;
 use super::diffs::Target;
@@ -57,18 +60,26 @@ pub(super) enum MergeState {
     /// A merge for this file has been requested; the worker has not returned
     /// yet. The pane draws the diff's own changed-only lines until it does.
     Pending,
-    /// The merge succeeded. These are the lines the pane draws. Whether the
-    /// merge came from the syntax-aware answer or the §4.6 `--byte-limit 0`
-    /// retry is recorded on the file's [`DiffSource::Difftastic`]
-    /// (`line_oriented`), which [`crate::ui::diff::title`] reads to label
-    /// the pane — the `Ready` variant carries only the lines because a
-    /// second copy on the state and the source would be one thing to keep
-    /// in step.
+    /// The syntax-aware answer merged the whole file on its own, or
+    /// difftastic's own `--byte-limit 0` retry (§4.6) did after the
+    /// syntax-aware pass declined. Which one is recorded on the file's
+    /// [`DiffSource::Difftastic`] (`line_oriented`), which
+    /// [`crate::ui::diff::title`] reads to label the pane.
     Ready(Vec<DiffLine>),
-    /// The merge was attempted, the retry was attempted, and both declined.
-    /// The pane draws the diff's own changed-only lines and the title carries
-    /// "context unavailable" — the same fallback `Pending` shows, but
-    /// permanent.
+    /// Even difftastic's own retry could not pair a region 1:1 — both
+    /// difftastic-based attempts inferred an unreported gap from two
+    /// anchor points and the two sides disagreed on the gap's length
+    /// (design spec §3). `similar`'s whole-file line diff (the same engine
+    /// [`DiffSource::Similar`] names elsewhere) merged instead: it never
+    /// infers a gap, so it cannot hit the same ambiguity. The pane still
+    /// shows the whole file; the title says which engine built it.
+    ReadyFallback(Vec<DiffLine>),
+    /// The merge was attempted, the retry was attempted, and both declined,
+    /// with no further recourse. Believed unreachable for any file with
+    /// real text on both sides — `similar`'s diff (above) always succeeds
+    /// where it is tried — kept rather than removed because a future
+    /// change to either engine could reopen it, and "we give up" should
+    /// stay representable if it ever legitimately recurs.
     Bailed,
 }
 
@@ -83,15 +94,16 @@ pub(super) struct Merged {
 }
 
 pub(super) enum MergeOutcome {
-    /// The merge completed and produced lines.
+    /// The merge completed and produced lines, difftastic-based either way.
     Ready {
         lines: Vec<DiffLine>,
         line_oriented: bool,
     },
-    /// The merge was attempted, and — where the syntax-aware answer
-    /// returned `None` — the `--byte-limit 0` retry (§4.6) was attempted
-    /// too, and both declined. This is the honest "no line-for-line
-    /// pairing" answer, not a failure to try.
+    /// Neither difftastic-based attempt could pair the file; `similar`'s
+    /// whole-file diff did.
+    ReadyFallback(Vec<DiffLine>),
+    /// Both difftastic-based attempts declined and, at the point this is
+    /// constructed, so did the whole-file fallback — see [`MergeState::Bailed`].
     Bailed,
 }
 
@@ -340,10 +352,18 @@ impl App {
                     },
                     // §4.6: the syntax-aware merge declined (§3's
                     // reformatted-region case). Ask difftastic again with its
-                    // line-oriented engine and try to merge the result; only
-                    // bail if *that* also cannot pair. One extra difftastic
-                    // spawn per file, cached like everything else.
-                    None => retry_line_oriented(&request, &old_text, &new_text),
+                    // line-oriented engine and try to merge the result.
+                    None => match retry_line_oriented(&request, &old_text, &new_text) {
+                        outcome @ MergeOutcome::Ready { .. } => outcome,
+                        // Even the retry could not pair a region 1:1: fall
+                        // back to a whole-file diff of the same two blobs,
+                        // which cannot hit this ambiguity because it never
+                        // infers a gap — see `MergeState::ReadyFallback`.
+                        _ => MergeOutcome::ReadyFallback(whole_file_diff(
+                            Some(&request.base),
+                            Some(&request.head),
+                        )),
+                    },
                 };
                 if sender
                     .send(Merged {
@@ -381,17 +401,20 @@ impl App {
             }
         );
         match &outcome {
-            MergeOutcome::Ready { lines, line_oriented } => tracing::debug!(
-                lines = lines.len(),
-                line_oriented,
-                "apply_merged: Ready"
-            ),
+            MergeOutcome::Ready { lines, line_oriented } => {
+                tracing::debug!(lines = lines.len(), line_oriented, "apply_merged: Ready");
+            }
+            MergeOutcome::ReadyFallback(lines) => {
+                tracing::debug!(lines = lines.len(), "apply_merged: ReadyFallback");
+            }
             MergeOutcome::Bailed => tracing::debug!("apply_merged: Bailed"),
         }
         // Copy the retry-succeeded flag onto the diff's DiffSource so
         // [`crate::ui::diff::title`] can label the pane as line-diff-composed
         // (§4.6). Only mutate the flag; the `language` is the first
-        // invocation's answer and stays put — see the enum's own doc.
+        // invocation's answer and stays put — see the enum's own doc. Not
+        // done for `ReadyFallback`: that state carries its own provenance in
+        // `MergeState` directly, not on `DiffSource` — see its doc.
         match merged.target {
             Target::File(file) => {
                 if line_oriented
@@ -420,6 +443,7 @@ impl App {
             merged.target,
             Some(match outcome {
                 MergeOutcome::Ready { lines, .. } => MergeState::Ready(lines),
+                MergeOutcome::ReadyFallback(lines) => MergeState::ReadyFallback(lines),
                 MergeOutcome::Bailed => MergeState::Bailed,
             }),
         );
@@ -450,7 +474,8 @@ impl App {
 /// and asks [`merge_context`] again. Returns [`MergeOutcome::Ready`] with
 /// `line_oriented: true` on success, [`MergeOutcome::Bailed`] on any
 /// failure — a difftastic that could not be run, output that did not parse,
-/// or a merge that still declined.
+/// or a merge that still declined. The caller does not treat `Bailed` as
+/// final: it is the signal to fall back further, to the whole-file diff.
 ///
 /// Free function rather than a method because it does not touch [`App`] —
 /// it runs on the worker thread, off the request's own bytes, and the retry

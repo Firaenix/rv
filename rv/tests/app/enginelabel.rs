@@ -21,7 +21,7 @@ use rv_core::diff::FileDiff;
 /// restate the flag the reviewer just passed.
 #[test]
 fn a_degraded_pane_says_why_it_is_degraded() {
-    let labelled = |reason| rv::ui::title(&fallback(reason), Some("Rust"), false);
+    let labelled = |reason| rv::ui::title(&fallback(reason), Some("Rust"), false, false);
 
     assert_eq!(
         labelled(FallbackReason::NotAttempted),
@@ -57,7 +57,7 @@ fn a_degraded_pane_says_why_it_is_degraded() {
 /// guess as a fact would look like on screen.
 #[test]
 fn an_unusable_difft_is_not_labelled_like_a_chosen_fallback() {
-    let chosen = rv::ui::title(&fallback(FallbackReason::NotAttempted), Some("Rust"), false);
+    let chosen = rv::ui::title(&fallback(FallbackReason::NotAttempted), Some("Rust"), false, false);
 
     for reason in [
         FallbackReason::NotInstalled,
@@ -70,7 +70,7 @@ fn an_unusable_difft_is_not_labelled_like_a_chosen_fallback() {
         FallbackReason::UnreadableOutput,
     ] {
         assert_ne!(
-            rv::ui::title(&fallback(reason), Some("Rust"), false),
+            rv::ui::title(&fallback(reason), Some("Rust"), false, false),
             chosen,
             "{reason:?} reads exactly like a fallback the reviewer asked for"
         );
@@ -91,11 +91,11 @@ fn the_other_titles_are_unchanged() {
         ..fallback(FallbackReason::NotAttempted)
     };
     assert_eq!(
-        rv::ui::title(&structural, Some("Rust"), false),
+        rv::ui::title(&structural, Some("Rust"), false, false),
         "ctx.rs — difftastic (Rust)"
     );
     assert_eq!(
-        rv::ui::title(&structural, None, false),
+        rv::ui::title(&structural, None, false, false),
         "ctx.rs — difftastic (Rust) — no highlighting"
     );
 
@@ -103,10 +103,10 @@ fn the_other_titles_are_unchanged() {
         source: DiffSource::Binary,
         ..fallback(FallbackReason::NotAttempted)
     };
-    assert_eq!(rv::ui::title(&binary, None, false), "ctx.rs — binary");
+    assert_eq!(rv::ui::title(&binary, None, false, false), "ctx.rs — binary");
 
     assert_eq!(
-        rv::ui::title(&fallback(FallbackReason::NotInstalled), None, false),
+        rv::ui::title(&fallback(FallbackReason::NotInstalled), None, false, false),
         "ctx.rs — fallback (no difft on PATH) — no highlighting",
         "the grammar note stopped following a reason-bearing fallback"
     );
@@ -124,15 +124,48 @@ fn a_bailed_merge_adds_its_own_suffix_after_every_other_note() {
         ..fallback(FallbackReason::NotAttempted)
     };
     assert_eq!(
-        rv::ui::title(&structural, Some("Rust"), true),
+        rv::ui::title(&structural, Some("Rust"), true, false),
         "ctx.rs — difftastic (Rust) — full context unavailable \
          (a reformatted region difftastic did not report)"
     );
     assert_eq!(
-        rv::ui::title(&structural, None, true),
+        rv::ui::title(&structural, None, true, false),
         "ctx.rs — difftastic (Rust) — no highlighting — full context unavailable \
          (a reformatted region difftastic did not report)",
         "the bailed suffix must follow the grammar note, not replace it"
+    );
+}
+
+/// The whole-file-fallback suffix reads differently from the line-oriented
+/// retry's — a reviewer told "full context (line diff)" would reasonably
+/// assume difftastic's own second engine merged it, when here `similar`'s
+/// diff of the whole file did, discarding difftastic's structural changed-
+/// line boundaries entirely. `bailed` and `via_fallback` never both apply in
+/// practice (`MergeState` cannot be `Bailed` and `ReadyFallback` for the same
+/// target at once), but the composition order is still asserted: fallback
+/// before bailed, both after the grammar note.
+#[test]
+fn a_fallback_merge_names_a_different_engine_than_the_line_oriented_retry() {
+    let structural = FileDiff {
+        source: DiffSource::Difftastic {
+            language: "Rust".to_owned(),
+            line_oriented: false,
+        },
+        ..fallback(FallbackReason::NotAttempted)
+    };
+    assert_eq!(
+        rv::ui::title(&structural, Some("Rust"), false, true),
+        "ctx.rs — difftastic (Rust) — full context (fallback line diff)"
+    );
+    assert_ne!(
+        rv::ui::title(&structural, Some("Rust"), false, true),
+        rv::ui::title(&structural, Some("Rust"), false, false),
+        "a whole-file fallback merge must not read like difftastic's own retry"
+    );
+    assert_eq!(
+        rv::ui::title(&structural, None, false, true),
+        "ctx.rs — difftastic (Rust) — no highlighting — full context (fallback line diff)",
+        "the fallback suffix must follow the grammar note"
     );
 }
 

@@ -84,6 +84,15 @@ const CONTEXT_BAILED: &str =
 /// engine rather than its tree-diff.
 const LINE_DIFF_CONTEXT: &str = " — full context (line diff)";
 
+/// What the title adds when even difftastic's line-oriented retry could not
+/// pair a region 1:1 and `similar`'s whole-file diff built full context
+/// instead — the recovery [`CONTEXT_BAILED`] used to be the last word on.
+/// Distinct wording from [`LINE_DIFF_CONTEXT`] because it is a genuinely
+/// different engine, not difftastic's own second invocation: the changed-line
+/// boundaries shown are `similar`'s line-level opinion, not difftastic's
+/// structural one.
+const FALLBACK_CONTEXT: &str = " — full context (fallback line diff)";
+
 pub(super) fn draw_diff(frame: &mut Frame, app: &App, area: Rect) {
     // The stack is drawn *inside* this pane, so it marks this pane as the one
     // the next keystroke lands in.
@@ -113,6 +122,7 @@ pub(super) fn draw_diff(frame: &mut Frame, app: &App, area: Rect) {
             diff,
             highlight::language_of(&diff.path),
             app.context_bailed(),
+            app.context_via_fallback(),
         ),
         focused,
     );
@@ -201,11 +211,18 @@ fn parked(natural: Range<usize>, rows: usize, scroll: Option<usize>) -> Range<us
 /// the pane makes about its own contents is decided, and the claim is
 /// load-bearing — it is what tells a reviewer whether they are reading
 /// difftastic's structural diff or a line diff standing in for it, and why.
-/// `bailed` is [`App::context_bailed`]'s answer for this file — appended
-/// last, after the grammar note, so a reviewer reads "what this pane is
-/// showing" before "what it could not show".
+/// `bailed` is [`App::context_bailed`]'s answer for this file and
+/// `via_fallback` is [`App::context_via_fallback`]'s — the two are mutually
+/// exclusive in practice (see [`super::super::app::merges::MergeState`]) —
+/// appended last, after the grammar note, so a reviewer reads "what this
+/// pane is showing" before "what it could not show" or "how it recovered".
 #[must_use]
-pub fn title(diff: &FileDiff, language: Option<&'static str>, bailed: bool) -> String {
+pub fn title(
+    diff: &FileDiff,
+    language: Option<&'static str>,
+    bailed: bool,
+    via_fallback: bool,
+) -> String {
     let source = match &diff.source {
         DiffSource::Difftastic { language, .. } => {
             format!("{} — difftastic ({language})", diff.path)
@@ -234,10 +251,15 @@ pub fn title(diff: &FileDiff, language: Option<&'static str>, bailed: bool) -> S
     } else {
         with_grammar
     };
-    if bailed {
-        format!("{with_line_diff}{CONTEXT_BAILED}")
+    let with_fallback = if via_fallback {
+        format!("{with_line_diff}{FALLBACK_CONTEXT}")
     } else {
         with_line_diff
+    };
+    if bailed {
+        format!("{with_fallback}{CONTEXT_BAILED}")
+    } else {
+        with_fallback
     }
 }
 

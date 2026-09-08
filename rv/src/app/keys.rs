@@ -141,6 +141,9 @@ impl App {
         let target = self.merge_target();
         let merge_state = match self.merge_state_of(target) {
             Some(super::merges::MergeState::Ready(lines)) => format!("Ready({} lines)", lines.len()),
+            Some(super::merges::MergeState::ReadyFallback(lines)) => {
+                format!("ReadyFallback({} lines)", lines.len())
+            }
             Some(super::merges::MergeState::Pending) => "Pending".to_owned(),
             Some(super::merges::MergeState::Bailed) => "Bailed".to_owned(),
             None => "None".to_owned(),

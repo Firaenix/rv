@@ -12,6 +12,7 @@ pub use rv_core::diff::compute_with;
 pub use rv_core::diff::compute_with_verdict;
 pub use rv_core::diff::difft_spawns;
 pub use rv_core::diff::difft_verdict;
+pub use rv_core::diff::whole_file_diff;
 
 /// What `compute_with(.., false)` labels its diffs: difftastic was not asked,
 /// so nothing is claimed about it.

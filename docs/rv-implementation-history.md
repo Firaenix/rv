@@ -710,3 +710,28 @@ file index; the commits view keys by pair, so it now has its own
 `diffs::Target` (File or Commit) the same way the refiner already does, one
 worker for both. `App::base_lines`/`context_bailed` read whichever the
 selected view names.
+
+**A third full-context tier: `similar`'s whole-file diff** — one real file,
+diagnosed from a reviewer's own `.review/rv.log`, genuinely defeated both
+difftastic-based attempts (the syntax-aware merge, then §4.6's
+`--byte-limit 0` retry): an inserted function sat next to text that also
+appeared, unchanged, earlier in the file, and `merge_context`'s gap-length
+inference — which only ever sees two anchor points, never the whole
+alignment — came up with 10 untouched lines on one side and 12 on the
+other for the same gap. Traced with a scratch `eprintln!` in `context::merge`
+rather than guessed at: the naive "compare consecutive changed-line numbers"
+heuristic gave the wrong changed-line index entirely, and only instrumenting
+the real cursor math found the actual mismatch. Neither difftastic pass can
+be fixed to resolve this honestly — it is a genuine boundary ambiguity in
+difftastic's own report, not a bug in rv's arithmetic — but `similar`'s
+whole-file diff doesn't have the problem: it aligns every line of both texts
+itself rather than inferring a gap from difftastic's anchors, so there is
+nothing for it to get ambiguous about. It is now the merge's third tier,
+tried when the retry also declines; `MergeState::ReadyFallback` carries it
+and the title reads `— full context (fallback line diff)`, distinct from
+the retry's `— full context (line diff)` because the changed-line
+boundaries shown really are a different engine's opinion, not difftastic's
+own second invocation. `MergeState::Bailed` is believed unreachable in
+practice now, for any file with real text on both sides, but stays rather
+than being deleted — named explicitly as the design spec's own §4.5 already
+does for its own deferred case.

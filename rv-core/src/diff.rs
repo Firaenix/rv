@@ -139,6 +139,23 @@ pub fn compute_line_oriented(
     Some((lines, suppressed))
 }
 
+/// The `similar` line diff of the *whole* `old`/`new` text, discarding
+/// whether it was suppressed — a merge's last resort (design spec §3/§4.6
+/// follow-on) when even difftastic's line-oriented retry could not pair a
+/// region 1:1.
+///
+/// Unlike [`merge_context`], which fills the gaps *between* difftastic's own
+/// changed-line anchors and can find those gaps disagree in length on each
+/// side, this never infers a gap at all: `similar` aligns every line of both
+/// texts itself, so there is no "how many lines are in between" arithmetic
+/// left to go ambiguous. The cost is difftastic's structural, per-token
+/// change boundaries — the returned lines mark whole lines as changed, the
+/// same granularity [`DiffSource::Similar`] already shows a reviewer with no
+/// `difft` on `PATH`.
+pub fn whole_file_diff(old: Option<&[u8]>, new: Option<&[u8]>) -> Vec<DiffLine> {
+    fallback::diff(old, new).0
+}
+
 fn binary_or(
     old: Option<&[u8]>,
     new: Option<&[u8]>,

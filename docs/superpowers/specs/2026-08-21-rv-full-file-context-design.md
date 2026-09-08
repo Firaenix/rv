@@ -192,6 +192,20 @@ report)"`. This is the extend-not-replace instruction: `ui/diff.rs::title`
 gains one more optional suffix, decided the same way `NO_GRAMMAR` already is
 — from the shape of the data, not inferred from timing.
 
+**Superseded 2026-09-08:** §4.6's retry answers most of this section's
+cases, and a third tier now answers the rest — `similar`'s whole-file diff of
+the same two blobs, tried when even the retry cannot pair a region. Unlike
+both difftastic-based attempts, it never infers an unreported gap from two
+anchor points, so it cannot hit the ambiguity this section describes; it can
+only differ from difftastic's own structural boundaries in *which* lines it
+marks changed, never in whether the file's full text is shown. `merge`
+returning `None` twice in a row (§4.6's retry included) is now believed
+unreachable for any file with real text on both sides — `MergeState::Bailed`
+and this suffix stay in the code as the honest "nothing worked" answer in
+case a future change to either engine reopens the gap, not because the gap
+is expected to reopen. See `rv/src/app/merges.rs::MergeState::ReadyFallback`
+and the `— full context (fallback line diff)` suffix it adds.
+
 ### 4.5 Binary, suppressed, still-loading
 
 - **Binary** (`DiffSource::Binary`): `displayed_lines` returns
