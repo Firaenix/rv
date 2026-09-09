@@ -237,3 +237,50 @@ fn file_navigation_walks_in_range_and_keeps_each_files_place() {
     });
     seen.assert_all();
 }
+
+/// A view toggle rebuilds the plan the cursor indexes: `f` swaps the whole-file
+/// merge for the changed-only diff, and `v b` filters one side out of either.
+/// Either can shorten that plan under a cursor sitting at its end, and a cursor
+/// past the end of the plan it indexes stops describing a line at all —
+/// `line_index` falls back to the top of the file, so the highlight jumps to row
+/// 0 while the pane draws the rows the cursor was clamped to for scrolling. The
+/// cursor instead keeps its position, clamped to the last row that still exists.
+///
+/// `v g` is deliberately absent: grouping permutes the same lines, so the plan
+/// has the same number of rows and there is no end for the cursor to fall off.
+#[test]
+fn a_view_toggle_keeps_the_cursor_on_a_row_that_still_exists() {
+    let fixture = shared_multi();
+    for toggle in [
+        vec![KeyCode::Char('f')],
+        vec![KeyCode::Char('v'), KeyCode::Char('b')],
+    ] {
+        // `alpha.rs` is the file here whose whole-file merge is long enough to
+        // walk past what its shorter view keeps.
+        let app = &mut fixture.app();
+        select_path(app, "alpha.rs");
+        let rows = app.plan().rows.len();
+        press_n(app, KeyCode::Down, rows);
+        assert_eq!(app.cursor_row(), rows - 1, "the walk never reached the end");
+
+        for key in &toggle {
+            press(app, *key);
+        }
+        let plan = app.plan();
+        assert!(
+            !plan.rows.is_empty() && plan.rows.len() < rows,
+            "{toggle:?} did not shorten the {rows}-row plan, so this case proves nothing",
+        );
+        assert!(
+            app.cursor_row() < plan.rows.len(),
+            "{toggle:?} left the cursor on row {} of a {}-row plan",
+            app.cursor_row(),
+            plan.rows.len(),
+        );
+        assert_eq!(
+            plan.line_of_row(app.cursor_row()),
+            Some(app.line_index()),
+            "{toggle:?} left the highlighted line off the cursor's row",
+        );
+    }
+}

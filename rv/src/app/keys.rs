@@ -138,6 +138,7 @@ impl App {
     #[tracing::instrument(level = "debug", skip(self))]
     fn toggle_full_context(&mut self) {
         self.set_full_context(!self.full_context());
+        self.clamp_cursor_to_plan();
         let target = self.merge_target();
         let merge_state = match self.merge_state_of(target) {
             Some(super::merges::MergeState::Ready(lines)) => {
@@ -181,6 +182,7 @@ impl App {
     #[tracing::instrument(level = "debug", skip(self))]
     fn cycle_view_side(&mut self) {
         self.view_side = self.view_side.next();
+        self.clamp_cursor_to_plan();
         tracing::debug!(side = self.view_side.label(), "cycle_view_side");
         self.status = format!("showing {} — v b cycles", self.view_side.label());
     }

@@ -771,3 +771,50 @@ cannot tell right from wrong.
 `App::painted_layout` was added for the test: the rectangles `note_layout`
 records are private, and a gesture resolved against a recomputed layout is
 not a gesture resolved against the frame that was drawn.
+
+## The cursor that outran its own plan: why a view toggle must re-clamp
+
+`state_invariants_survive_any_key_sequence` went red on Ubuntu with "after
+`Char('f')`: the cursor is on row 11 of a 6-row plan". The invariant it
+breaks is the fifth — the cursor is a row *of the plan it indexes* — and the
+key that breaks it is `f`. Full-file context is the default, so a merged diff
+is the long plan; a reviewer who walks to its end and presses `f` gets the
+changed-only diff, which on `alpha.rs` is 3 rows where the merge was 9. The
+cursor is stored per file (`cursor_rows`) and clamped only when written, so
+nothing shortened it, and row 8 was left pointing past a 3-row plan.
+
+The visible symptom is worse than a stale number: `line_index` is *derived*
+from that row, and a row off the end falls through its `unwrap_or(0)`, so the
+highlight jumps to the top of the file while the pane is drawing the rows
+`anchor_row` clamped for scrolling. The two stop describing the same place —
+and the next `c` or `d` would aim at line 0.
+
+`App::clamp_cursor_to_plan` is the fix, called by the two commands that change
+*which* lines exist: `f`, and `v b`'s side filter. It cannot be
+`resettle_cursor`, because that preserves a line, and a line index in a
+whole-file merge is not a line index in a changed-only diff — the line the
+cursor was on does not survive the change the way it survives a fold or a
+delete. So the row is what is kept, clamped to the last row that still exists:
+the same clamp the diff pane already applies to what it draws, applied to the
+state itself.
+
+`v g` is deliberately not in the set. Grouping permutes the same lines, so the
+plan has the same number of rows and there is no end to fall off.
+
+The fuzzer found this by luck of a random seed — the combination it needs is a
+deep walk, a merge that came back `Ready`, and a `f` at the right moment — so
+the regression test is exact instead:
+`a_view_toggle_keeps_the_cursor_on_a_row_that_still_exists` walks `alpha.rs`'s
+merge to its last row in the shared multi fixture, applies each shortening
+toggle, and asserts the cursor is still a row of the resulting plan before
+checking the highlight follows it. The
+`rows >= 12` guard it started with was wrong twice over: no file in that
+fixture has a plan that long, and the depth was never the point — a cursor on
+row 8 is out of range in a 3-row plan either way.
+
+One gap of the same shape is knowingly left: `body_width` is a `Cell` written
+by the renderer, so a terminal resize can shrink the wrap-derived plan under a
+stored row the same way, and no key is involved to re-clamp it. It self-heals
+on the reviewer's next keystroke, and closing it properly would mean either
+interior mutability in the cursor or a resize command in the keymap — neither
+paid for by a symptom anyone has seen.

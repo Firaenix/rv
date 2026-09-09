@@ -250,6 +250,21 @@ impl App {
         self.diff_scroll = None;
     }
 
+    /// Keeps the cursor a row of the plan it indexes after a view toggle
+    /// rebuilt that plan shorter under it.
+    ///
+    /// Not [`App::resettle_cursor`]: `f` and `v b` change *which* lines exist, so
+    /// the line the cursor was on is not a fact that survives the change the way
+    /// it does across a fold or a delete. The row is all there is to hold on to,
+    /// so the cursor keeps its position and is clamped to the last row the
+    /// shorter plan has — the same clamp the diff pane applies to what it draws.
+    pub(super) fn clamp_cursor_to_plan(&mut self) {
+        let last = self.row_count().saturating_sub(1);
+        if let Some(position) = self.cursor_rows.get_mut(self.file_index) {
+            *position = (*position).min(last);
+        }
+    }
+
     /// Moves the sidebar selection to `index` and loads that file's diff.
     ///
     /// Out-of-range indices are ignored, which is what makes `[` at the top and
