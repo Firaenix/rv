@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.2](https://github.com/Firaenix/rv/compare/v1.7.1...v1.7.2) - 2026-09-09
+
+### Fixed
+
+- *(rv)* a view toggle re-clamps the cursor to the plan it just shortened
+
+### Other
+
+- *(rv)* the click's row is the row selected — a correctness property for the sidebar mouse
+
 ## [1.7.1](https://github.com/Firaenix/rv/compare/v1.7.0...v1.7.1) - 2026-09-08
 
 ### Fixed
