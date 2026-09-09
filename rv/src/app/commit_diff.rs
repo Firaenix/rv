@@ -42,7 +42,15 @@ impl App {
             self.resettle_sidebar();
         }
         self.commit_pair = Some(pair);
-        self.load_commit_diff(pair)
+        let loaded = self.load_commit_diff(pair);
+        // Two changes over one path leave the file selection alone, so the guard
+        // above does not fire and the cursor keeps a row now indexing a
+        // different change's diff. The place under it is read afresh from what
+        // this pair actually draws, or that pair's results would land with an
+        // anchor belonging to the pair before it.
+        self.clamp_cursor_to_plan();
+        self.remember_cursor_anchor();
+        loaded
     }
 
     /// Computes the `pair`th row's own diff, unless it is already cached.

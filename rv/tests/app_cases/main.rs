@@ -47,6 +47,7 @@ mod support;
 mod alerts;
 mod collapsing;
 mod deleting;
+mod drift;
 mod empty;
 mod fallback;
 mod invariants;

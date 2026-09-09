@@ -218,16 +218,6 @@ impl App {
     }
 
     fn apply_refined(&mut self, refined: Refined) {
-        // The cursor is only re-settled when the diff that landed is the one on
-        // screen; the source line it sits on is captured before the swap because
-        // the two engines emit different lines and the row it names would move.
-        let on_screen = refined.target == self.shown_target();
-        let line = on_screen
-            .then(|| {
-                self.selected_line()
-                    .and_then(|line| line.right.or(line.left))
-            })
-            .flatten();
         match refined.target {
             Target::File(file) => {
                 if let Some(slot) = self.diffs.get_mut(file) {
@@ -251,36 +241,7 @@ impl App {
         // machine with no `difft` re-asks once per target rather than once per
         // selection.
         self.refined.insert(refined.target);
-        if let Some(number) = line {
-            self.resettle_on_line(number);
-        }
-    }
-
-    /// Puts the cursor back on source line `number`, or the nearest line the
-    /// refined diff still carries.
-    ///
-    /// "Nearest" and not "the same" because the structural diff may not contain
-    /// that line at all: the fallback emits a context line for every unchanged
-    /// line around a change and difftastic emits none, so most of what the fast
-    /// diff shows is absent from the one that replaces it. Landing on the nearest
-    /// surviving line keeps the reviewer where they were looking; keeping the row
-    /// index would move them somewhere unrelated.
-    fn resettle_on_line(&mut self, number: u32) {
-        let found = self.selected_diff().and_then(|diff| {
-            diff.lines
-                .iter()
-                .enumerate()
-                .filter_map(|(index, line)| {
-                    let at = line.right.or(line.left)?;
-                    Some((at.abs_diff(number), index))
-                })
-                .min()
-                .map(|(_, index)| index)
-        });
-        if let Some(line) = found {
-            let row = self.plan().row_of_line(line).unwrap_or(0);
-            self.set_cursor_row(row);
-        }
+        self.reanchor_cursor();
     }
 
     /// Blocks until the selected file's structural diff has landed.

@@ -183,6 +183,32 @@ impl Fixture {
         fixture
     }
 
+    /// One file rewritten by two changes in a row, so the commits tab lists
+    /// **two pairs over the same path** and the same line number names
+    /// different code in each.
+    ///
+    /// The only fixture where walking from one commits-tab pair to the next
+    /// leaves the bookmark file selection alone — `select_commit_file` moves the
+    /// cursor only when the row names another file — which is what lets a case
+    /// change the view under a recorded cursor anchor without recording a new
+    /// one. The second change replaces every line, so that pair's whole-file
+    /// merge carries exactly the lines its changed-only diff does and the code
+    /// under a row is the same before and after either background result.
+    pub fn twice_changed() -> Self {
+        let fixture = Self::init();
+        fixture.write("drift.rs", DRIFT_BASE);
+        fixture.jj(&["describe", "-m", "base change"]);
+        fixture.jj(&["new"]);
+
+        fixture.write("drift.rs", DRIFT_ONCE);
+        fixture.jj(&["describe", "-m", "the first rewrite"]);
+        fixture.jj(&["new"]);
+
+        fixture.write("drift.rs", DRIFT_TWICE);
+        fixture.jj(&["describe", "-m", "the second rewrite"]);
+        fixture
+    }
+
     pub fn root(&self) -> &Path {
         self.tempdir.path()
     }
@@ -223,6 +249,20 @@ impl Fixture {
         app.finish_loading();
         app.finish_merging();
         app
+    }
+
+    /// The reviewer over the same range as [`Fixture::app`], opened the way the
+    /// binary opens it — [`DiffEngine::Auto`] — and **not drained**.
+    ///
+    /// The one constructor here that hands back an app with background work
+    /// still outstanding: `Auto` draws the fast `similar` diff at once and asks
+    /// difftastic off-thread, so the refinement (and the whole-file merge the
+    /// refinement re-kicks) are still to land. That is the state every drift
+    /// case in `drift.rs` is about, and the state [`Fixture::app`] deliberately
+    /// does not leave, since it opens `Structural` and drains both queues.
+    pub fn auto_app(&self) -> App {
+        let review = session::build(self.root(), Some("@--"), None).expect("build the review");
+        App::open(review, DiffEngine::Auto).expect("open the reviewer")
     }
 
     /// The reviewer over the same range, with difftastic bypassed: every diff

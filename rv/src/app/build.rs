@@ -105,6 +105,7 @@ impl App {
             comments,
             file_index: 0,
             cursor_rows,
+            cursor_anchor: None,
             drift,
             focus: Focus::Diff,
             sidebar_tab: SidebarTab::Files,

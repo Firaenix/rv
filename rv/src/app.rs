@@ -158,6 +158,17 @@ pub struct App {
     /// One position per file, because `[`/`]` is how a reviewer compares two
     /// files and a shared cursor makes every round trip cost them their place.
     cursor_rows: Vec<usize>,
+    /// Where in the **code** the cursor stands: the pair of commits it was read
+    /// from, and the path, side and line number it is anchored at there.
+    ///
+    /// A row is an address in a list a background result can replace wholesale,
+    /// so the place itself is kept beside it — recorded by
+    /// [`App::remember_cursor_anchor`] and read back by
+    /// [`App::reanchor_cursor`]. The pair travels with it because a line number
+    /// is only a fact about the two blobs it was read from: a position recorded
+    /// while the commits tab showed one change is not this file's diff's to
+    /// resolve.
+    cursor_anchor: Option<(diffs::Target, anchor::SourcePosition)>,
     focus: Focus,
     sidebar_tab: SidebarTab,
     /// Which **row** of the comment browser the cursor is on.

@@ -34,6 +34,32 @@ pub fn alpha() {
 }
 ";
 
+/// `drift.rs` at the base of [`Fixture::twice_changed`].
+pub const DRIFT_BASE: &str = "\
+pub fn drift() {
+    let d01 = 1;
+    let d02 = 2;
+    let d03 = 3;
+}
+";
+
+/// `drift.rs` after the first of that fixture's two rewrites: one line changed,
+/// so this pair's diff is a couple of lines and the rest is context its
+/// whole-file merge has to bring back.
+pub const DRIFT_ONCE: &str = "\
+pub fn drift() {
+    let d01 = 1;
+    let d02 = 22;
+    let d03 = 3;
+}
+";
+
+/// `drift.rs` after the second rewrite: nothing of the previous version
+/// survives, so this pair's changed-only diff and its whole-file merge carry
+/// the very same lines — the code under a given row does not move when either
+/// background result lands.
+pub const DRIFT_TWICE: &str = "fn drifted(a: i32) -> i32 { a + 1 }\n";
+
 /// `a.rs` at the base of [`Fixture::renamed`].
 ///
 /// Long enough that the head side below still counts as the same file to jj's

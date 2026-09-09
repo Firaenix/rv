@@ -818,3 +818,72 @@ stored row the same way, and no key is involved to re-clamp it. It self-heals
 on the reviewer's next keystroke, and closing it properly would mean either
 interior mutability in the cursor or a resize command in the keymap — neither
 paid for by a symptom anyone has seen.
+
+## The jump that drifted: a cursor that names a place, not a row
+
+Selecting a comment in the browser and pressing `Enter` landed on the right
+line and then, a moment later, did not. `jump_to_comment` sets the cursor
+correctly; what moved it afterwards was the pane's own two-stage answer. Under
+`DiffEngine::Auto` the fast `similar` diff draws at once and is replaced twice:
+by difftastic's structural diff when it lands (`apply_refined`), and by the
+whole-file merge built off *that* (`apply_merged`). Each swaps the entire line
+list. A row index held across one of them is an address in a list that no
+longer exists.
+
+`apply_refined` already knew this and re-settled on a captured line *number*.
+That was two-thirds wrong. A bare number is ambiguous — line 7 on the left is
+not line 7 on the right, and a match on the wrong side could win — and
+`apply_merged` did no re-settling at all, so the merge landing on top was the
+larger half of the defect: row 7 of a 3-row changed-only diff became row 7 of a
+9-row merged one, pointing at unrelated code, and `comments_for_line` came back
+empty on the very comment the reviewer had just jumped to.
+
+The fix is to record what the reviewer was looking at rather than where the
+list happened to put it. `App::cursor_anchor` holds a `SourcePosition` — path,
+side, line number — beside the `Target` it was read from, and every result that
+lands re-resolves it: the exact line where the new view still carries it, the
+nearest line on the same path and side otherwise. A structural changed-only
+diff holds none of the context a merge shows, so most of what the fast answer
+carried is simply absent from the answer replacing it; the closest surviving
+line is the same code seen from further away, and that is the honest answer.
+
+The subtlety is *when* to record. The first attempt captured the anchor inside
+each apply path, immediately before the swap — which is wrong in the chained
+case, and the chained case is the only case: the refinement lands, the cursor
+falls back to a neighbouring line because the exact one is not in the
+structural diff, and then the merge captures *that* fallback as truth. Drift
+gets promoted to intent, and worse, the final position depends on which worker
+answered first. So the anchor is recorded only where a reviewer moves the
+cursor — `set_cursor_row`, which every key, click, page and jump already funnels
+through — and never in a resettle path. `clamp_cursor_to_plan` is the one
+exception in the other direction: when it actually moves the cursor it *drops*
+the anchor, because a row the reviewer never chose names no place in the code,
+and a later result must not drag them back to one.
+
+`select_commit_file` needed the same reading. Walking between two changes over
+one path leaves the file selection alone, so its guard skips `set_cursor_row`
+and the cursor keeps a row that now indexes a different change's diff — the
+identical defect, one tab over. The place under the cursor is read again on the
+way in, so that pair's results resolve that pair's position.
+
+Re-settling deliberately does not disturb two things. The comment stack stays
+open, because nothing here is the reviewer moving the selection. And a view
+parked with the wheel stays parked: `resettle_cursor` clears `diff_scroll` for
+the fold-and-delete paths it was written for, and `reanchor_cursor` puts it
+back, because scrolling is looking, and a background result is not a reason to
+stop looking where you chose.
+
+`rv/tests/app_cases/drift.rs` pins all of it deterministically through
+`Fixture::auto_app`, the one constructor that leaves the work outstanding so a
+case can drain it by hand: the chained jump keeps its comment under the cursor,
+the two arrival orders agree, the fallback lands on the nearest surviving line
+rather than the stale row, walking between changes re-reads the place, and the
+parked view is still parked. The `probe_async_jump` scratch test that found the
+bug is deleted; a probe that prints is not a test that fails.
+
+Four files were over the 400-line rule by the end of it, so `merges.rs`,
+`navigate.rs`, `sidebar.rs` and `keymap.rs` each shed the half that was already
+a separate subject: the merge worker's request plumbing, opening the file a
+navigation lands on, the comment browser's list, and the keymap's collision
+policy. `rv-core/src/store.rs` at 469 lines is the one violation knowingly
+left standing.
