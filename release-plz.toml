@@ -12,6 +12,16 @@
 # this project is distributed: binaries, Homebrew and Nix.
 git_only = true
 
+# cargo-semver-checks compares a crate against the version last published to
+# crates.io. Neither crate has ever been published (see `git_only` above and the
+# two `[[package]]` sections below), so there is no baseline to diff against, and
+# the check's own `cargo update` cannot resolve `rv-core` at all: a packaged `rv`
+# asks the registry for it and it is not there. This broke the release-plz PR run
+# on 2026-09-09, once a commit touched `rv`'s sources rather than only its tests.
+# A breaking change in a crate nobody consumes from crates.io is caught by this
+# repo's own tests, not by a registry API diff.
+semver_check = false
+
 git_tag_name = "v{{ version }}"
 
 # `dist` writes the GitHub release, uploads the artifacts and fills in the
