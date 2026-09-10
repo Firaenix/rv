@@ -77,9 +77,21 @@ impl App {
         if target != self.shown_target() {
             return;
         }
-        let (path, side, number) = &position;
+        self.keep_cursor_at(Some(position));
+    }
+
+    /// Puts the cursor back on `place` after something rebuilt or reordered the
+    /// lines under it, and leaves a parked view parked: what moved is the list,
+    /// not the reviewer's selection.
+    ///
+    /// Falls back to the row clamp where the new list carries no line for that
+    /// place at all — a base-only filter over a place on the head side, say, or
+    /// a cursor that was standing on a line with no number to anchor to.
+    pub(super) fn keep_cursor_at(&mut self, place: Option<SourcePosition>) {
         let parked = self.diff_scroll;
-        match self.line_index_at_anchor(path, *side, *number) {
+        let found =
+            place.and_then(|(path, side, number)| self.line_index_at_anchor(&path, side, number));
+        match found {
             Some(line) => {
                 self.resettle_cursor(line);
                 self.diff_scroll = parked;

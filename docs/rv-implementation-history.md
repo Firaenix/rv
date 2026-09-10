@@ -799,7 +799,10 @@ the same clamp the diff pane already applies to what it draws, applied to the
 state itself.
 
 `v g` is deliberately not in the set. Grouping permutes the same lines, so the
-plan has the same number of rows and there is no end to fall off.
+plan has the same number of rows and there is no end to fall off — which says
+nothing about *which* line the surviving row names, and that turned out to be
+the other half of the story (see "The two places the cursor was still a row",
+below).
 
 The fuzzer found this by luck of a random seed — the combination it needs is a
 deep walk, a merge that came back `Ready`, and a `f` at the right moment — so
@@ -887,3 +890,52 @@ a separate subject: the merge worker's request plumbing, opening the file a
 navigation lands on, the comment browser's list, and the keymap's collision
 policy. `rv-core/src/store.rs` at 469 lines is the one violation knowingly
 left standing.
+
+## The two places the cursor was still a row
+
+Writing the anchor down left an inventory behind: `cursor_rows` is written in
+three places, and the plan is rebuilt by rather more than three. Two of those
+rebuilds had nothing holding the cursor at all.
+
+`v g` was the one the previous section had waved through. Grouping permutes the
+same lines, so the plan keeps its length and the clamp has nothing to do — but
+a permutation is exactly the change that leaves a row valid while making it
+name different code. On two adjacent rewrites difftastic lays down
+removal, addition, removal, addition; grouping lifts both removals above both
+additions, and a reviewer sitting on the first addition is silently moved onto
+the second *removal*. Nothing was out of range, so nothing complained. `v g`
+now reads the place under the cursor before it regroups and puts the cursor
+back on it after, which is the same fact `reanchor_cursor` re-resolves for a
+landing background result — so the two share `App::keep_cursor_at`, and a
+parked view stays parked through both.
+
+`r` and `a` were the other. Settling reloads the comments, and the comment
+stream is what the plan is built from: an outdated comment expands into a
+before/after block (storage spec §4) that a settled one does not, so resolving
+one closes several rows *in the middle of the plan* and everything below moves
+up. The cursor is a row, so a reviewer who had walked into that box to read the
+block came out of the `r` standing on unrelated code — or, when the row fell
+past the end, back at line 0 through `line_index`'s `unwrap_or(0)`. The save
+and delete paths had held a line index across their reloads since milestone 2;
+settling simply never did. It does now: the line is what survives a change that
+only rearranges rows.
+
+Both are pinned by exact regression tests rather than left to the fuzzer, for
+the reason the last two of these sections give — the invariant walk needs a
+deep, specific sequence to reach either, and only one of them breaks an
+invariant at all. `settling_a_comment_keeps_the_cursor_on_the_line_it_was_reading`
+resolves from inside the box and asserts the highlighted *line* is the one it
+was; `grouping_the_diff_keeps_the_cursor_on_the_line_it_was_reading` asserts the
+cursor comes out of `v g` on the same `DiffLine`, and refuses to pass if the
+grouping left the order alone. `Fixture::interleaved` exists because no fixture
+in the suite had two adjacent rewrites — every other diff groups to itself, so
+every other fixture would have proved nothing.
+
+The one gap knowingly left is the resize: `body_width` is a `Cell` the renderer
+writes, so a terminal that narrows can lengthen the wrapped plan under a stored
+row with no key event to re-clamp it. It self-heals on the next keystroke.
+
+Splitting followed as usual — `rv/tests/app_cases/support/fixtures.rs` crossed
+400 lines, so the shared `OnceLock` workspaces moved to `support/shared.rs`,
+which is the seam that was already there: a fixture built per call against one
+built once per binary.

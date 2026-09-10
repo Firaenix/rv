@@ -65,7 +65,11 @@ impl App {
             .store
             .settle_comment(&id, state, SettledBy::User)
             .with_context(|| format!("could not update the comment at {label}"))?;
+        // A settled comment is one the box no longer opens a before/after block
+        // for, so the rows below it move up under a cursor that is a row index.
+        let line = self.line_index();
         self.reload_comments()?;
+        self.resettle_cursor(line);
 
         self.status = if reopening {
             format!("reopened {label}")

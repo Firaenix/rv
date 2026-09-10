@@ -246,8 +246,11 @@ fn file_navigation_walks_in_range_and_keeps_each_files_place() {
 /// 0 while the pane draws the rows the cursor was clamped to for scrolling. The
 /// cursor instead keeps its position, clamped to the last row that still exists.
 ///
-/// `v g` is deliberately absent: grouping permutes the same lines, so the plan
-/// has the same number of rows and there is no end for the cursor to fall off.
+/// `v g` is absent because it shortens nothing: grouping permutes the same
+/// lines, so the plan has the same number of rows and there is no end for the
+/// cursor to fall off. What it does instead is move the code out from under the
+/// cursor, which `grouping_the_diff_keeps_the_cursor_on_the_line_it_was_reading`
+/// pins.
 #[test]
 fn a_view_toggle_keeps_the_cursor_on_a_row_that_still_exists() {
     let fixture = shared_multi();
@@ -283,4 +286,50 @@ fn a_view_toggle_keeps_the_cursor_on_a_row_that_still_exists() {
             "{toggle:?} left the highlighted line off the cursor's row",
         );
     }
+}
+
+/// `v g` is the view toggle that shortens nothing and still moves the code:
+/// grouping lifts a hunk's removals above its additions, so one rewrite
+/// following another puts different code on the row the cursor holds. Nothing
+/// is clamped, because nothing is out of range — the reviewer simply ends up
+/// reading a line they did not choose.
+///
+/// The cursor holds the *place* through the toggle instead, the same fact a
+/// landing background result re-resolves.
+#[test]
+fn grouping_the_diff_keeps_the_cursor_on_the_line_it_was_reading() {
+    let fixture = Fixture::interleaved();
+    let app = &mut fixture.app();
+    rewind(app);
+    assert_difftastic(app);
+
+    // The first rewrite's addition: grouping moves it down behind every removal
+    // in the hunk, which is the furthest anything here travels.
+    let interleaved = app.displayed_lines().to_vec();
+    let index = interleaved
+        .iter()
+        .position(|line| line.text.contains("p01 = 11"))
+        .expect("the first rewritten line is in the diff");
+    let reading = interleaved[index].clone();
+    press_n(app, KeyCode::Down, index - app.line_index());
+    assert_eq!(
+        app.line_index(),
+        index,
+        "the walk missed the rewritten line"
+    );
+
+    press(app, KeyCode::Char('v'));
+    press(app, KeyCode::Char('g'));
+
+    let grouped = app.displayed_lines().to_vec();
+    assert_ne!(
+        grouped.iter().position(|line| *line == reading),
+        Some(index),
+        "grouping left the line on its own row, so this case proves nothing: {grouped:?}"
+    );
+    assert_eq!(
+        grouped.get(app.line_index()),
+        Some(&reading),
+        "grouping left the cursor on row {index}, which now names other code: {grouped:?}"
+    );
 }

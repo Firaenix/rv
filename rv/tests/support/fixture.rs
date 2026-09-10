@@ -11,6 +11,7 @@ use std::process::Command;
 use rv::app::App;
 use rv::app::DiffEngine;
 use rv::session;
+use rv_core::store::CommentState;
 use rv_core::store::Store;
 use tempfile::TempDir;
 
@@ -353,4 +354,33 @@ impl Fixture {
     pub fn markdown(&self) -> String {
         fs::read_to_string(self.store().markdown_path()).expect("read REVIEW-FEEDBACK.md")
     }
+}
+
+/// Puts `body` on `a.rs`'s second line, rewrites that line, and files the
+/// comment as outdated — the state an agent's `.review/`, or a rebase, arrives
+/// in.
+///
+/// Through the store rather than through a derivation: a line rewritten in
+/// place keeps its comment on the weak tier, so no keystroke reaches `Outdated`
+/// while leaving the anchor a row in the diff to hang from. The rewrite is what
+/// gives the before/after block something to show — the stored excerpt and the
+/// code now standing in its place genuinely differ.
+pub fn outdated_over_rewritten_code(workspace: &Fixture, body: &str) -> App {
+    let mut app = workspace.app();
+    super::keys::select_line(&mut app, |line| line.text.contains("let x = 1;"));
+    super::keys::write_comment(&mut app, body);
+
+    workspace.write("a.rs", "fn a() {\n    let x = 99;\n}\n");
+    workspace.jj(&["describe", "-m", "rewrite the commented line"]);
+    workspace.jj(&["new"]);
+
+    let mut stored = workspace.store().comments().expect("read comments");
+    stored[0].state = CommentState::Outdated;
+    workspace
+        .store()
+        .append_comment(&stored[0])
+        .expect("store the outdated comment");
+
+    drop(app);
+    workspace.app()
 }

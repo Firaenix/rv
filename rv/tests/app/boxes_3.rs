@@ -7,7 +7,6 @@
 use std::collections::HashSet;
 
 use crossterm::event::KeyCode;
-use rv::app::App;
 use rv::rows::BodyKind;
 use rv::rows::Row;
 use rv_core::diff::DiffSource;
@@ -15,35 +14,6 @@ use rv_core::diff::LineKind;
 use rv_core::store::CommentState;
 
 use crate::support::*;
-
-/// Puts `body` on `a.rs`'s second line, rewrites that line, and files the
-/// comment as outdated — the state an agent's `.review/`, or a rebase, arrives
-/// in.
-///
-/// Through the store rather than through a derivation, for the reason
-/// `an_outdated_comment_is_grey_and_folded` gives: the reviewer cannot yet reach
-/// the state from the keyboard. The rewrite is what gives the block something to
-/// show — the stored excerpt and the code now standing in its place genuinely
-/// differ.
-fn outdated_over_rewritten_code(workspace: &Fixture, body: &str) -> App {
-    let mut app = workspace.app();
-    select_line(&mut app, |line| line.text.contains("let x = 1;"));
-    write_comment(&mut app, body);
-
-    workspace.write("a.rs", "fn a() {\n    let x = 99;\n}\n");
-    workspace.jj(&["describe", "-m", "rewrite the commented line"]);
-    workspace.jj(&["new"]);
-
-    let mut stored = workspace.store().comments().expect("read comments");
-    stored[0].state = CommentState::Outdated;
-    workspace
-        .store()
-        .append_comment(&stored[0])
-        .expect("store the outdated comment");
-
-    drop(app);
-    workspace.app()
-}
 
 /// Expanding an outdated comment opens the before/after block: the code the
 /// comment was written against, against the code standing there now, inside the

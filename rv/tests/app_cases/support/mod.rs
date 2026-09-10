@@ -6,10 +6,12 @@ pub mod consts;
 pub mod driving_the_app;
 pub mod fixtures;
 pub mod rendering;
+pub mod shared;
 pub mod strategies;
 
 pub use consts::*;
 pub use driving_the_app::*;
 pub use fixtures::*;
 pub use rendering::*;
+pub use shared::*;
 pub use strategies::*;

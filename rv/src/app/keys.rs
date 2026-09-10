@@ -166,9 +166,16 @@ impl App {
 
     /// `v g`: groups each hunk's removals before its additions instead of
     /// difftastic's interleaving. Session-only.
+    ///
+    /// The same lines in a different order, so the plan keeps its length and
+    /// there is no end for the cursor to fall off — but the row it holds names
+    /// a different line the moment a removal moves ahead of an addition, so the
+    /// cursor holds the place it was reading rather than its row.
     #[tracing::instrument(level = "debug", skip(self))]
     fn toggle_grouped(&mut self) {
+        let reading = self.cursor_position();
         self.grouped = !self.grouped;
+        self.keep_cursor_at(reading);
         tracing::debug!(grouped = self.grouped, "toggle_grouped");
         self.status = if self.grouped {
             "grouped diff — v g interleaves again".to_owned()

@@ -34,6 +34,25 @@ pub fn alpha() {
 }
 ";
 
+/// `pair.rs` at the base of [`Fixture::interleaved`]: two *adjacent* rewritten
+/// lines, which is the one diff shape `v g` reorders. difftastic lays each
+/// rewrite down as its removal followed by its addition, so two in a row
+/// interleave the sides and grouping separates them.
+pub const PAIR_BASE: &str = "\
+pub fn pair() {
+    let p01 = 1;
+    let p02 = 2;
+}
+";
+
+/// `pair.rs` at the head of [`Fixture::interleaved`]. See [`PAIR_BASE`].
+pub const PAIR_HEAD: &str = "\
+pub fn pair() {
+    let p01 = 11;
+    let p02 = 22;
+}
+";
+
 /// `drift.rs` at the base of [`Fixture::twice_changed`].
 pub const DRIFT_BASE: &str = "\
 pub fn drift() {

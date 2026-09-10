@@ -267,3 +267,58 @@ fn a_resolved_comment_does_not_become_outdated() {
         "a resolved comment was reported as outdated"
     );
 }
+
+/// Settling rebuilds the plan the cursor indexes: an outdated comment closes
+/// its before/after block the moment it is resolved, and every row below that
+/// block moves up under a cursor that is a row index. The cursor holds the line
+/// it was reading instead, the same way a save and a delete do.
+///
+/// Without that, resolving a comment from inside its own box left the highlight
+/// standing on whatever code the box had been covering — the reviewer settles a
+/// finding and the pane silently walks them somewhere else.
+#[test]
+fn settling_a_comment_keeps_the_cursor_on_the_line_it_was_reading() {
+    let workspace = Fixture::new();
+    let mut app = outdated_over_rewritten_code(&workspace, "this is about the old line");
+
+    select_line(&mut app, |line| line.text.contains("let x = 99;"));
+    app.on_key(KeyCode::Char('s')).expect("expand the box");
+    let reading = app.line_index();
+
+    // The box's last row: the block the settle closes is above it, so this is
+    // the row that moves furthest and the one a stale cursor holds on to.
+    let plan = app.plan();
+    let bottom = (0..plan.rows.len())
+        .rfind(|row| plan.line_of_row(*row) == Some(reading))
+        .expect("the expanded box has rows");
+    let rows_before = plan.rows.len();
+    drop(plan);
+    while app.cursor_row() < bottom {
+        app.on_key(KeyCode::Down).expect("into the box");
+    }
+    assert_eq!(app.cursor_row(), bottom);
+
+    app.on_key(KeyCode::Char('c')).expect("comment leader");
+    app.on_key(KeyCode::Char('r')).expect("resolve");
+    assert_eq!(
+        stored_state(&workspace).0,
+        CommentState::Resolved,
+        "the cursor was not aimed at the comment, so this case settled nothing"
+    );
+
+    let plan = app.plan();
+    assert!(
+        plan.rows.len() < rows_before,
+        "the block did not close, so the plan never moved under the cursor"
+    );
+    assert_ne!(
+        plan.line_of_row(bottom),
+        Some(reading),
+        "row {bottom} still names the line it did, so this case proves nothing"
+    );
+    assert_eq!(
+        app.line_index(),
+        reading,
+        "resolving moved the cursor onto other code"
+    );
+}
