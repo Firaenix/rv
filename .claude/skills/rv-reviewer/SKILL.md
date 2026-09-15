@@ -19,9 +19,9 @@ stderr you can act on.
 ## How rv stores a review
 
 Everything lives in `.review/` at the repo root (git-excluded automatically):
-`comments.json` is the authority, `session.toml` records the range,
-`REVIEW-FEEDBACK.md` is a disposable rendered view. rv is the only writer of
-all three.
+`session.toml` is the one file rv maintains — the range, the comments, the
+flags and the reviewed ticks — and `REVIEW-FEEDBACK.md` is a disposable
+rendered view. rv is the only writer of both.
 
 A comment is **anchored**: it records the file, side, line, a content hash of
 that line, and an excerpt of surrounding code. If the code later moves, rv
@@ -30,11 +30,15 @@ lying. You never compute any of this — `rv comment` does.
 
 ## The reviewing loop
 
-1. **Scope** — what is under review:
+1. **Scope** — what is under review, and what the human has already read:
 
    ```sh
-   rv status --json          # revset, changes, files, comment counts
+   rv status --json          # revset, changes, files, comment/flag/reviewed counts
+   rv reviewed --json        # files the human has ticked off, and which changed since
    ```
+
+   A file the human has ticked is one they consider read: flag it again only
+   if it has `changed: true`, and comment on it only for a real finding.
 
 2. **Read the changes in rv's own coordinates:**
 
@@ -49,7 +53,23 @@ lying. You never compute any of this — `rv comment` does.
    to delete. Read the head-side files themselves whenever you need more
    context than the diff shows.
 
-3. **Comment** on a specific line:
+3. **Flag** what deserves a look first. A flag is *attention, not feedback*:
+   it carries a reason, never blocks the worker's `rv status --check`, and
+   is what the human walks with `g f` in the TUI before reading anything
+   else. Use it for "start here", "this is where the behaviour changes",
+   "the risky bit" — anything you want looked at that does not ask for a
+   code change:
+
+   ```sh
+   rv flag <file> --line <n> [--side left|right] -m "<why look here>"
+   rv flags --json --open    # what you have pointed at
+   ```
+
+   Same coordinates and `-m -` stdin convention as `rv comment` below. Keep
+   the reason to one line — it is drawn as a single row under the line.
+   Never `rv ack` a flag: acknowledging is the human's half.
+
+4. **Comment** on a specific line when something must change:
 
    ```sh
    rv comment <file> --line <n> [--side left|right] -m "<finding>"
@@ -72,14 +92,19 @@ lying. You never compute any of this — `rv comment` does.
      (exit 1) otherwise. A refusal means your coordinates are wrong — re-run
      `rv diff <file> --json` rather than guessing.
 
-4. **Check what you left**:
+5. **Check what you left**:
 
    ```sh
    rv comments --json --state open
+   rv flags --json --open
    ```
 
 ## What makes a good rv comment
 
+- **A comment asks for a change; a flag asks for a look.** If you would
+  accept "no change needed" as the answer, it is a flag. The worker is
+  polled on open *comments*, so a comment that is really a note costs a
+  round trip and blocks the loop.
 - **One finding per comment**, on the line that best represents it.
 - Say what is wrong **and what right looks like** — the worker acts on your
   words alone.
@@ -102,3 +127,5 @@ verify, say so in the comment ("unverified: …").
   settling is the worker's (or human's) half. Exception: retracting your own
   mistaken finding, with `rv reply <id> -m "<why>"` first, then `rv abandon`.
 - Never delete comments — deletion is behind the TUI's human confirmation.
+- Never `rv ack` a flag or `rv review` a file — both record that a *human*
+  looked.

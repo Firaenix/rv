@@ -30,6 +30,13 @@ Poll with `rv status --check` between your own tasks — it is one exit code,
 prints nothing, and costs almost nothing. `--check --json` prints the report
 *and* sets the code, for when you want both.
 
+**Flags are not your work.** A reviewer may also leave *flags* (`rv flags
+--json`) — "look here, because…" pointers for the human. They never gate
+`--check`, they ask for no change, and you never `rv ack` one: acknowledging
+records that a human looked. Read them only for context on a comment nearby.
+Likewise `rv reviewed` — the files the human has ticked off — is theirs to
+change, never yours.
+
 ## Reading a comment
 
 `rv comments --json` gives you everything per comment:
@@ -79,3 +86,5 @@ and some comments may have become `outdated`.
   cannot verify.
 - Never batch-settle ids you have not individually addressed.
 - Never delete comments — deletion is behind the TUI's human confirmation.
+- Never `rv ack` a flag, `rv unflag` one, or `rv review`/`rv unreview` a
+  file — all three record what the *human* has looked at.
