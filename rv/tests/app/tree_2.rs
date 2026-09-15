@@ -151,9 +151,10 @@ fn the_view_keys_say_they_are_about_the_file_list() {
 }
 
 /// Directory and file rows carry nerd-font icons beside their marks — a folder
-/// for what holds things, a file for what is held. They are patched-font
-/// glyphs, so the same `RV_ASCII` that turns the powerline arrows off turns
-/// them off too; with the switch unset (as here) they are on.
+/// for what holds things, and for a file the glyph of its kind: Rust's gear
+/// for `.rs`, markdown's for `.md`. They are patched-font glyphs, so the same
+/// `RV_ASCII` that turns the powerline arrows off turns them off too; with the
+/// switch unset (as here) they are on.
 #[test]
 fn the_tree_carries_nerdfont_icons_unless_ascii_asks_otherwise() {
     let workspace = Fixture::nested();
@@ -174,8 +175,12 @@ fn the_tree_carries_nerdfont_icons_unless_ascii_asks_otherwise() {
         "no open-folder icon on an open directory:\n{text}"
     );
     assert!(
-        text.contains('\u{f15b}'),
-        "no file icon on a file row:\n{text}"
+        text.contains('\u{e7a8}'),
+        "no rust icon on a .rs row:\n{text}"
+    );
+    assert!(
+        text.contains('\u{e73e}'),
+        "no markdown icon on a .md row:\n{text}"
     );
 
     // Folding swaps the folder icon for its closed form.

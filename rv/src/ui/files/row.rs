@@ -12,16 +12,15 @@ use ratatui::text::Span;
 use super::super::text::clip;
 use super::super::text::colour;
 use super::MIN_PATH_COLUMNS;
-use super::counts::counts_columns;
+use super::counts::CountsColumns;
 use crate::gradient;
 use crate::gradient::Stat;
 use crate::theme;
 use crate::tree::Node;
 use crate::tree::NodeKind;
 
-/// One row: its name on the left — tinted by its change's proportion where
-/// `tint` asks for it — and its counts right-aligned in a column shared by the
-/// whole list.
+/// One row: its counts in the two columns shared by the whole list, then its
+/// name — tinted by its change's proportion where `tint` asks for it.
 ///
 /// The counts go when even they would leave the name less than
 /// [`MIN_PATH_COLUMNS`]: the path is the row's identity and the numbers are
@@ -31,12 +30,13 @@ pub(super) fn file_row(
     head: &str,
     lead: usize,
     counts: &(String, String),
-    counts_width: usize,
+    columns: CountsColumns,
     width: usize,
     tint: bool,
 ) -> Line<'static> {
-    // One column of gap at least, always: a name clipped right up against its
-    // own numbers reads as one word.
+    // One column of gap at least, always: numbers clipped right up against
+    // the name read as one word.
+    let counts_width = columns.width();
     let names = if counts_width == 0 {
         width
     } else {
@@ -51,29 +51,34 @@ pub(super) fn file_row(
     // printing five characters of one is worse than printing none.
     let fitted = fit_commit(node, head, lead, names);
     let name = clip(fitted.as_deref().unwrap_or(head), names);
-    let mut spans = name_spans(node, &name, lead, tint);
 
-    let (added, removed) = counts;
-    if counts_width == 0 || added.is_empty() {
-        // Nothing changed here, so the row says nothing rather than `+0 -0`:
-        // zero is not a measurement, and a gradient over zero lines would be
-        // inventing a ratio.
-        return Line::from(spans);
+    let mut spans = Vec::new();
+    if counts_width > 0 {
+        spans.extend(counts_spans(counts, columns));
+        spans.push(Span::raw(" "));
     }
-    spans.push(Span::raw(
-        " ".repeat(names.saturating_sub(name.chars().count()) + 1),
-    ));
-    spans.push(Span::raw(" ".repeat(counts_width - counts_columns(counts))));
-    spans.push(Span::styled(
-        added.clone(),
-        Style::default().fg(colour(gradient::ADDED)),
-    ));
-    spans.push(Span::raw(" "));
-    spans.push(Span::styled(
-        removed.clone(),
-        Style::default().fg(colour(gradient::REMOVED)),
-    ));
+    spans.extend(name_spans(node, &name, lead, tint));
     Line::from(spans)
+}
+
+/// The two numbers, each right-aligned in its column — or the columns left
+/// blank where the row changed nothing, so it says nothing rather than
+/// `+0 -0`: zero is not a measurement, and a gradient over zero lines would
+/// be inventing a ratio.
+fn counts_spans((added, removed): &(String, String), columns: CountsColumns) -> Vec<Span<'static>> {
+    if added.is_empty() {
+        return vec![Span::raw(" ".repeat(columns.width()))];
+    }
+    vec![
+        Span::raw(" ".repeat(columns.added - added.chars().count())),
+        Span::styled(added.clone(), Style::default().fg(colour(gradient::ADDED))),
+        Span::raw(" "),
+        Span::raw(" ".repeat(columns.removed - removed.chars().count())),
+        Span::styled(
+            removed.clone(),
+            Style::default().fg(colour(gradient::REMOVED)),
+        ),
+    ]
 }
 
 /// What tier of the tree a row is, as a style.

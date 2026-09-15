@@ -20,11 +20,31 @@ pub(super) fn counts(stat: Stat) -> (String, String) {
     )
 }
 
-/// How many columns [`counts`]'s answer takes, the space between the two
-/// numbers included.
-pub(super) fn counts_columns((added, removed): &(String, String)) -> usize {
-    if added.is_empty() {
-        return 0;
+/// The widths of the list's two counts columns: additions and removals are
+/// each right-aligned in their own, so `+1` sits under `+302` and `-2` under
+/// `-195` rather than the pairs drifting with the length of their neighbour.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) struct CountsColumns {
+    pub(super) added: usize,
+    pub(super) removed: usize,
+}
+
+impl CountsColumns {
+    pub(super) fn fitting(counted: &[(String, String)]) -> Self {
+        counted
+            .iter()
+            .fold(Self::default(), |columns, (added, removed)| Self {
+                added: columns.added.max(added.chars().count()),
+                removed: columns.removed.max(removed.chars().count()),
+            })
     }
-    added.chars().count() + 1 + removed.chars().count()
+
+    /// Both columns and the space between them; zero when there is nothing
+    /// to show, which is when no column is reserved at all.
+    pub(super) fn width(self) -> usize {
+        if self.added == 0 {
+            return 0;
+        }
+        self.added + 1 + self.removed
+    }
 }

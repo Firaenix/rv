@@ -12,6 +12,12 @@
 //! the reviewer nothing the tinted name does not. `g` turns the tint off,
 //! `#` the counts, because both are decoration over the name's one job.
 //!
+//! # The counts sit on the left
+//!
+//! In two right-aligned columns ahead of the tree, so every name starts at the
+//! same column whatever its depth or length. On the right they hung off the
+//! end of names of every length and the eye had to hunt for each pair.
+//!
 //! # What goes when the pane is narrow
 //!
 //! The counts first, then the path is clipped: the path is the row's identity
@@ -24,12 +30,16 @@ use ratatui::widgets::ListItem;
 use rv_core::model::ChangeKind;
 
 mod counts;
+mod icons;
 mod row;
 
 use row::file_row;
 
+use counts::CountsColumns;
 use counts::counts;
-use counts::counts_columns;
+use icons::DIR_ICON_FOLDED;
+use icons::DIR_ICON_OPEN;
+use icons::file_icon;
 
 use super::BORDER_ROWS;
 use super::list::list_state;
@@ -54,20 +64,6 @@ const OPEN: &str = "▾  ";
 const FOLDED: &str = "▸  ";
 /// The mark on the row that leads back out of a zoomed subtree.
 const UP: &str = "▴  ";
-
-/// The nerd-font folder icons a directory row carries beside its fold mark,
-/// and the file icon a file row carries beside its change mark.
-///
-/// Nerd-font glyphs live in the Private Use Area, so a font without the patch
-/// shows tofu and rv cannot detect one — exactly the powerline arrows'
-/// problem, so they ride the same switch: `RV_ASCII` turns both off. The
-/// codepoints are Font Awesome's folder, folder-open and file, which every
-/// nerd-font build carries.
-const DIR_ICON_OPEN: char = '\u{f07c}';
-/// See [`DIR_ICON_OPEN`].
-const DIR_ICON_FOLDED: char = '\u{f07b}';
-/// See [`DIR_ICON_OPEN`].
-const FILE_ICON: char = '\u{f15b}';
 
 /// # The shape and the order go on the bottom border
 ///
@@ -125,10 +121,10 @@ fn draw_nodes_titled(
 ) {
     let width = usize::from(area.width.saturating_sub(BORDER_ROWS));
     let heads: Vec<String> = nodes.iter().map(|node| head(app, node)).collect();
-    // One counts column for the whole list, as wide as its widest entry, so the
-    // names line up down the pane. Zero when nothing in the review changed a
-    // line — or when the reviewer has put the column away with `#` — which is
-    // when there is no column to reserve.
+    // One pair of counts columns for the whole list, each as wide as its widest
+    // entry, so the numbers and the names line up down the pane. Zero when
+    // nothing in the review changed a line — or when the reviewer has put the
+    // column away with `#` — which is when there is no column to reserve.
     let counted: Vec<(String, String)> = nodes
         .iter()
         .map(|node| {
@@ -139,7 +135,7 @@ fn draw_nodes_titled(
             }
         })
         .collect();
-    let counts_width = counted.iter().map(counts_columns).max().unwrap_or(0);
+    let columns = CountsColumns::fitting(&counted);
 
     let items: Vec<ListItem> = nodes
         .iter()
@@ -151,7 +147,7 @@ fn draw_nodes_titled(
                 head,
                 lead_of(app, node),
                 counts,
-                counts_width,
+                columns,
                 width,
                 app.tint(),
             ))
@@ -213,7 +209,8 @@ fn marker(kind: ChangeKind) -> &'static str {
 
 /// What a row spends on saying what kind of row it is: how a file changed, or
 /// whether a row that holds others is open or folded — with a nerd-font folder
-/// or file icon beside it, unless `RV_ASCII` turned the patched glyphs off.
+/// icon, or the file's own kind of icon, beside it, unless `RV_ASCII` turned
+/// the patched glyphs off.
 fn row_mark(app: &App, node: &Node) -> String {
     let icons = !app.ascii();
     match &node.kind {
@@ -230,7 +227,9 @@ fn row_mark(app: &App, node: &Node) -> String {
         }
         NodeKind::Up => UP.to_owned(),
         NodeKind::File { index } => match app.files().get(*index) {
-            Some(file) if icons => format!("{:<2}{FILE_ICON} ", marker(file.kind)),
+            Some(file) if icons => {
+                format!("{:<2}{} ", marker(file.kind), file_icon(&node.label))
+            }
             Some(file) => format!("{:<2} ", marker(file.kind)),
             // A row addressing a file the review does not have cannot happen —
             // the rows are built from that very list — and is drawn blank
