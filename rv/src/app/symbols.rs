@@ -68,7 +68,7 @@ impl App {
             SidebarTab::Commits => self
                 .commit_change(self.commit_file_under_cursor().unwrap_or(0))
                 .map_or(Scope::Bookmark, Scope::Change),
-            SidebarTab::Files | SidebarTab::Comments => Scope::Bookmark,
+            SidebarTab::Files | SidebarTab::Comments | SidebarTab::Flags => Scope::Bookmark,
         }
     }
 

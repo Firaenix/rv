@@ -18,6 +18,8 @@ pub(super) const SETTLE_NEEDS_A_COMMENT: &str =
 /// so "no comments on this line" would send the reviewer to the diff.
 pub(super) const NO_COMMENTS_IN_REVIEW: &str = "no comments in this review yet";
 
+pub(super) const NO_FLAGS_IN_REVIEW: &str = "no flags in this review yet";
+
 pub(super) const VIEW_KEYS_ARE_FOR_THE_FILE_LIST: &str =
     "the shape and the order are the file list's: tab for it";
 

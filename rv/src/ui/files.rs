@@ -226,7 +226,8 @@ fn marker(kind: ChangeKind) -> &'static str {
 fn row_mark(app: &App, node: &Node) -> String {
     let icons = !app.ascii();
     let tick = tick_mark(app, node);
-    match &node.kind {
+    let flagged = flag_mark(app, node);
+    let mark = match &node.kind {
         NodeKind::Dir { collapsed, .. } if icons => {
             let (mark, icon) = if *collapsed {
                 (FOLDED, DIR_ICON_FOLDED)
@@ -252,7 +253,48 @@ fn row_mark(app: &App, node: &Node) -> String {
             // rather than panicking a frame over it.
             None => " ".repeat(3),
         },
+    };
+    format!("{flagged}{mark}")
+}
+
+/// The `⚑` a row carries while a flag under it waits to be looked at — and
+/// nothing at all, not even the column, in a review with no open flags, so
+/// the names pay for it only where there is something to find. A change row
+/// carries it for any of its files.
+fn flag_mark(app: &App, node: &Node) -> &'static str {
+    let open: Vec<&str> = app
+        .flags()
+        .iter()
+        .filter(|flag| !flag.acknowledged)
+        .map(|flag| flag.anchor.file.as_str())
+        .collect();
+    if open.is_empty() {
+        return "";
     }
+    let names = |file: &rv_core::model::FileChange| {
+        open.contains(&file.path.as_str())
+            || file
+                .source_path
+                .as_deref()
+                .is_some_and(|source| open.contains(&source))
+    };
+    let flagged = match (&node.kind, app.sidebar_tab()) {
+        (NodeKind::File { index }, SidebarTab::Files) => app.files().get(*index).is_some_and(names),
+        (NodeKind::File { index }, _) => app
+            .commit_path(*index)
+            .is_some_and(|path| open.contains(&path)),
+        (NodeKind::Commit { change_id, .. }, _) => app
+            .changes()
+            .iter()
+            .position(|change| change.change_id == *change_id)
+            .is_some_and(|change| {
+                app.commit_change_paths(change)
+                    .iter()
+                    .any(|path| open.contains(&path.as_str()))
+            }),
+        _ => false,
+    };
+    if flagged { "⚑ " } else { "  " }
 }
 
 /// The row's reviewed tick: `✓` for a file reviewed as it stands, `≈` for one

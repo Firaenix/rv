@@ -10,6 +10,7 @@ use super::Focus;
 use super::SidebarTab;
 use super::status::NO_COMMENTS;
 use super::status::NO_COMMENTS_IN_REVIEW;
+use super::status::NO_FLAGS_IN_REVIEW;
 
 impl App {
     /// Folds comment boxes away, or unfolds them.
@@ -35,6 +36,7 @@ impl App {
             // because it is the same question about the same two cursors.
             self.status = match (self.focus, self.sidebar_tab) {
                 (Focus::Sidebar, SidebarTab::Comments) => NO_COMMENTS_IN_REVIEW,
+                (Focus::Sidebar, SidebarTab::Flags) => NO_FLAGS_IN_REVIEW,
                 _ => NO_COMMENTS,
             }
             .to_owned();
@@ -68,6 +70,12 @@ impl App {
             (Focus::Sidebar, SidebarTab::Comments) => self
                 .browsed_comment()
                 .map(|comment| comment.id.clone())
+                .into_iter()
+                .collect(),
+            (Focus::Sidebar, SidebarTab::Flags) => self
+                .browsed_flag()
+                .filter(|flag| !flag.acknowledged)
+                .map(|flag| flag.id.clone())
                 .into_iter()
                 .collect(),
             (Focus::Diff | Focus::Sidebar, _) => {

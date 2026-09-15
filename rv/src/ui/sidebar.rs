@@ -27,6 +27,7 @@ use super::BORDER_ROWS;
 use super::comment_box::comment_style;
 use super::comment_box::state_name;
 use super::files;
+use super::flag_row::flag_style;
 use super::list::list_state;
 use super::pane::pane;
 use super::pane::selection_style;
@@ -43,6 +44,8 @@ use crate::app::reviewed::Freshness;
 const NO_COMMENTS_YET: &str = "no comments yet";
 
 /// The open-directory mark a tree heading carries, matching the files pane's.
+const NO_FLAGS_YET: &str = "no flags yet — F on a line, or rv flag";
+
 const DIR_MARK: &str = "▾  ";
 
 pub(super) fn draw_sidebar(frame: &mut Frame, app: &App, area: Rect) {
@@ -50,7 +53,7 @@ pub(super) fn draw_sidebar(frame: &mut Frame, app: &App, area: Rect) {
     match app.sidebar_tab() {
         SidebarTab::Files => files::draw_files(frame, app, area, focused),
         SidebarTab::Commits => files::draw_commits(frame, app, area, focused),
-        SidebarTab::Comments => draw_comment_browser(frame, app, area, focused),
+        SidebarTab::Comments | SidebarTab::Flags => draw_comment_browser(frame, app, area, focused),
     }
 }
 
@@ -71,11 +74,22 @@ fn draw_comment_browser(frame: &mut Frame, app: &App, area: Rect, focused: bool)
     // on the border of both shapes this pane has. A review that has been
     // reindented and not yet commented on is exactly the one whose reviewer
     // most wants to be told.
-    let block = pane(format!("Comments ({})", app.comments().len()), focused)
-        .title_bottom(unchanged_note(app.suppression()));
+    let (title, empty) = if app.sidebar_tab() == SidebarTab::Flags {
+        let open = app.flags().iter().filter(|flag| !flag.acknowledged).count();
+        (
+            format!("Flags ({} open of {})", open, app.flags().len()),
+            NO_FLAGS_YET,
+        )
+    } else {
+        (
+            format!("Comments ({})", app.comments().len()),
+            NO_COMMENTS_YET,
+        )
+    };
+    let block = pane(title, focused).title_bottom(unchanged_note(app.suppression()));
     let rows = app.browser_rows();
     if rows.is_empty() {
-        frame.render_widget(Paragraph::new(NO_COMMENTS_YET).block(block), area);
+        frame.render_widget(Paragraph::new(empty).block(block), area);
         return;
     }
 
@@ -120,6 +134,19 @@ fn browser_row<'a>(app: &App, row: &BrowserRow, width: usize) -> ListItem<'a> {
             // A row addressing a comment the review does not have cannot happen
             // — the rows are built from that very list — and is drawn blank
             // rather than panicking a frame over it.
+            None => (String::new(), Style::default()),
+        },
+        BrowserRow::Flag { index, depth } => match app.flags().get(*index) {
+            Some(flag) => (
+                format!(
+                    "{}:{} {}{}",
+                    "  ".repeat(*depth),
+                    flag.anchor.line,
+                    if flag.acknowledged { "⚐ " } else { "⚑ " },
+                    flag.reason.lines().next().unwrap_or_default()
+                ),
+                flag_style(flag),
+            ),
             None => (String::new(), Style::default()),
         },
     };

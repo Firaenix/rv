@@ -79,6 +79,7 @@ impl App {
             | PaneCommand::GotoFiles
             | PaneCommand::GotoCommits
             | PaneCommand::GotoComments
+            | PaneCommand::GotoFlags
             | PaneCommand::GotoDiff => true,
             // `←` always leads somewhere (out of a pane, or up the tree); `→`
             // acts only from the sidebar.
@@ -87,7 +88,9 @@ impl App {
             PaneCommand::Open => match (self.focus, self.sidebar_tab) {
                 // Every browser row leads somewhere: a comment to its code, a
                 // heading to the top of the file it names.
-                (Focus::Sidebar, SidebarTab::Comments) => !self.browser_rows().is_empty(),
+                (Focus::Sidebar, SidebarTab::Comments | SidebarTab::Flags) => {
+                    !self.browser_rows().is_empty()
+                }
                 // A row that holds things can be zoomed into, and the Up row
                 // zoomed back out of; only a file row leaves `Enter` nothing.
                 (Focus::Sidebar, _) => matches!(
@@ -110,7 +113,7 @@ impl App {
             FilesCommand::ToggleTree
             | FilesCommand::CycleSort
             | FilesCommand::ToggleTint
-            | FilesCommand::ToggleCounts => self.sidebar_tab != SidebarTab::Comments,
+            | FilesCommand::ToggleCounts => !self.sidebar_tab.is_browser(),
             FilesCommand::ToggleReviewed => self.can_tick(),
         }
     }
@@ -145,7 +148,10 @@ impl App {
             CommentCommand::Write => {
                 matches!(self.focus, Focus::Diff | Focus::Stack) && self.selected_line().is_some()
             }
-            CommentCommand::Delete => self.delete_target().is_some(),
+            CommentCommand::Delete => {
+                self.delete_target().is_some()
+                    || (self.focus == Focus::Sidebar && self.browsed_flag().is_some())
+            }
             CommentCommand::Resolve | CommentCommand::Abandon => self.settle_target().is_some(),
             // Two things under one key, so two ways for it to have a target.
             CommentCommand::ToggleFold => {
@@ -180,7 +186,9 @@ impl App {
                 SidebarTab::Files | SidebarTab::Commits => {
                     self.sidebar_row + 1 < self.nodes().len()
                 }
-                SidebarTab::Comments => self.browser_index + 1 < self.browser_rows().len(),
+                SidebarTab::Comments | SidebarTab::Flags => {
+                    self.browser_index + 1 < self.browser_rows().len()
+                }
             },
             Focus::Diff => self.cursor_row() + 1 < self.row_count(),
             Focus::Stack => self.comment_index + 1 < self.stack_len(),
@@ -205,7 +213,7 @@ impl App {
         match self.focus {
             Focus::Sidebar => match self.sidebar_tab {
                 SidebarTab::Files | SidebarTab::Commits => self.sidebar_row > 0,
-                SidebarTab::Comments => self.browser_index > 0,
+                SidebarTab::Comments | SidebarTab::Flags => self.browser_index > 0,
             },
             Focus::Diff => self.cursor_row() > 0,
             Focus::Stack => self.comment_index > 0,

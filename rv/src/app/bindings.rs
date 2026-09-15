@@ -204,6 +204,7 @@ pub(super) enum PaneCommand {
     GotoFiles,
     GotoCommits,
     GotoComments,
+    GotoFlags,
     GotoDiff,
 }
 

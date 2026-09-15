@@ -32,7 +32,7 @@ impl App {
         match self.focus {
             Focus::Sidebar => match self.sidebar_tab {
                 SidebarTab::Files | SidebarTab::Commits => self.step_sidebar(forward, step)?,
-                SidebarTab::Comments => self.step_browser(forward, step),
+                SidebarTab::Comments | SidebarTab::Flags => self.step_browser(forward, step),
             },
             Focus::Diff => {
                 let row = if forward {
@@ -68,7 +68,7 @@ impl App {
         match self.focus {
             Focus::Sidebar => match self.sidebar_tab {
                 SidebarTab::Files | SidebarTab::Commits => self.jump_sidebar(forward)?,
-                SidebarTab::Comments => self.jump_browser(forward),
+                SidebarTab::Comments | SidebarTab::Flags => self.jump_browser(forward),
             },
             Focus::Diff => {
                 let row = if forward {

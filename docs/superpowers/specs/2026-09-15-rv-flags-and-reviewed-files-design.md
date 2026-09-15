@@ -283,9 +283,14 @@ Implemented as specified, with these rulings made while building it:
   child under `c` would have cost every comment a keystroke. The flag walk
   is `g f` / `g F`, under the goto leader beside the hunk and symbol walks,
   rather than `]f` / `[f`. `x` ticks a file.
-- **§5 sidebar** — no fourth tab yet. Flags are reached by walking them
-  (`g f`) and by `rv flags`; a browser can follow once there is dogfood
-  evidence it is wanted over the walk.
+- **§5 sidebar** — the Flags tab shipped the same day, after the first
+  dogfood found the walk alone gave no way to *find* a flag: `m F` / `Tab`
+  reach it, it lists flags under their file headings exactly as the Comments
+  tab lists comments (`Enter` jumps, `A` acknowledges, `s` folds, `d`
+  deletes), and a file or change row in the Files/Commits lists carries `⚑`
+  while a flag under it is open — the column exists only in a review that
+  has open flags, so the names pay for it only where there is something to
+  find.
 - **§3 staleness** — a flag is matched to its line by its stored anchor,
   like a comment; the drift survey (moved / weak / outdated) is not yet run
   for flags.

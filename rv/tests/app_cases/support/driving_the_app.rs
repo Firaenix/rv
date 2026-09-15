@@ -317,6 +317,13 @@ pub fn to_comments(app: &mut App) {
     assert_eq!(app.sidebar_tab(), SidebarTab::Comments);
 }
 
+/// The same, for the flag browser: `m F`.
+pub fn to_flags(app: &mut App) {
+    app.on_key(KeyCode::Char('m')).expect("mode leader");
+    app.on_key(KeyCode::Char('F')).expect("the flags mode");
+    assert_eq!(app.sidebar_tab(), SidebarTab::Flags);
+}
+
 /// The same, for the tab that lists the stack's changes: `2`.
 pub fn to_commits(app: &mut App) {
     app.on_key(KeyCode::Char('m')).expect("mode leader");

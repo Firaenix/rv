@@ -21,7 +21,7 @@ impl App {
         match self.focus {
             Focus::Sidebar => match self.sidebar_tab {
                 SidebarTab::Files | SidebarTab::Commits => self.move_sidebar(true)?,
-                SidebarTab::Comments => self.move_browser(true),
+                SidebarTab::Comments | SidebarTab::Flags => self.move_browser(true),
             },
             // By **row**, not by diff line: a comment box is rows, so this is
             // what lets the cursor walk into one instead of over it.
@@ -40,7 +40,7 @@ impl App {
         match self.focus {
             Focus::Sidebar => match self.sidebar_tab {
                 SidebarTab::Files | SidebarTab::Commits => self.move_sidebar(false)?,
-                SidebarTab::Comments => self.move_browser(false),
+                SidebarTab::Comments | SidebarTab::Flags => self.move_browser(false),
             },
             Focus::Diff => self.set_cursor_row(self.cursor_row().saturating_sub(1)),
             Focus::Stack => self.comment_index = self.comment_index.saturating_sub(1),

@@ -52,14 +52,15 @@ use crate::support::*;
 // pinned end-to-end in `rv/tests/app.rs`. A bare `d` is inert now.
 #[case::comment_leader(KeyCode::Char('c'), Action::Continue, Mode::Browse, Focus::Sidebar, SidebarTab::Comments, ("first finding", 0))]
 #[case::bare_d_is_inert(KeyCode::Char('d'), Action::Continue, Mode::Browse, Focus::Sidebar, SidebarTab::Comments, ("first finding", 0))]
-// `Tab` swaps the focus to the diff; the comments list stays selected.
-#[case::tab_to_the_diff(
+// `Tab` moves on to the flag browser — empty here, so nothing is browsed —
+// and the diff is one more `Tab` away.
+#[case::tab_to_the_flags(
     KeyCode::Tab,
     Action::Continue,
     Mode::Browse,
-    Focus::Diff,
-    SidebarTab::Comments,
-    ("first finding", 0)
+    Focus::Sidebar,
+    SidebarTab::Flags,
+    ("", 0)
 )]
 // The comment browser has no tree to climb, so `←` leads out to the diff.
 #[case::left_leads_to_the_diff(
@@ -205,14 +206,17 @@ fn comment_browser_keybindings(
     // Read off the browser's own row rather than through `browsed_comment`,
     // which is deliberately `None` off the Comments tab: `Tab` is one of the
     // keys under test, and its case still has a browser cursor to assert about.
-    let browsed = match &app.browser_rows()[app.browser_index()] {
-        BrowserRow::Comment { index, .. } => app.comments()[*index].body.clone(),
-        BrowserRow::File { path, .. } => {
+    let browsed = match app.browser_rows().get(app.browser_index()) {
+        Some(BrowserRow::Comment { index, .. }) => app.comments()[*index].body.clone(),
+        Some(BrowserRow::Flag { index, .. }) => app.flags()[*index].reason.clone(),
+        Some(BrowserRow::File { path, .. }) => {
             panic!("{key:?} left the cursor on the {path} heading")
         }
-        BrowserRow::Dir { label, .. } => {
+        Some(BrowserRow::Dir { label, .. }) => {
             panic!("{key:?} left the cursor on the {label} directory row")
         }
+        // An empty browser — the flag tab of a review with no flags.
+        None => String::new(),
     };
     assert_eq!(
         (browsed.as_str(), app.file_index()),

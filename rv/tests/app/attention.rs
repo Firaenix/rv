@@ -160,6 +160,81 @@ fn a_flag_from_the_cli_renders_under_its_line_and_g_f_jumps_to_it() {
     assert_eq!(line.right, Some(2), "g f did not land on the flagged line");
 }
 
+/// The Flags tab lists every flag under its file; `Enter` jumps to it, `A`
+/// acknowledges it, and the file's row in the Files tab carries `⚑` until
+/// it has been looked at.
+#[test]
+fn the_flags_tab_lists_flags_and_the_file_list_marks_their_files() {
+    let workspace = Fixture::new();
+    let review = session::read(workspace.root(), None, None).expect("read the review");
+    session::flags::add_flag(&review, "b.rs", Side::Right, 3, "check the sum").expect("flag");
+    let mut app = workspace.app();
+
+    let sidebar = sidebar_text(
+        &frame_at(&app, 100, 24),
+        100,
+        24,
+        rv::layout::Split::default(),
+    );
+    let flagged: Vec<&str> = sidebar.lines().filter(|row| row.contains('⚑')).collect();
+    assert_eq!(flagged.len(), 1, "one file carries a flag:\n{sidebar}");
+    assert!(flagged[0].contains("b.rs"), "{sidebar}");
+
+    app.on_key(KeyCode::Char('m')).expect("mode leader");
+    app.on_key(KeyCode::Char('F')).expect("flags");
+    assert_eq!(app.sidebar_tab(), rv::app::SidebarTab::Flags);
+    let frame = buffer_text(&frame_at(&app, 100, 24));
+    assert!(frame.contains("Flags (1 open of 1)"), "{frame}");
+    assert!(frame.contains(":3 ⚑ check the sum"), "{frame}");
+
+    app.on_key(KeyCode::Enter).expect("jump");
+    assert_eq!(app.focus(), Focus::Diff);
+    assert_eq!(app.file_index(), 1);
+    assert_eq!(app.selected_line().expect("a line").right, Some(3));
+
+    app.on_key(KeyCode::Char('m')).expect("mode leader");
+    app.on_key(KeyCode::Char('F')).expect("back to the flags");
+    app.on_key(KeyCode::Char('A'))
+        .expect("acknowledge from the browser");
+    assert!(workspace.store().flags().expect("read")[0].acknowledged);
+    let frame = buffer_text(&frame_at(&app, 100, 24));
+    assert!(frame.contains("Flags (0 open of 1)"), "{frame}");
+
+    app.on_key(KeyCode::Char('m')).expect("mode leader");
+    app.on_key(KeyCode::Char('f')).expect("files");
+    let sidebar = sidebar_text(
+        &frame_at(&app, 100, 24),
+        100,
+        24,
+        rv::layout::Split::default(),
+    );
+    assert!(
+        !sidebar.contains('⚑'),
+        "an acknowledged flag still marks its file:\n{sidebar}"
+    );
+}
+
+/// `d` in the Flags tab deletes the browsed flag, after the same question.
+#[test]
+fn d_in_the_flags_tab_deletes_the_browsed_flag_after_confirming() {
+    let workspace = Fixture::new();
+    let review = session::read(workspace.root(), None, None).expect("read the review");
+    session::flags::add_flag(&review, "a.rs", Side::Right, 1, "gone soon").expect("flag");
+    let mut app = workspace.app();
+    app.on_key(KeyCode::Char('m')).expect("mode leader");
+    app.on_key(KeyCode::Char('F')).expect("flags");
+    // `c` collapses straight onto `d`: delete is the one comment verb live
+    // on a flag, so the leader does not wait for a second key.
+    app.on_key(KeyCode::Char('c')).expect("comment leader");
+    assert!(
+        app.status().contains("delete flag at a.rs:1"),
+        "{}",
+        app.status()
+    );
+    app.on_key(KeyCode::Char('y')).expect("confirm");
+    assert!(workspace.store().flags().expect("read").is_empty());
+}
+
 #[test]
 fn shift_f_writes_a_flag_and_shift_a_acknowledges_it() {
     let workspace = Fixture::new();

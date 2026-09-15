@@ -71,7 +71,7 @@ impl App {
     /// holds things, and nothing anywhere else — the inward half of the
     /// shifted arrows' walk, whose outward half is [`App::zoom_out`].
     pub(super) fn zoom_into_under_cursor(&mut self) -> bool {
-        if self.focus != Focus::Sidebar || self.sidebar_tab == SidebarTab::Comments {
+        if self.focus != Focus::Sidebar || self.sidebar_tab.is_browser() {
             return false;
         }
         let Some(node) = self.nodes().get(self.sidebar_row).cloned() else {

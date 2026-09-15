@@ -19,6 +19,7 @@ use super::SidebarTab;
 use super::status::DELETE_NEEDS_A_COMMENT;
 use super::status::NO_COMMENTS;
 use super::status::NO_COMMENTS_IN_REVIEW;
+use super::status::NO_FLAGS_IN_REVIEW;
 
 impl App {
     /// Which comment `d` would ask about, or `None` where it would refuse.
@@ -50,6 +51,19 @@ impl App {
     ///
     /// With nothing to delete there is no question worth asking.
     pub(super) fn begin_delete(&mut self) {
+        // In the Flags tab `d` takes the browsed flag, through the same
+        // question; the confirmation removes whichever kind the id names.
+        if self.focus == Focus::Sidebar && self.sidebar_tab == SidebarTab::Flags {
+            let Some(flag) = self.browsed_flag() else {
+                self.status = NO_FLAGS_IN_REVIEW.to_owned();
+                return;
+            };
+            let label = format!("{}:{}", flag.anchor.file, flag.anchor.line);
+            let id = flag.id.clone();
+            self.status = format!("delete flag at {label}? (y/n)");
+            self.mode = Mode::ConfirmDelete { id, label };
+            return;
+        }
         let Some(comment) = self.delete_target() else {
             self.status = match (self.focus, self.sidebar_tab) {
                 (Focus::Sidebar, SidebarTab::Files) => DELETE_NEEDS_A_COMMENT,
@@ -95,6 +109,25 @@ impl App {
         // how much of what the reviewer was looking at is still there. Read
         // before the removal, like the line — a delete takes a box's rows out
         // of the plan the cursor indexes.
+        if self.flags.iter().any(|flag| flag.id == id) {
+            let removed = self
+                .review
+                .store
+                .remove_flag(&id)
+                .with_context(|| format!("could not delete the flag at {label}"))?;
+            let line = self.line_index();
+            self.reload_flags()?;
+            self.collapsed.remove(&id);
+            self.clamp_browser();
+            self.resettle_cursor(line);
+            self.status = if removed {
+                format!("deleted the flag at {label}")
+            } else {
+                format!("nothing to delete at {label}, it was already gone")
+            };
+            return Ok(Action::Continue);
+        }
+
         let before = self.stack_len();
         let line = self.line_index();
         let removed = self

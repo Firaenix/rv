@@ -52,6 +52,7 @@ pub const PANES: &[(&str, Context)] = &[
     ("files", Context::Files),
     ("commits", Context::Commits),
     ("comments", Context::Comments),
+    ("flags", Context::Flags),
     ("diff", Context::Diff),
     ("stack", Context::Stack),
 ];

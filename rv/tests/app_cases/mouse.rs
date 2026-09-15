@@ -73,6 +73,7 @@ fn no_gesture_panics_quits_or_destroys_a_comment() {
         Just(SidebarTab::Files),
         Just(SidebarTab::Commits),
         Just(SidebarTab::Comments),
+        Just(SidebarTab::Flags),
     ];
     let inputs = (
         any_mouse(),
@@ -86,6 +87,7 @@ fn no_gesture_panics_quits_or_destroys_a_comment() {
             SidebarTab::Files => to_files(app),
             SidebarTab::Commits => to_commits(app),
             SidebarTab::Comments => to_comments(app),
+            SidebarTab::Flags => to_flags(app),
         }
         let _ = render(app, width, height);
         let action = app.on_mouse(event).expect("a gesture");
@@ -150,7 +152,7 @@ fn clicking_a_file_row_selects_that_rows_file() {
                 SidebarTab::Commits => to_commits(app),
                 // The safety fuzz covers the comment browser; its rows are
                 // comments, not files, so there is nothing here to click *at*.
-                SidebarTab::Comments => return Ok(()),
+                SidebarTab::Comments | SidebarTab::Flags => return Ok(()),
             }
             let painted = {
                 let _ = render(app, width, height);
@@ -188,7 +190,7 @@ fn clicking_a_file_row_selects_that_rows_file() {
                             }
                             path
                         }
-                        SidebarTab::Comments => None,
+                        SidebarTab::Comments | SidebarTab::Flags => None,
                     },
                     Some(_) => {
                         // A dir, commit heading, or `..` row: the click folds it and

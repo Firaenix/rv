@@ -315,7 +315,7 @@ status bar. `?` shows the leaders; `?` again unrolls the whole map.
 | `]` | Next file, from whichever pane the cursor is in |
 | `[` | Previous file, likewise |
 | `Enter` | To the diff for the highlighted item: opens the file under the sidebar cursor (moving the focus to the diff), steps into the selected diff line's comment stack, or from the Comments tab jumps to the comment's code. It no longer fires on a directory or change row — `→` drills into those |
-| `Tab` | To the next mode, looping: Files → Commits → Comments → Diff. A file row under a change shows *that change's* diff of it |
+| `Tab` | To the next mode, looping: Files → Commits → Comments → Flags → Diff. A file row under a change shows *that change's* diff of it |
 | `s` | Fold a comment box away, or a directory in the file list — again to unfold |
 | `f` | On the diff: toggle full-file context (also `v` `f` from anywhere) |
 | `i` | In the **Commits** list: put the change details away, or bring them back (also `v` `i` from anywhere) |
@@ -347,6 +347,7 @@ status bar. `?` shows the leaders; `?` again unrolls the whole map.
 | `m` `f` | Go to the **Files** mode: the sidebar's file list |
 | `m` `c` | Go to the **Commits** mode: the list of changes |
 | `m` `o` | Go to the **Comments** mode: the review's comment browser |
+| `m` `F` | Go to the **Flags** mode: every flag in the review under the file it points into, open ones first by file and line. `Enter` jumps to the code, `A` acknowledges, `s` folds, `d` deletes. A file or change row in the Files/Commits lists carries `⚑` while a flag under it is still open |
 | `m` `d` | Go to the **Diff** mode: the focus lands on the diff |
 | `g` `↓` | Next hunk: the first line of the next run of changes, skipping the context between them |
 | `g` `↑` | The previous hunk |

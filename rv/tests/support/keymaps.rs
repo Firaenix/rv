@@ -62,6 +62,7 @@ pub const BROWSE_KEYS: &[&str] = &[
     "`m` `f`",
     "`m` `c`",
     "`m` `o`",
+    "`m` `F`",
     "`m` `d`",
     // g — goto
     "`g` `↓`",

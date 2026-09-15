@@ -194,7 +194,7 @@ impl App {
         let nodes = match self.sidebar_tab() {
             SidebarTab::Files => self.sidebar_nodes(),
             SidebarTab::Commits => self.commit_nodes(),
-            SidebarTab::Comments => Vec::new(),
+            SidebarTab::Comments | SidebarTab::Flags => Vec::new(),
         };
         *self.nodes_cache.borrow_mut() = Some((key, nodes.clone()));
         nodes
@@ -225,7 +225,7 @@ impl App {
         match self.sidebar_tab() {
             SidebarTab::Files => self.select_file(index),
             SidebarTab::Commits => self.select_commit_file(index),
-            SidebarTab::Comments => Ok(()),
+            SidebarTab::Comments | SidebarTab::Flags => Ok(()),
         }
     }
 

@@ -1001,3 +1001,18 @@ column with **Move**.
 `ui/diff.rs` and `rows.rs` crossed 400 lines and split — the title into
 `ui/diff/title.rs`, wrapping into `rows/wrap.rs` — and `main.rs`'s subcommand
 enum moved to `cli.rs` for the same reason.
+
+### Same day: the flag you could not find
+
+The first question after 1.8.0 was "how do I view flags?", and the honest
+answer — walk them with `g f` — was a way to *visit* them, not to find out
+whether there were any. Two things fixed that. The **Flags tab** (`m F`, or
+`Tab` past Comments) is the comment browser over the flags: the same
+`browser_rows` grouping under file headings, the same `Enter`/`s`/`d`, and
+`A` on a browsed flag — the browser was generalised over "a list of things
+with anchors" rather than copied, so the two tabs cannot drift. And every
+file and change row in the Files/Commits lists now carries `⚑` while a flag
+under it is open. The column is *absent*, not blank, in a review with no
+open flags: the narrow-sidebar tests already ruled that every row must not
+pay for what a few rows say. The spec's "no fourth tab yet" ruling lasted
+one afternoon of dogfood, which is what dogfood is for.

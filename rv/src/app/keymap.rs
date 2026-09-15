@@ -29,6 +29,7 @@ const ALL_PANES: &[Context] = &[
     Context::Files,
     Context::Commits,
     Context::Comments,
+    Context::Flags,
     Context::Diff,
     Context::Stack,
 ];

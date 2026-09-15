@@ -1,7 +1,11 @@
 //! The comment browser's rows: what the Comments tab lists, and which of
 //! those rows its cursor is allowed to be on.
 
+use rv_core::model::Anchor;
+use rv_core::store::Flag;
+
 use crate::app::App;
+use crate::app::SidebarTab;
 use crate::tree;
 use crate::tree::NodeKind;
 
@@ -31,6 +35,8 @@ pub enum BrowserRow {
     /// A comment, addressing [`App::comments`] — its *store* position, which
     /// is not this row's number and never becomes it.
     Comment { index: usize, depth: usize },
+    /// A flag, addressing [`App::flags`] the same way.
+    Flag { index: usize, depth: usize },
 }
 
 impl App {
@@ -48,12 +54,29 @@ impl App {
     /// keep in step.
     #[must_use]
     pub fn browser_rows(&self) -> Vec<BrowserRow> {
-        let mut order: Vec<usize> = (0..self.comments.len()).collect();
+        // The Flags tab lists the flags the same way; the anchors are what
+        // the grouping is built from, and both kinds have one.
+        let anchors: Vec<&Anchor> = if self.sidebar_tab == SidebarTab::Flags {
+            self.flags.iter().map(|flag| &flag.anchor).collect()
+        } else {
+            self.comments
+                .iter()
+                .map(|comment| &comment.anchor)
+                .collect()
+        };
+        let note = |index: usize, depth: usize| {
+            if self.sidebar_tab == SidebarTab::Flags {
+                BrowserRow::Flag { index, depth }
+            } else {
+                BrowserRow::Comment { index, depth }
+            }
+        };
+        let mut order: Vec<usize> = (0..anchors.len()).collect();
         // By file and line, with the store position last so that two comments
         // on one line keep the order they were written in — the browser has
         // always opened on the oldest.
         order.sort_by(|a, b| {
-            let (left, right) = (&self.comments[*a].anchor, &self.comments[*b].anchor);
+            let (left, right) = (anchors[*a], anchors[*b]);
             left.file
                 .cmp(&right.file)
                 .then(left.line.cmp(&right.line))
@@ -64,7 +87,7 @@ impl App {
         let mut paths: Vec<&str> = Vec::new();
         let mut per_file: Vec<Vec<usize>> = Vec::new();
         for index in order {
-            let file = self.comments[index].anchor.file.as_str();
+            let file = anchors[index].file.as_str();
             if paths.last() != Some(&file) {
                 paths.push(file);
                 per_file.push(Vec::new());
@@ -108,10 +131,11 @@ impl App {
                         label: node.label,
                         depth: node.depth,
                     });
-                    rows.extend(per_file[index].iter().map(|comment| BrowserRow::Comment {
-                        index: *comment,
-                        depth: node.depth + 1,
-                    }));
+                    rows.extend(
+                        per_file[index]
+                            .iter()
+                            .map(|entry| note(*entry, node.depth + 1)),
+                    );
                 }
                 NodeKind::Commit { .. } | NodeKind::Up => {}
             }
@@ -124,7 +148,15 @@ impl App {
     pub(in crate::app) fn browsed_index(&self) -> Option<usize> {
         match self.browser_rows().get(self.browser_index)? {
             BrowserRow::Comment { index, .. } => Some(*index),
-            BrowserRow::File { .. } | BrowserRow::Dir { .. } => None,
+            BrowserRow::File { .. } | BrowserRow::Dir { .. } | BrowserRow::Flag { .. } => None,
+        }
+    }
+
+    /// Which flag the browser's cursor is on, as a position in [`App::flags`].
+    pub(in crate::app) fn browsed_flag(&self) -> Option<&Flag> {
+        match self.browser_rows().get(self.browser_index)? {
+            BrowserRow::Flag { index, .. } => self.flags.get(*index),
+            _ => None,
         }
     }
 
@@ -133,8 +165,14 @@ impl App {
     pub(in crate::app) fn browsed_file_path(&self) -> Option<String> {
         match self.browser_rows().get(self.browser_index)? {
             BrowserRow::File { path, .. } => Some(path.clone()),
-            BrowserRow::Comment { index, .. } => {
-                let anchored = &self.comments.get(*index)?.anchor.file;
+            BrowserRow::Comment { .. } | BrowserRow::Flag { .. } => {
+                let anchored = match self.browser_rows().get(self.browser_index)? {
+                    BrowserRow::Comment { index, .. } => &self.comments.get(*index)?.anchor.file,
+                    BrowserRow::Flag { index, .. } => &self.flags.get(*index)?.anchor.file,
+                    _ => return None,
+                }
+                .clone();
+                let anchored = &anchored;
                 self.review
                     .files
                     .iter()

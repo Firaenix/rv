@@ -20,7 +20,7 @@ impl App {
             Focus::Sidebar => match self.sidebar_tab {
                 // The comment browser has no tree to climb, so `←` leads out to
                 // the diff the way it does from every other focus.
-                SidebarTab::Comments => self.focus = Focus::Diff,
+                SidebarTab::Comments | SidebarTab::Flags => self.focus = Focus::Diff,
                 SidebarTab::Files | SidebarTab::Commits => self.zoom_out(),
             },
         }
@@ -36,7 +36,7 @@ impl App {
             return Ok(());
         }
         match self.sidebar_tab {
-            SidebarTab::Comments => self.enter_browser_row(),
+            SidebarTab::Comments | SidebarTab::Flags => self.enter_browser_row(),
             SidebarTab::Files | SidebarTab::Commits => {
                 if self.zoom_into_under_cursor() {
                     return Ok(());
@@ -48,8 +48,8 @@ impl App {
         }
     }
 
-    /// `Tab`: to the next of the review's four modes, looping — the files list,
-    /// the commits list, the comment browser, then the diff. A comment stack
+    /// `Tab`: to the next of the review's five modes, looping — the files list,
+    /// the commits list, the comment browser, the flag browser, then the diff. A comment stack
     /// counts as the diff it lives in, so `Tab` from it lands on the files list.
     pub(super) fn cycle_mode(&mut self) -> Result<()> {
         let on_diff = matches!(self.focus, Focus::Diff | Focus::Stack);
@@ -57,7 +57,8 @@ impl App {
             (true, _) => self.goto_mode(SidebarTab::Files),
             (false, SidebarTab::Files) => self.goto_mode(SidebarTab::Commits),
             (false, SidebarTab::Commits) => self.goto_mode(SidebarTab::Comments),
-            (false, SidebarTab::Comments) => {
+            (false, SidebarTab::Comments) => self.goto_mode(SidebarTab::Flags),
+            (false, SidebarTab::Flags) => {
                 self.focus = Focus::Diff;
                 Ok(())
             }

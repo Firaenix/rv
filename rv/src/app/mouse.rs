@@ -133,7 +133,7 @@ impl App {
             // gets the row they pointed at, heading rows included, and what a
             // key does next is decided from that row exactly as it is for the
             // keyboard's own cursor.
-            SidebarTab::Comments => self.browser_index = index,
+            SidebarTab::Comments | SidebarTab::Flags => self.browser_index = index,
             SidebarTab::Files | SidebarTab::Commits => {
                 self.sidebar_row = index;
                 // `get` rather than `[index]`: a panic in a mouse handler is a

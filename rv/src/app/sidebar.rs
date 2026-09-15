@@ -118,7 +118,7 @@ impl App {
             match self.sidebar_tab {
                 SidebarTab::Files => index == self.file_index,
                 SidebarTab::Commits => self.commit_path(index) == Some(selected.as_str()),
-                SidebarTab::Comments => false,
+                SidebarTab::Comments | SidebarTab::Flags => false,
             }
         })
     }
@@ -171,7 +171,7 @@ impl App {
     /// `t`: flips the file list between a flat list of whole paths and a
     /// directory tree.
     pub(super) fn toggle_tree(&mut self) {
-        if self.sidebar_tab == SidebarTab::Comments {
+        if self.sidebar_tab.is_browser() {
             self.status = VIEW_KEYS_ARE_FOR_THE_FILE_LIST.to_owned();
             return;
         }
@@ -198,7 +198,7 @@ impl App {
 
     /// `g`: tints the row names by their change's proportion, or stops.
     pub(super) fn toggle_tint(&mut self) {
-        if self.sidebar_tab == SidebarTab::Comments {
+        if self.sidebar_tab.is_browser() {
             self.status = VIEW_KEYS_ARE_FOR_THE_FILE_LIST.to_owned();
             return;
         }
@@ -212,7 +212,7 @@ impl App {
 
     /// `#`: shows the sidebar's `+n -n` column, or puts it away.
     pub(super) fn toggle_counts(&mut self) {
-        if self.sidebar_tab == SidebarTab::Comments {
+        if self.sidebar_tab.is_browser() {
             self.status = VIEW_KEYS_ARE_FOR_THE_FILE_LIST.to_owned();
             return;
         }
@@ -227,7 +227,7 @@ impl App {
     /// `o`: cycles the file list's order. See [`crate::tree::Sort`], whose
     /// `next` is what "cycles" means, declared beside the orders themselves.
     pub(super) fn cycle_sort(&mut self) {
-        if self.sidebar_tab == SidebarTab::Comments {
+        if self.sidebar_tab.is_browser() {
             self.status = VIEW_KEYS_ARE_FOR_THE_FILE_LIST.to_owned();
             return;
         }
@@ -266,7 +266,7 @@ impl App {
     /// Only from the file list: `s` means *fold the thing under the cursor*,
     /// and everywhere else that thing is a comment.
     pub(super) fn sidebar_fold_key(&self) -> Option<String> {
-        if self.focus != Focus::Sidebar || self.sidebar_tab == SidebarTab::Comments {
+        if self.focus != Focus::Sidebar || self.sidebar_tab.is_browser() {
             return None;
         }
         match &self.nodes().get(self.sidebar_row)?.kind {

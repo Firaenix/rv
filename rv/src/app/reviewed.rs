@@ -126,7 +126,7 @@ impl App {
                     }
                     NodeKind::Dir { .. } | NodeKind::Up => return None,
                 },
-                SidebarTab::Comments => {
+                SidebarTab::Comments | SidebarTab::Flags => {
                     return self.browsed_file_path().map(|path| TickTarget::File {
                         path,
                         change_id: None,

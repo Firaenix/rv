@@ -85,7 +85,11 @@ impl App {
     /// the diff.
     fn ack_targets(&self) -> Vec<(String, bool)> {
         if self.focus == Focus::Sidebar {
-            return Vec::new();
+            return self
+                .browsed_flag()
+                .map(|flag| (flag.id.clone(), flag.acknowledged))
+                .into_iter()
+                .collect();
         }
         self.flags_for_line(self.line_index())
             .iter()

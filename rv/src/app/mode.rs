@@ -31,6 +31,17 @@ pub enum SidebarTab {
     Files,
     Commits,
     Comments,
+    Flags,
+}
+
+impl SidebarTab {
+    /// Whether the tab is a *browser* — a list of anchored notes under file
+    /// headings, walked by [`crate::app::App::browser_rows`] — rather than a
+    /// tree of files.
+    #[must_use]
+    pub fn is_browser(self) -> bool {
+        matches!(self, SidebarTab::Comments | SidebarTab::Flags)
+    }
 }
 
 /// A focus rather than a [`Mode`]: a mode changes what a keystroke *means*, this
@@ -70,6 +81,8 @@ pub enum Context {
     Commits,
     /// Browsing the comment browser.
     Comments,
+    /// Browsing the flag browser.
+    Flags,
     /// The cursor is on a diff line.
     Diff,
     /// Inside a line's comment stack.
@@ -90,6 +103,7 @@ impl Context {
             Context::Files => "FILES",
             Context::Commits => "COMMITS",
             Context::Comments => "COMMENTS",
+            Context::Flags => "FLAGS",
             Context::Diff => "DIFF",
             Context::Stack => "STACK",
             Context::Writing => "COMMENT",
@@ -110,7 +124,9 @@ impl Context {
             Context::Files | Context::Diff | Context::Finding => theme::FOCUS,
             Context::Commits => theme::HASH,
             Context::Comments | Context::Stack | Context::Writing => theme::COMMENT,
-            Context::Confirming => theme::ALERT,
+            // A flag is amber wherever it is drawn, and the alert yellow is
+            // the nearest the palette has.
+            Context::Flags | Context::Confirming => theme::ALERT,
         }
     }
 }

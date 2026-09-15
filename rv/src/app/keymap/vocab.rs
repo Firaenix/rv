@@ -33,6 +33,7 @@ pub(in crate::app) fn config_name(command: Command) -> &'static str {
             PaneCommand::GotoFiles => "pane_goto_files",
             PaneCommand::GotoCommits => "pane_goto_commits",
             PaneCommand::GotoComments => "pane_goto_comments",
+            PaneCommand::GotoFlags => "pane_goto_flags",
             PaneCommand::GotoDiff => "pane_goto_diff",
         },
         Command::Files(c) => match c {
@@ -105,6 +106,7 @@ pub(in crate::app) const ALL_COMMANDS: &[Command] = &[
     Command::Pane(PaneCommand::GotoFiles),
     Command::Pane(PaneCommand::GotoCommits),
     Command::Pane(PaneCommand::GotoComments),
+    Command::Pane(PaneCommand::GotoFlags),
     Command::Pane(PaneCommand::GotoDiff),
     Command::Files(FilesCommand::Next),
     Command::Files(FilesCommand::Prev),

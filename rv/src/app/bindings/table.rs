@@ -28,8 +28,8 @@ pub const BINDINGS: &[Binding] = &concat();
 
 /// Concatenates the two halves of the table at compile time. Sizes are spelled
 /// out because stable Rust cannot add const generics in an array length.
-const fn concat() -> [Binding; 68] {
-    let mut out = [HEAD[0]; 68];
+const fn concat() -> [Binding; 69] {
+    let mut out = [HEAD[0]; 69];
     let mut n = 0;
     let mut i = 0;
     while i < HEAD.len() {
@@ -63,6 +63,10 @@ const LISTS: &[Context] = &[Context::Files, Context::Commits];
 
 /// The modes whose `Space` menu offers the comment verbs.
 const COMMENTED: &[Context] = &[Context::Stack, Context::Comments];
+
+/// The modes whose `Space` menu offers `d`: the comment verbs' modes, and the
+/// flag browser, where `d` deletes the browsed flag.
+const DELETABLE: &[Context] = &[Context::Stack, Context::Comments, Context::Flags];
 
 /// A direct key or a non-contextual leader child: no `contexts`.
 const ANY: &[Context] = &[];
@@ -338,7 +342,7 @@ const HEAD: [Binding; 35] = [
         keys: "d",
         group: Group::Comment,
         leader: Some(Leader::Context),
-        contexts: COMMENTED,
+        contexts: DELETABLE,
         what: "delete",
         codes: &[KeyCode::Char('d')],
         command: Command::Comment(CommentCommand::Delete),

@@ -6,7 +6,6 @@ use rv_core::model::Anchor;
 
 use super::App;
 use super::Focus;
-use super::SidebarTab;
 use super::sidebar::BrowserRow;
 use super::status::NO_COMMENTS;
 
@@ -21,7 +20,7 @@ impl App {
     /// rather than zooming.
     pub(super) fn on_enter(&mut self) -> Result<()> {
         if self.focus == Focus::Sidebar {
-            if self.sidebar_tab == SidebarTab::Comments {
+            if self.sidebar_tab.is_browser() {
                 return self.enter_browser_row();
             }
             return self.enter_file_under_cursor();
@@ -40,6 +39,12 @@ impl App {
     pub(super) fn enter_browser_row(&mut self) -> Result<()> {
         match self.browser_rows().get(self.browser_index) {
             Some(BrowserRow::Comment { index, .. }) => self.jump_to_comment(*index),
+            Some(BrowserRow::Flag { index, .. }) => {
+                let Some(anchor) = self.flags.get(*index).map(|flag| flag.anchor.clone()) else {
+                    return Ok(());
+                };
+                self.jump_to_anchor(&anchor)
+            }
             Some(BrowserRow::File { path, .. }) => self.open_file_named(&path.clone()),
             // A directory row names no one file, so it can defensibly open
             // nothing.

@@ -171,6 +171,7 @@ impl App {
                     SidebarTab::Files => Context::Files,
                     SidebarTab::Commits => Context::Commits,
                     SidebarTab::Comments => Context::Comments,
+                    SidebarTab::Flags => Context::Flags,
                 },
             },
         }

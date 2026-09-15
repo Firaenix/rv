@@ -58,7 +58,7 @@ fn list_view(app: &App, pane: Rect) -> (usize, usize, usize) {
     let height = usize::from(pane.height.saturating_sub(BORDER_ROWS));
     let (count, selected) = match app.sidebar_tab() {
         SidebarTab::Files | SidebarTab::Commits => (app.nodes().len(), app.sidebar_row()),
-        SidebarTab::Comments => (app.browser_rows().len(), app.browser_index()),
+        SidebarTab::Comments | SidebarTab::Flags => (app.browser_rows().len(), app.browser_index()),
     };
     (
         count,

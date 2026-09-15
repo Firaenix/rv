@@ -295,6 +295,7 @@ impl App {
             PaneCommand::GotoFiles => self.goto_mode(SidebarTab::Files)?,
             PaneCommand::GotoCommits => self.goto_mode(SidebarTab::Commits)?,
             PaneCommand::GotoComments => self.goto_mode(SidebarTab::Comments)?,
+            PaneCommand::GotoFlags => self.goto_mode(SidebarTab::Flags)?,
             PaneCommand::GotoDiff => self.focus = super::Focus::Diff,
         }
         Ok(())

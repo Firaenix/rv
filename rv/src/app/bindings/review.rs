@@ -14,8 +14,18 @@ use super::DiffCommand;
 use super::FilesCommand;
 use super::Group;
 use super::Leader;
+use super::PaneCommand;
 
-pub(super) const REVIEW: [Binding; 12] = [
+pub(super) const REVIEW: [Binding; 13] = [
+    Binding {
+        keys: "F",
+        group: Group::Focus,
+        leader: Some(Leader::Mode),
+        contexts: &[],
+        what: "flags",
+        codes: &[KeyCode::Char('F')],
+        command: Command::Pane(PaneCommand::GotoFlags),
+    },
     Binding {
         keys: "x",
         group: Group::Review,
@@ -41,7 +51,7 @@ pub(super) const REVIEW: [Binding; 12] = [
         keys: "A",
         group: Group::Review,
         leader: None,
-        contexts: &[Context::Diff, Context::Stack],
+        contexts: &[Context::Diff, Context::Stack, Context::Flags],
         what: "ack flag",
         codes: &[KeyCode::Char('A')],
         command: Command::Comment(CommentCommand::Acknowledge),
