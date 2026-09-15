@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.8.0](https://github.com/Firaenix/rv/compare/v1.7.2...v1.8.0) - 2026-09-15
+
+### Added
+
+- *(rv)* flags, reviewed ticks, text search and a column cursor
+
 ## [1.7.2](https://github.com/Firaenix/rv/compare/v1.7.1...v1.7.2) - 2026-09-09
 
 ### Other
