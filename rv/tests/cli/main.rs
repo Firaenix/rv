@@ -6,6 +6,7 @@
 
 mod support;
 
+mod attention;
 mod comments;
 mod output;
 mod session;

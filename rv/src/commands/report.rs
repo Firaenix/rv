@@ -40,6 +40,23 @@ const TRACKED_WARNING: &str = ".review/ is tracked by jj: \
 pub fn status(review: &Review, json: bool) -> Result<bool> {
     let comments = read_comments(review)?;
     let counts = Counts::of(&comments);
+    let flags = session::flags::in_range(
+        review,
+        review
+            .store
+            .flags()
+            .context("could not read the review's flags")?,
+    );
+    let flags_open = flags.iter().filter(|flag| !flag.acknowledged).count();
+    let reviewed = review
+        .store
+        .reviewed()
+        .context("could not read the reviewed files")?;
+    let reviewed_in_range = reviewed
+        .iter()
+        .filter(|tick| tick.change_id.is_none())
+        .filter(|tick| review.files.iter().any(|file| file.path == tick.file))
+        .count();
     let review_tracked = review
         .repo
         .tracks(REVIEW_DIR)
@@ -78,6 +95,11 @@ pub fn status(review: &Review, json: bool) -> Result<bool> {
                 "abandoned": counts.abandoned,
                 "outdated": counts.outdated,
             },
+            "flags": {
+                "open": flags_open,
+                "acknowledged": flags.len() - flags_open,
+            },
+            "reviewed": reviewed_in_range,
         });
         let serialized = serde_json::to_string_pretty(&report)
             .context("could not serialize the status report")?;
@@ -123,6 +145,14 @@ pub fn status(review: &Review, json: bool) -> Result<bool> {
         counts.resolved,
         counts.abandoned,
         counts.outdated
+    );
+    println!(
+        "flags     {flags_open} open, {} acknowledged",
+        flags.len() - flags_open
+    );
+    println!(
+        "reviewed  {reviewed_in_range} of {} files",
+        review.files.len()
     );
     Ok(counts.open > 0)
 }

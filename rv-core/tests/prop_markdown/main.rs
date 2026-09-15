@@ -102,6 +102,8 @@ fn protocol_lines() -> usize {
         changes: Vec::new(),
         started_at: "epoch:0".to_owned(),
         comments: Vec::new(),
+        flags: Vec::new(),
+        reviewed: Vec::new(),
     };
     rv_core::markdown::render(&empty, &[])
         .lines()
@@ -127,6 +129,8 @@ fn session_with(changes: &[&str]) -> Session {
         // `render` takes its comments as an argument; the stored array plays
         // no part in the page.
         comments: Vec::new(),
+        flags: Vec::new(),
+        reviewed: Vec::new(),
     }
 }
 

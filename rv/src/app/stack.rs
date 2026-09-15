@@ -159,7 +159,11 @@ impl App {
             return Ok(());
         };
         let anchor = comment.anchor.clone();
+        self.jump_to_anchor(&anchor)
+    }
 
+    /// The jump itself, shared with the flag walk: to `anchor`'s file and line.
+    pub(super) fn jump_to_anchor(&mut self, anchor: &rv_core::model::Anchor) -> Result<()> {
         // Either side's path: a comment on a removed line is filed under the
         // base-side path, which for a rename is not the path it is listed under.
         let found = self.review.files.iter().position(|file| {
@@ -177,7 +181,7 @@ impl App {
 
         self.file_index = file_index;
         self.load_selected()?;
-        match self.line_of_anchor(&anchor) {
+        match self.line_of_anchor(anchor) {
             Some(line) => {
                 // Onto the line's own diff row rather than into its stack, so
                 // `c` and `d` mean what the reviewer just clicked on.

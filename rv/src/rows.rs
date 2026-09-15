@@ -21,8 +21,13 @@ use rv_core::diff::DiffLine;
 use rv_core::diff::LineKind;
 use rv_core::store::Comment;
 use rv_core::store::CommentState;
+use rv_core::store::Flag;
 
 use crate::stale::Drift;
+
+mod wrap;
+
+use wrap::wrap;
 
 /// What a reply is labelled with inside its comment's box. A reply is part of
 /// the same conversation as the body it answers, so it shares the box rather
@@ -79,6 +84,17 @@ pub enum Row<'a> {
     /// borrow of the app's own state for this row to hold past `plan`'s
     /// return — the same reason `BoxBody`'s `text` is already owned.
     Diff { index: usize, line: DiffLine },
+    /// One wrapped row of a flag's reason, under the line it points at and
+    /// above that line's comment boxes: attention before feedback. `first`
+    /// marks the row that carries the glyph.
+    Flag {
+        line: usize,
+        flag: &'a Flag,
+        text: String,
+        first: bool,
+    },
+    /// A flag folded to one row, the way a collapsed box is.
+    FlagCollapsed { line: usize, flag: &'a Flag },
     /// The top border of an expanded comment box.
     BoxTop { line: usize, comment: &'a Comment },
     /// One wrapped line of a comment's body or reply. `text` is the row's
@@ -122,7 +138,9 @@ impl Row<'_> {
     pub fn line(&self) -> usize {
         match self {
             Row::Diff { index, .. } => *index,
-            Row::BoxTop { line, .. }
+            Row::Flag { line, .. }
+            | Row::FlagCollapsed { line, .. }
+            | Row::BoxTop { line, .. }
             | Row::BoxBody { line, .. }
             | Row::BoxRule { line, .. }
             | Row::BoxDiff { line, .. }
@@ -163,6 +181,7 @@ pub struct Plan<'a> {
 pub fn plan<'a>(
     lines: &[DiffLine],
     comments_for: &dyn Fn(usize) -> Vec<&'a Comment>,
+    flags_for: &dyn Fn(usize) -> Vec<&'a Flag>,
     drift_of: &dyn Fn(&Comment) -> Option<&'a Drift>,
     collapsed: &HashSet<String>,
     width: usize,
@@ -173,6 +192,20 @@ pub fn plan<'a>(
             index,
             line: line.clone(),
         });
+        for flag in flags_for(index) {
+            if collapsed.contains(&flag.id) || flag.acknowledged {
+                rows.push(Row::FlagCollapsed { line: index, flag });
+                continue;
+            }
+            for (at, text) in wrap(&flag.reason, width).into_iter().enumerate() {
+                rows.push(Row::Flag {
+                    line: index,
+                    flag,
+                    text,
+                    first: at == 0,
+                });
+            }
+        }
         for comment in comments_for(index) {
             if collapsed.contains(&comment.id) {
                 rows.push(Row::BoxCollapsed {
@@ -323,73 +356,4 @@ pub fn window(rows: usize, anchor: usize, height: usize) -> Range<usize> {
     }
     let start = anchor.saturating_sub(height / 2).min(rows - height);
     start..start + height
-}
-
-/// Breaks `text` into rows of at most `width` columns.
-///
-/// Wrapping is on whitespace, with a word longer than a whole row broken
-/// mid-word rather than truncated: a reviewer must be able to read every
-/// character of a comment, including a pasted path or identifier that fits
-/// nowhere. The reviewer's own line breaks are kept, so a body written as two
-/// paragraphs stays two paragraphs.
-///
-/// A `width` of 0 is treated as 1. A row must always take at least one
-/// character or wrapping would make no progress and loop forever, which is a
-/// hang rather than a visual glitch — and panes really do get squeezed to
-/// nothing.
-fn wrap(text: &str, width: usize) -> Vec<String> {
-    let width = width.max(1);
-    let mut rows = Vec::new();
-    for paragraph in text.split('\n') {
-        wrap_paragraph(paragraph, width, &mut rows);
-    }
-    rows
-}
-
-/// Wraps one newline-free paragraph onto the end of `rows`, always adding at
-/// least one row so that an empty line in a body stays an empty row.
-fn wrap_paragraph(paragraph: &str, width: usize, rows: &mut Vec<String>) {
-    let mut row = String::new();
-    let mut row_width = 0;
-
-    for word in paragraph.split_whitespace() {
-        let mut rest = word;
-        loop {
-            let separator = usize::from(row_width > 0);
-            let rest_width = rest.chars().count();
-            if row_width + separator + rest_width <= width {
-                if separator == 1 {
-                    row.push(' ');
-                }
-                row.push_str(rest);
-                row_width += separator + rest_width;
-                break;
-            }
-            if row_width > 0 {
-                // Try again at the start of the next row, where the word may
-                // well fit whole.
-                rows.push(std::mem::take(&mut row));
-                row_width = 0;
-                continue;
-            }
-            // A row of its own is not enough for this word: take what fits and
-            // carry the remainder. `width` is at least 1, so this always
-            // consumes something.
-            let (head, tail) = split_at_chars(rest, width);
-            rows.push(head.to_owned());
-            rest = tail;
-        }
-    }
-
-    rows.push(row);
-}
-
-/// Splits `text` after `count` characters, or returns the whole of it and an
-/// empty remainder when it is shorter. Character-wise rather than byte-wise so
-/// that a multi-byte character is never cut in half.
-fn split_at_chars(text: &str, count: usize) -> (&str, &str) {
-    match text.char_indices().nth(count) {
-        Some((offset, _)) => text.split_at(offset),
-        None => (text, ""),
-    }
 }

@@ -26,6 +26,8 @@ use rv_core::store::Session;
 use rv_core::store::Store;
 
 mod comments;
+pub mod flags;
+pub mod reviewed;
 
 pub use comments::add_comment;
 pub use comments::owning_change;
@@ -169,6 +171,8 @@ fn resolve(repo_root: &Path, base: Option<&str>, head: Option<&str>) -> Result<R
         changes,
         started_at,
         comments: stored.comments,
+        flags: stored.flags,
+        reviewed: stored.reviewed,
     };
 
     Ok(Review {

@@ -1,5 +1,6 @@
 //! What each subcommand does, once the arguments are parsed.
 
+pub mod attention;
 mod configcmd;
 mod diffcmd;
 mod report;

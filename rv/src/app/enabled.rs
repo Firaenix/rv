@@ -67,6 +67,9 @@ impl App {
                 Focus::Sidebar => self.sidebar_hscroll > 0,
                 Focus::Diff | Focus::Stack => self.diff_hscroll > 0,
             },
+            CursorCommand::WordLeft | CursorCommand::WordRight => {
+                self.focus == Focus::Diff && self.selected_line().is_some()
+            }
         }
     }
 
@@ -108,6 +111,7 @@ impl App {
             | FilesCommand::CycleSort
             | FilesCommand::ToggleTint
             | FilesCommand::ToggleCounts => self.sidebar_tab != SidebarTab::Comments,
+            FilesCommand::ToggleReviewed => self.can_tick(),
         }
     }
 
@@ -125,6 +129,12 @@ impl App {
             }
             DiffCommand::ToggleFullContext => true,
             DiffCommand::GroupBySide | DiffCommand::CycleSide => self.selected_diff().is_some(),
+            DiffCommand::NextFlag | DiffCommand::PrevFlag => self.has_flags(),
+            DiffCommand::Search => self.selected_diff().is_some(),
+            DiffCommand::NextMatch | DiffCommand::PrevMatch => self.has_query(),
+            DiffCommand::Definition | DiffCommand::References => {
+                self.focus == Focus::Diff && self.word_under_cursor().is_some()
+            }
         }
     }
 
@@ -141,6 +151,10 @@ impl App {
             CommentCommand::ToggleFold => {
                 self.sidebar_fold_key().is_some() || !self.fold_targets().is_empty()
             }
+            CommentCommand::Flag => {
+                matches!(self.focus, Focus::Diff | Focus::Stack) && self.selected_line().is_some()
+            }
+            CommentCommand::Acknowledge => self.can_acknowledge(),
         }
     }
 

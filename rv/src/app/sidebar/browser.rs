@@ -128,6 +128,25 @@ impl App {
         }
     }
 
+    /// The file the browser's cursor is in: the heading's own path, or the
+    /// browsed comment's file as the review lists it.
+    pub(in crate::app) fn browsed_file_path(&self) -> Option<String> {
+        match self.browser_rows().get(self.browser_index)? {
+            BrowserRow::File { path, .. } => Some(path.clone()),
+            BrowserRow::Comment { index, .. } => {
+                let anchored = &self.comments.get(*index)?.anchor.file;
+                self.review
+                    .files
+                    .iter()
+                    .find(|file| {
+                        file.path == *anchored || file.source_path.as_deref() == Some(anchored)
+                    })
+                    .map(|file| file.path.clone())
+            }
+            BrowserRow::Dir { .. } => None,
+        }
+    }
+
     /// Keeps the browser's cursor on the list after the list has changed under
     /// it, and off a heading.
     ///

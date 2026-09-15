@@ -14,6 +14,7 @@ mod support;
 
 mod abort;
 mod alerts;
+mod attention;
 mod bar;
 mod border;
 mod boxes_1;

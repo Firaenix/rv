@@ -11,6 +11,10 @@ use crate::theme;
 pub enum Mode {
     Browse,
     Comment,
+    /// Typing a flag's reason into the same buffer a comment uses.
+    Flag,
+    /// Typing a `/` query into that buffer.
+    Search,
     /// Every key answers this — `y` deletes, anything else cancels — so it cannot
     /// become a state the reviewer is stuck in.
     ConfirmDelete {

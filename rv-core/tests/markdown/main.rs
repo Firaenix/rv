@@ -41,6 +41,8 @@ fn session() -> Session {
         // `render` takes its comments as an argument, so these fixtures leave
         // the stored array out: the page must not depend on it.
         comments: Vec::new(),
+        flags: Vec::new(),
+        reviewed: Vec::new(),
     }
 }
 

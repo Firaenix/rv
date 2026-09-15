@@ -161,9 +161,9 @@ impl App {
     /// filters by it. Derived, never stored — see [`Context`].
     pub fn context(&self) -> Context {
         match &self.mode {
-            Mode::Comment => Context::Writing,
+            Mode::Comment | Mode::Flag => Context::Writing,
             Mode::ConfirmDelete { .. } => Context::Confirming,
-            Mode::Pick => Context::Finding,
+            Mode::Pick | Mode::Search => Context::Finding,
             Mode::Browse => match self.focus {
                 Focus::Diff => Context::Diff,
                 Focus::Stack => Context::Stack,

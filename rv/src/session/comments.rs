@@ -133,6 +133,20 @@ pub fn add_comment(
     line: u32,
     body: &str,
 ) -> Result<Comment> {
+    let (anchored_path, commit) = locate(review, path, side, line)?;
+    save_comment(review, &anchored_path, side, line, &commit, body)
+}
+
+/// The side-specific path and commit a CLI location names, refused where the
+/// file is outside the range, missing on that side, not text, or shorter
+/// than `line`: a refusal a program can act on beats an anchor that never
+/// resolves.
+pub(super) fn locate(
+    review: &Review,
+    path: &str,
+    side: Side,
+    line: u32,
+) -> Result<(String, String)> {
     let file = review
         .files
         .iter()
@@ -150,7 +164,6 @@ pub fn add_comment(
         ),
         Side::Right => (file.path.as_str(), review.session.head_commit.as_str()),
     };
-    // A refusal a program can act on beats an anchor that never resolves.
     let blob = review
         .repo
         .read_blob(commit, anchored_path)?
@@ -167,5 +180,5 @@ pub fn add_comment(
     if line == 0 || line > lines {
         anyhow::bail!("{anchored_path} has lines 1..={lines}, not {line}");
     }
-    save_comment(review, anchored_path, side, line, commit, body)
+    Ok((anchored_path.to_owned(), commit.to_owned()))
 }

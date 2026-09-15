@@ -103,6 +103,10 @@ impl App {
             full_context: settings.full_context.unwrap_or(true),
             merger: super::merges::Merger::default(),
             comments,
+            flags: Vec::new(),
+            reviewed: Vec::new(),
+            query: String::new(),
+            column: 0,
             file_index: 0,
             cursor_rows,
             cursor_anchor: None,
@@ -171,6 +175,9 @@ impl App {
         for warning in keymap_warnings {
             app.raise(warning);
         }
+        app.reload_flags()?;
+        app.load_reviewed()?;
+        app.fold_all_reviewed();
         app.load_selected()?;
         Ok(app)
     }

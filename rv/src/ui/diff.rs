@@ -21,9 +21,7 @@ use ratatui::text::Line;
 use ratatui::text::Text;
 use ratatui::widgets::Paragraph;
 use rv_core::diff::DiffSource;
-use rv_core::diff::FallbackReason;
 use rv_core::diff::FileDiff;
-use rv_core::diff::MINIMUM_DIFFT;
 use rv_core::highlight;
 
 use super::BORDER_ROWS;
@@ -32,12 +30,19 @@ use super::GUTTER;
 use super::code::Highlighting;
 use super::code::diff_row;
 use super::comment_box;
+use super::emphasis;
+use super::flag_row;
 use super::pane::pane;
 use crate::app::App;
 use crate::app::Focus;
 use crate::rows::Plan;
+
+mod title;
+
 use crate::rows::Row;
 use crate::rows::window;
+use title::reviewed_title;
+pub use title::title;
 
 /// What the pane says about a diff [`rv_core::diff`] suppressed and gave no
 /// lines: difftastic's `unchanged` status, which emits no chunks.
@@ -53,45 +58,6 @@ const SUPPRESSED_EMPTY: &str = crate::rows::NO_SEMANTIC_CHANGE;
 /// on those lines and comment on them: a pane that swallowed them would let
 /// `j`/`k` walk through rows it never drew.
 const SUPPRESSED_NOTE: &str = "no semantic change — the difference is not visible below";
-
-/// What the title adds for a file rv ships no grammar for.
-///
-/// Said out loud rather than left to be inferred from a screen of white text: a
-/// tool that presents "I could not" as "there was nothing to find" is guessing
-/// on the reader's behalf.
-///
-/// Decided from the **path**, not from whether a parse has landed. Highlighting
-/// runs off the drawing thread, so for the first frames of a large file there are
-/// no spans yet — and a title reading "no highlighting" over a Rust file that is
-/// merely still being parsed is the same guess in the other direction.
-const NO_GRAMMAR: &str = " — no highlighting";
-
-/// What the title adds when full-file context was attempted and declined —
-/// §3/§4.4 of the design spec: difftastic elided a region (a reformat with
-/// a different line count on each side) so there is no honest line-for-line
-/// pairing to fill it with, and the pane fell back to the changed-only view
-/// rather than guess.
-const CONTEXT_BAILED: &str =
-    " — full context unavailable (a reformatted region difftastic did not report)";
-
-/// What the title adds when the syntax-aware merge declined and rv's §4.6
-/// `--byte-limit 0` retry supplied the merged full-context result instead.
-/// Composed after the ordinary engine label so the reviewer reads
-/// `difftastic (Rust) — full context (line diff)` — the file's language is
-/// still Rust and the syntax highlighting is unchanged (highlighting reads
-/// from `highlight::language_of(&diff.path)`, not from `DiffSource`), but
-/// the pairings the merge walked come from difftastic's line-oriented
-/// engine rather than its tree-diff.
-const LINE_DIFF_CONTEXT: &str = " — full context (line diff)";
-
-/// What the title adds when even difftastic's line-oriented retry could not
-/// pair a region 1:1 and `similar`'s whole-file diff built full context
-/// instead — the recovery [`CONTEXT_BAILED`] used to be the last word on.
-/// Distinct wording from [`LINE_DIFF_CONTEXT`] because it is a genuinely
-/// different engine, not difftastic's own second invocation: the changed-line
-/// boundaries shown are `similar`'s line-level opinion, not difftastic's
-/// structural one.
-const FALLBACK_CONTEXT: &str = " — full context (fallback line diff)";
 
 pub(super) fn draw_diff(frame: &mut Frame, app: &App, area: Rect) {
     // The stack is drawn *inside* this pane, so it marks this pane as the one
@@ -118,11 +84,14 @@ pub(super) fn draw_diff(frame: &mut Frame, app: &App, area: Rect) {
     let highlighting = Highlighting::of(app);
     // The path's own answer, not the cache's: see `NO_GRAMMAR`.
     let block = pane(
-        title(
-            diff,
-            highlight::language_of(&diff.path),
-            app.context_bailed(),
-            app.context_via_fallback(),
+        reviewed_title(
+            app,
+            title(
+                diff,
+                highlight::language_of(&diff.path),
+                app.context_bailed(),
+                app.context_via_fallback(),
+            ),
         ),
         focused,
     );
@@ -201,84 +170,6 @@ fn parked(natural: Range<usize>, rows: usize, scroll: Option<usize>) -> Range<us
     start..start.saturating_add(height)
 }
 
-/// What the pane calls itself: the path, where its lines came from — so a
-/// fallback diff is never mistaken for difftastic's structural one, and a
-/// fallback rv *chose* is never mistaken for one forced on it by a difftastic
-/// it cannot read — and, where rv ships no grammar, that its code is plain
-/// because of that rather than because there was nothing to colour.
-///
-/// Public for the same reason [`visible`] is: this is the one place the claim
-/// the pane makes about its own contents is decided, and the claim is
-/// load-bearing — it is what tells a reviewer whether they are reading
-/// difftastic's structural diff or a line diff standing in for it, and why.
-/// `bailed` is [`App::context_bailed`]'s answer for this file and
-/// `via_fallback` is [`App::context_via_fallback`]'s — the two are mutually
-/// exclusive in practice (see [`super::super::app::merges::MergeState`]) —
-/// appended last, after the grammar note, so a reviewer reads "what this
-/// pane is showing" before "what it could not show" or "how it recovered".
-#[must_use]
-pub fn title(
-    diff: &FileDiff,
-    language: Option<&'static str>,
-    bailed: bool,
-    via_fallback: bool,
-) -> String {
-    let source = match &diff.source {
-        DiffSource::Difftastic { language, .. } => {
-            format!("{} — difftastic ({language})", diff.path)
-        }
-        DiffSource::Similar { reason } => match fallback_cause(*reason) {
-            Some(cause) => format!("{} — fallback ({cause})", diff.path),
-            None => format!("{} — fallback", diff.path),
-        },
-        DiffSource::Binary => format!("{} — binary", diff.path),
-    };
-    let with_grammar = match language {
-        // A binary file needs no second sentence about why it is not coloured:
-        // it is not shown by line at all, and the title already says so.
-        Some(_) => source,
-        None if diff.source == DiffSource::Binary => source,
-        None => format!("{source}{NO_GRAMMAR}"),
-    };
-    let with_line_diff = if matches!(
-        &diff.source,
-        DiffSource::Difftastic {
-            line_oriented: true,
-            ..
-        }
-    ) {
-        format!("{with_grammar}{LINE_DIFF_CONTEXT}")
-    } else {
-        with_grammar
-    };
-    let with_fallback = if via_fallback {
-        format!("{with_line_diff}{FALLBACK_CONTEXT}")
-    } else {
-        with_line_diff
-    };
-    if bailed {
-        format!("{with_fallback}{CONTEXT_BAILED}")
-    } else {
-        with_fallback
-    }
-}
-
-/// Why the pane is showing a line diff, where that is something a reviewer can
-/// act on. `None` where it is not: rv was told not to run difftastic, so the
-/// plain word "fallback" is already the whole truth and a parenthetical would
-/// only restate the flag the reviewer just passed.
-fn fallback_cause(reason: FallbackReason) -> Option<String> {
-    match reason {
-        FallbackReason::NotAttempted => None,
-        FallbackReason::NotInstalled => Some("no difft on PATH".to_owned()),
-        FallbackReason::UnreadableVersion => Some("difft version unreadable".to_owned()),
-        FallbackReason::TooOld(version) => {
-            Some(format!("difft {version} predates {MINIMUM_DIFFT}"))
-        }
-        FallbackReason::UnreadableOutput => Some("difft output unreadable".to_owned()),
-    }
-}
-
 /// The visible window of rows, under a note where the diff is suppressed, or
 /// the one sentence that explains why there are no lines at all.
 ///
@@ -345,12 +236,16 @@ fn draw_row(
     match row {
         // Comment boxes are wrapped to the pane and never overflow it, so the
         // sideways scroll moves the code and leaves them anchored.
-        Row::Diff { index, line } => diff_row(
-            highlighting,
-            *index,
-            line,
-            selected,
-            width,
+        Row::Diff { index, line } => emphasis::emphasized(
+            diff_row(
+                highlighting,
+                *index,
+                line,
+                selected,
+                width,
+                app.diff_hscroll(),
+            ),
+            &emphasis::marks(app, *index, line),
             app.diff_hscroll(),
         ),
         Row::BoxTop { comment, .. } => comment_box::box_top(app, comment, width),
@@ -369,6 +264,10 @@ fn draw_row(
         } => comment_box::box_diff(app, comment, text, *kind, width),
         Row::BoxBottom { comment, .. } => comment_box::box_bottom(app, comment, width),
         Row::BoxCollapsed { comment, .. } => comment_box::box_collapsed(app, comment, width),
+        Row::Flag {
+            flag, text, first, ..
+        } => flag_row::flag_row(flag, text, *first, width),
+        Row::FlagCollapsed { flag, .. } => flag_row::flag_collapsed(flag, width),
     }
 }
 

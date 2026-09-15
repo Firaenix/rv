@@ -218,6 +218,8 @@ pub(super) fn session(text_max: usize, max_changes: usize) -> impl Strategy<Valu
                 changes,
                 started_at,
                 comments,
+                flags: Vec::new(),
+                reviewed: Vec::new(),
             },
         )
 }

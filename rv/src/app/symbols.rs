@@ -29,20 +29,20 @@ pub(super) enum Scope {
 }
 
 /// One file in scope, before its bytes have been read.
-struct ScopedFile {
-    file: usize,
+pub(super) struct ScopedFile {
+    pub(super) file: usize,
     path: String,
     kind: ChangeKind,
     change_id: Option<String>,
 }
 
 /// The same, with the blob its symbols come from.
-struct Indexable {
+pub(super) struct Indexable {
     file: usize,
     path: String,
     kind: ChangeKind,
     change_id: Option<String>,
-    blob: Option<Vec<u8>>,
+    pub(super) blob: Option<Vec<u8>>,
 }
 
 impl App {
@@ -133,7 +133,7 @@ impl App {
     }
 
     /// One in-scope file with the bytes its symbols come from.
-    fn read_indexable(&self, file: ScopedFile) -> Indexable {
+    pub(super) fn read_indexable(&self, file: ScopedFile) -> Indexable {
         let (commit, read_path) = match indexed_side(file.kind) {
             Side::Left => (
                 &self.review.session.base_commit,
@@ -164,7 +164,7 @@ impl App {
     /// position in `App::files()` either way: a commits-view scope is narrower
     /// but still numbered in the bookmark's terms, so a jump the index hands
     /// back is a jump `select_file` can perform.
-    fn scoped_files(&self, scope: &Scope) -> Vec<ScopedFile> {
+    pub(super) fn scoped_files(&self, scope: &Scope) -> Vec<ScopedFile> {
         match scope {
             Scope::Bookmark => self
                 .review

@@ -319,6 +319,8 @@ impl Fixture {
         store
             .write_review(&Session {
                 comments: Vec::new(),
+                flags: Vec::new(),
+                reviewed: Vec::new(),
                 ..review
             })
             .expect("clear the stored comments");

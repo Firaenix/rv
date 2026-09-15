@@ -64,13 +64,13 @@ fn arrays_bind_every_listed_key() {
 
 #[test]
 fn a_scoped_bind_lives_only_in_its_pane() {
-    let map = keymap("[keys.files]\ndiff_toggle_full_context = \"x\"\n");
+    let map = keymap("[keys.files]\ndiff_toggle_full_context = \"y\"\n");
     assert_eq!(
-        command_of(&map, None, KeyCode::Char('x'), Context::Files),
+        command_of(&map, None, KeyCode::Char('y'), Context::Files),
         Some(Command::Diff(DiffCommand::ToggleFullContext))
     );
     assert_eq!(
-        command_of(&map, None, KeyCode::Char('x'), Context::Commits),
+        command_of(&map, None, KeyCode::Char('y'), Context::Commits),
         None,
         "a files-pane bind answers nowhere else"
     );

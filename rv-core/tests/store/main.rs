@@ -262,6 +262,8 @@ fn append_comment_shrinking_body_leaves_no_residual_bytes() {
         .expect("read session.toml");
     let expected = toml::to_string_pretty(&Session {
         comments: vec![short],
+        flags: Vec::new(),
+        reviewed: Vec::new(),
         ..Session::default()
     })
     .expect("serialize expected");

@@ -245,7 +245,7 @@ impl App {
 /// back into a comment.
 fn comment_of_row(row: &Row<'_>) -> Option<String> {
     match row {
-        Row::Diff { .. } => None,
+        Row::Diff { .. } | Row::Flag { .. } | Row::FlagCollapsed { .. } => None,
         Row::BoxTop { comment, .. }
         | Row::BoxBody { comment, .. }
         | Row::BoxRule { comment, .. }

@@ -77,7 +77,7 @@ use crate::support::*;
 // is its only live child there, so the menu is skipped and the box opens, the
 // bar naming the choice. `g` and `v` have several children or none live under
 // the cursor, so they open their submenu and stay in Browse.
-#[case::comment_collapses_to_write(KeyCode::Char('c'), Action::Continue, Mode::Comment, Focus::Diff, (0, 0), Some("c → write a comment"))]
+#[case::comment_collapses_to_write(KeyCode::Char('c'), Action::Continue, Mode::Comment, Focus::Diff, (0, 0), Some("c → write"))]
 #[case::goto_leader(KeyCode::Char('g'), Action::Continue, Mode::Browse, Focus::Diff, (0, 0), None)]
 #[case::view_leader(KeyCode::Char('v'), Action::Continue, Mode::Browse, Focus::Diff, (0, 0), None)]
 // The dropped vim letters are inert now.
@@ -86,7 +86,7 @@ use crate::support::*;
 #[case::vim_h_is_inert(KeyCode::Char('h'), Action::Continue, Mode::Browse, Focus::Diff, (0, 0), None)]
 #[case::vim_l_is_inert(KeyCode::Char('l'), Action::Continue, Mode::Browse, Focus::Diff, (0, 0), None)]
 // Not in the table, and therefore inert.
-#[case::unbound_letter(KeyCode::Char('x'), Action::Continue, Mode::Browse, Focus::Diff, (0, 0), None)]
+#[case::unbound_letter(KeyCode::Char('u'), Action::Continue, Mode::Browse, Focus::Diff, (0, 0), None)]
 #[case::unbound_backspace(KeyCode::Backspace, Action::Continue, Mode::Browse, Focus::Diff, (0, 0), None)]
 #[case::unbound_backtab(KeyCode::BackTab, Action::Continue, Mode::Browse, Focus::Diff, (0, 0), None)]
 #[case::unbound_function(KeyCode::F(1), Action::Continue, Mode::Browse, Focus::Diff, (0, 0), None)]

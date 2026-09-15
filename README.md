@@ -115,6 +115,11 @@ Run `rv` from the **workspace root** — the directory holding `.jj/`. See
 | `rv status` | Prints the range, its changes, its changed files and its comment counts |
 | `rv status --json` | The same report as JSON, for scripting |
 | `rv status --check` | Exit 1 while any comment is open, 0 otherwise, nothing printed — the worker's poll and a CI gate |
+| `rv flag <file> --line <n> [--side left] -m <reason>` | Points the reviewer at a line with a reason — attention, not feedback. Never blocks `--check`. The agent's way to say "start here" |
+| `rv flags [--json] [--open]` | Lists the flags — id, state, anchor, reason |
+| `rv ack <id>` / `rv unflag <id>` | Marks a flag looked at, or removes it |
+| `rv review <file> [--change <id>]` / `rv unreview …` | Ticks a file off as reviewed — the range's diff of it, or one change's — or clears the tick |
+| `rv reviewed [--json]` | Lists the ticked files, and which have changed since |
 | `rv --repo <path> …` | Reviews the workspace at `<path>` instead of the current directory |
 | `rv --no-difft …` | Diffs with the in-process engine instead of difftastic: line-based rather than structural, with context lines. What a reviewer with no `difft` on `PATH` sees |
 
@@ -321,6 +326,14 @@ status bar. `?` shows the leaders; `?` again unrolls the whole map.
 | `?` | What the keys do **here**: a contextual tip in the corner above the bar. `?` again unrolls the whole keymap; `Esc` or `q` closes either |
 | `q` | Quit |
 | `Ctrl+C` | Quit from anywhere, including out of a half-typed comment |
+| `x` | Tick the file off as **reviewed** — again to untick. From the file list it ticks the range's diff of the file, from a row under a change it ticks *that change's* diff of it, and on a change row it ticks every file the change touched. Ticking folds the file's comments and flags away; the tick shows as `✓` on the row and in the diff's title, `≈` once the file has changed under it |
+| `F` | (Diff) Flag the highlighted line: type why it deserves a look, `Enter` saves. A flag is attention, not feedback — it never blocks `rv status --check` |
+| `A` | (Diff) Acknowledge the line's flags — again to reopen them |
+| `/` | Find text in the diff: type, `Enter` jumps to the first match after the cursor, `Esc` cancels. Case-blind unless the query has a capital; every match is underlined |
+| `n` | The next match of the last `/` query, wrapping round the file |
+| `N` | The previous one |
+| `h` | (Diff) Move the column cursor to the previous word of the highlighted line |
+| `l` | (Diff) The next word — the word under the cursor is what `g` `d` and `g` `r` look up |
 | `Space` `t` | (Files/Commits) Switch the list between a flat list and a tree |
 | `Space` `o` | (Files/Commits) Cycle the list's order: by path, additions, deletions |
 | `Space` `#` | (Files/Commits) Show or hide the `+n -n` counts |
@@ -340,6 +353,10 @@ status bar. `?` shows the leaders; `?` again unrolls the whole map.
 | `g` `n` | Next symbol in scope — every changed file, or one change's files from the Commits tab |
 | `g` `N` | The previous symbol |
 | `g` `/` | Find a symbol by name: type, `Enter` jumps to the best match, `Esc` cancels |
+| `g` `f` | Next flag in the review, wrapping round |
+| `g` `F` | The previous flag |
+| `g` `d` | Go to the definition of the word under the column cursor — the next one on from here where the review defines it more than once |
+| `g` `r` | Go to the next reference to the word under the column cursor, across every file in scope, wrapping |
 | `c` `c` | Comment on the highlighted line |
 | `c` `d` | Delete a comment, after a `y`/`n` confirmation |
 | `c` `r` | Resolve a comment — press it again to reopen |

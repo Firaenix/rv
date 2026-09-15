@@ -197,6 +197,7 @@ fn a_comment_whose_anchor_cannot_be_placed_says_so_and_shows_what_it_was_written
     let plan = rv::rows::plan(
         &diff.lines,
         &|line| if line == 0 { vec![comment] } else { Vec::new() },
+        &|_| Vec::new(),
         &|_| Some(drift),
         &HashSet::new(),
         60,

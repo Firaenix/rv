@@ -280,17 +280,17 @@ fn a_binding_that_does_nothing_here_is_dimmed_rather_than_hidden() {
 
     let frame = frame_at(&app, 100, 30);
     assert!(
-        buffer_text(&frame).contains("delete comment"),
+        buffer_text(&frame).contains("delete"),
         "the binding was hidden rather than dimmed:\n{}",
         buffer_text(&frame)
     );
     assert!(
-        is_dim(&frame, cell_of_binding(&frame, "d", "delete comment")),
+        is_dim(&frame, cell_of_binding(&frame, "d", "delete")),
         "`d` is not shown as inactive in the file list:\n{}",
         buffer_text(&frame)
     );
     assert!(
-        !is_dim(&frame, cell_of_binding(&frame, "q", "quit the review")),
+        !is_dim(&frame, cell_of_binding(&frame, "q", "quit")),
         "every row is dimmed, so dimming says nothing:\n{}",
         buffer_text(&frame)
     );
@@ -309,7 +309,7 @@ fn the_same_binding_is_live_where_it_acts_on_something() {
 
     let frame = frame_at(&app, 100, 30);
     assert!(
-        !is_dim(&frame, cell_of_binding(&frame, "d", "delete comment")),
+        !is_dim(&frame, cell_of_binding(&frame, "d", "delete")),
         "`d` is dimmed on a line that has a comment to delete:\n{}",
         buffer_text(&frame)
     );

@@ -23,15 +23,24 @@ impl App {
         self.status = super::status::HELP.to_owned();
         match key {
             KeyCode::Esc => {
+                self.status = if self.mode == Mode::Flag {
+                    "flag discarded"
+                } else {
+                    "comment discarded"
+                }
+                .to_owned();
                 self.mode = Mode::Browse;
                 self.buffer.clear();
-                self.status = "comment discarded".to_owned();
             }
             KeyCode::Backspace => {
                 self.buffer.pop();
             }
             KeyCode::Enter => {
-                self.commit_comment()?;
+                if self.mode == Mode::Flag {
+                    self.commit_flag()?;
+                } else {
+                    self.commit_comment()?;
+                }
                 self.mode = Mode::Browse;
                 self.buffer.clear();
             }

@@ -39,6 +39,12 @@ use std::path::Path;
 use std::path::PathBuf;
 
 mod comments;
+mod flags;
+mod reviewed;
+
+pub use flags::Flag;
+pub use reviewed::ReviewedFile;
+pub use reviewed::reviewed_hash;
 
 use serde::Deserialize;
 use serde::Serialize;
@@ -157,6 +163,10 @@ pub struct Session {
     /// consolidation — or hand-trimmed to its scope — still loads.
     #[serde(default)]
     pub comments: Vec<Comment>,
+    #[serde(default)]
+    pub flags: Vec<Flag>,
+    #[serde(default)]
+    pub reviewed: Vec<ReviewedFile>,
 }
 
 /// The identity a review is stored under — what lets two branches be

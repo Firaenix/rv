@@ -37,6 +37,7 @@ use crate::app::BrowserRow;
 use crate::app::Focus;
 use crate::app::SidebarTab;
 use crate::app::Suppression;
+use crate::app::reviewed::Freshness;
 
 /// What the Comments tab says when the review has no comments in it yet.
 const NO_COMMENTS_YET: &str = "no comments yet";
@@ -99,8 +100,16 @@ fn browser_row<'a>(app: &App, row: &BrowserRow, width: usize) -> ListItem<'a> {
             format!("{}{DIR_MARK}{label}", "  ".repeat(*depth)),
             Style::default().add_modifier(Modifier::BOLD),
         ),
-        BrowserRow::File { label, depth, .. } => (
-            format!("{}{label}", "  ".repeat(*depth)),
+        BrowserRow::File { label, depth, path } => (
+            format!(
+                "{}{}{label}",
+                "  ".repeat(*depth),
+                match app.reviewed_mark(path, None) {
+                    Some(Freshness::Current) => "✓ ",
+                    Some(Freshness::Changed) => "≈ ",
+                    None => "",
+                }
+            ),
             Style::default().add_modifier(Modifier::BOLD),
         ),
         BrowserRow::Comment { index, depth } => match app.comments().get(*index) {

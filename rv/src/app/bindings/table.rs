@@ -17,6 +17,7 @@ use super::Group;
 use super::LayoutCommand;
 use super::Leader;
 use super::PaneCommand;
+use super::review::REVIEW;
 use super::view::JUMPS;
 use super::view::VIEW;
 
@@ -27,8 +28,8 @@ pub const BINDINGS: &[Binding] = &concat();
 
 /// Concatenates the two halves of the table at compile time. Sizes are spelled
 /// out because stable Rust cannot add const generics in an array length.
-const fn concat() -> [Binding; 56] {
-    let mut out = [HEAD[0]; 56];
+const fn concat() -> [Binding; 68] {
+    let mut out = [HEAD[0]; 68];
     let mut n = 0;
     let mut i = 0;
     while i < HEAD.len() {
@@ -47,6 +48,12 @@ const fn concat() -> [Binding; 56] {
         out[n] = VIEW[k];
         n += 1;
         k += 1;
+    }
+    let mut r = 0;
+    while r < REVIEW.len() {
+        out[n] = REVIEW[r];
+        n += 1;
+        r += 1;
     }
     out
 }
@@ -99,7 +106,7 @@ const HEAD: [Binding; 35] = [
         group: Group::Focus,
         leader: None,
         contexts: ANY,
-        what: "into / open",
+        what: "into/open",
         codes: &[KeyCode::Right],
         command: Command::Pane(PaneCommand::FocusRight),
     },
@@ -162,7 +169,7 @@ const HEAD: [Binding; 35] = [
         group: Group::Focus,
         leader: None,
         contexts: ANY,
-        what: "open / into",
+        what: "open/into",
         codes: &[KeyCode::Enter],
         command: Command::Pane(PaneCommand::Open),
     },
@@ -191,7 +198,7 @@ const HEAD: [Binding; 35] = [
         group: Group::View,
         leader: None,
         contexts: &[Context::Diff],
-        what: "full context",
+        what: "context",
         codes: &[KeyCode::Char('f')],
         command: Command::Diff(DiffCommand::ToggleFullContext),
     },
@@ -211,7 +218,7 @@ const HEAD: [Binding; 35] = [
         group: Group::Edit,
         leader: None,
         contexts: ANY,
-        what: "edit ($EDITOR)",
+        what: "$EDITOR",
         codes: &[KeyCode::Char('E')],
         command: Command::App(AppCommand::OpenEditor),
     },
@@ -256,7 +263,7 @@ const HEAD: [Binding; 35] = [
         group: Group::Quit,
         leader: None,
         contexts: ANY,
-        what: "quit the review",
+        what: "quit",
         codes: &[KeyCode::Char('q')],
         command: Command::App(AppCommand::Quit),
     },
@@ -267,7 +274,7 @@ const HEAD: [Binding; 35] = [
         group: Group::View,
         leader: Some(Leader::Context),
         contexts: LISTS,
-        what: "list / tree",
+        what: "list/tree",
         codes: &[KeyCode::Char('t')],
         command: Command::Files(FilesCommand::ToggleTree),
     },
@@ -332,7 +339,7 @@ const HEAD: [Binding; 35] = [
         group: Group::Comment,
         leader: Some(Leader::Context),
         contexts: COMMENTED,
-        what: "delete comment",
+        what: "delete",
         codes: &[KeyCode::Char('d')],
         command: Command::Comment(CommentCommand::Delete),
     },

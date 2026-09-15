@@ -30,6 +30,8 @@ fn session_toml_roundtrip() {
         }],
         started_at: "epoch:1755460770".to_owned(),
         comments: vec![sample_comment("c1"), sample_comment("c2")],
+        flags: Vec::new(),
+        reviewed: Vec::new(),
     };
 
     store.write_review(&session).expect("write review");

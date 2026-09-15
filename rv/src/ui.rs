@@ -56,7 +56,9 @@ mod bar;
 mod code;
 mod comment_box;
 mod diff;
+mod emphasis;
 mod files;
+mod flag_row;
 mod help;
 mod info;
 mod list;
@@ -203,9 +205,9 @@ fn chrome(app: &App, toast: bool) -> Chrome {
             // A confirmation is a question in the status line, not a box to
             // type in, so it takes the same single row browsing does.
             // The picker is a query in the status line and a list above it.
-            Mode::Browse | Mode::ConfirmDelete { .. } => 1,
+            Mode::Browse | Mode::ConfirmDelete { .. } | Mode::Search => 1,
             Mode::Pick => PICKER_ROWS,
-            Mode::Comment => COMMENT_ROWS,
+            Mode::Comment | Mode::Flag => COMMENT_ROWS,
         },
         help: if !app.help_open() {
             HelpChrome::Closed

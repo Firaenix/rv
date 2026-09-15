@@ -84,9 +84,10 @@ impl App {
 
         match self.mode {
             Mode::Browse => self.on_key_browse(key),
-            Mode::Comment => self.on_key_comment(key),
+            Mode::Comment | Mode::Flag => self.on_key_comment(key),
             Mode::ConfirmDelete { .. } => self.on_key_confirm_delete(key),
             Mode::Pick => self.on_key_pick(key),
+            Mode::Search => self.on_key_search(key),
         }
     }
 
@@ -278,6 +279,8 @@ impl App {
             CursorCommand::LastRow => self.jump_last()?,
             CursorCommand::ScrollLeft => self.hscroll_focused(-HSCROLL_STEP),
             CursorCommand::ScrollRight => self.hscroll_focused(HSCROLL_STEP),
+            CursorCommand::WordLeft => self.move_word(false),
+            CursorCommand::WordRight => self.move_word(true),
         }
         Ok(())
     }
@@ -307,6 +310,7 @@ impl App {
             FilesCommand::CycleSort => self.cycle_sort(),
             FilesCommand::ToggleTint => self.toggle_tint(),
             FilesCommand::ToggleCounts => self.toggle_counts(),
+            FilesCommand::ToggleReviewed => self.toggle_reviewed()?,
         }
         Ok(())
     }
@@ -321,6 +325,13 @@ impl App {
             DiffCommand::ToggleFullContext => self.toggle_full_context(),
             DiffCommand::GroupBySide => self.toggle_grouped(),
             DiffCommand::CycleSide => self.cycle_view_side(),
+            DiffCommand::NextFlag => self.jump_flag(true)?,
+            DiffCommand::PrevFlag => self.jump_flag(false)?,
+            DiffCommand::Search => self.begin_search(),
+            DiffCommand::NextMatch => self.jump_match(true)?,
+            DiffCommand::PrevMatch => self.jump_match(false)?,
+            DiffCommand::Definition => self.goto_definition()?,
+            DiffCommand::References => self.goto_reference()?,
         }
         Ok(())
     }
@@ -332,6 +343,8 @@ impl App {
             CommentCommand::Resolve => self.resolve_comment()?,
             CommentCommand::Abandon => self.abandon_comment()?,
             CommentCommand::ToggleFold => self.toggle_collapse(),
+            CommentCommand::Flag => self.begin_flag(),
+            CommentCommand::Acknowledge => self.acknowledge_flags()?,
         }
         Ok(())
     }

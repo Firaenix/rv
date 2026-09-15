@@ -181,6 +181,8 @@ fn session_fields_survive_toml_hostile_strings(#[case] text: &str) {
         }],
         started_at: text.to_owned(),
         comments: vec![fixed_comment("id0")],
+        flags: Vec::new(),
+        reviewed: Vec::new(),
     };
 
     store.write_review(&session).expect("write review");

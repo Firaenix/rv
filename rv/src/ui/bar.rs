@@ -49,16 +49,31 @@ pub(super) fn draw_bar(frame: &mut Frame, app: &App, area: Rect, now: Instant) {
             Paragraph::new(clip(app.status(), usize::from(area.width))),
             area,
         ),
+        Mode::Search => frame.render_widget(
+            Paragraph::new(clip(
+                &format!(
+                    "/{}",
+                    tail(app.buffer(), usize::from(area.width).saturating_sub(1))
+                ),
+                usize::from(area.width),
+            )),
+            area,
+        ),
         // The **tail** of the buffer, not its head: a `Paragraph` neither wraps
         // nor scrolls, so a comment longer than the bar used to be typed blind
         // from the character that reached the right-hand edge onwards.
-        Mode::Comment => {
+        Mode::Comment | Mode::Flag => {
             let width = usize::from(area.width.saturating_sub(BORDER_ROWS));
+            let title = if app.mode() == Mode::Flag {
+                "Flag — why look here?"
+            } else {
+                "Comment"
+            };
             frame.render_widget(
                 Paragraph::new(tail(app.buffer(), width)).block(
                     Block::bordered()
                         .border_type(BorderType::Rounded)
-                        .title("Comment"),
+                        .title(title),
                 ),
                 area,
             )

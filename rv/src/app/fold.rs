@@ -70,11 +70,19 @@ impl App {
                 .map(|comment| comment.id.clone())
                 .into_iter()
                 .collect(),
-            (Focus::Diff | Focus::Sidebar, _) => self
-                .comments_for_line(self.line_index())
-                .iter()
-                .map(|comment| comment.id.clone())
-                .collect(),
+            (Focus::Diff | Focus::Sidebar, _) => {
+                let line = self.line_index();
+                self.comments_for_line(line)
+                    .iter()
+                    .map(|comment| comment.id.clone())
+                    .chain(
+                        self.flags_for_line(line)
+                            .iter()
+                            .filter(|flag| !flag.acknowledged)
+                            .map(|flag| flag.id.clone()),
+                    )
+                    .collect()
+            }
         }
     }
 }

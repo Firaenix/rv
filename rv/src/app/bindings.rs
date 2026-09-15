@@ -9,6 +9,7 @@ use crossterm::event::KeyCode;
 
 use super::Context;
 
+mod review;
 mod table;
 mod view;
 
@@ -31,18 +32,24 @@ pub enum Group {
     Edit,
     /// How the screen is arranged. Session-only, every one of them.
     View,
+    /// Ticking files off, and flagging lines for a look.
+    Review,
     /// Leaving.
     Quit,
 }
 
 impl Group {
     /// Every group, in the order the popup lists them.
+    /// Ordered so that the `?` popup's greedy column packing fills four
+    /// 18-row columns at 80x24 — `popup::the_whole_keymap_fits_at_80x24`
+    /// holds it to that.
     pub const ALL: &'static [Group] = &[
         Group::Move,
+        Group::Review,
         Group::Scroll,
+        Group::Edit,
         Group::Focus,
         Group::Comment,
-        Group::Edit,
         Group::View,
         Group::Quit,
     ];
@@ -57,6 +64,7 @@ impl Group {
             Group::Comment => "Comments",
             Group::Edit => "Edit",
             Group::View => "View",
+            Group::Review => "Review",
             Group::Quit => "Leave",
         }
     }
@@ -181,6 +189,9 @@ pub(super) enum CursorCommand {
     LastRow,
     ScrollLeft,
     ScrollRight,
+    /// The column cursor, by word, within the selected line.
+    WordLeft,
+    WordRight,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -204,6 +215,7 @@ pub(super) enum FilesCommand {
     CycleSort,
     ToggleTint,
     ToggleCounts,
+    ToggleReviewed,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -216,6 +228,13 @@ pub(super) enum DiffCommand {
     ToggleFullContext,
     GroupBySide,
     CycleSide,
+    NextFlag,
+    PrevFlag,
+    Search,
+    NextMatch,
+    PrevMatch,
+    Definition,
+    References,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -227,6 +246,8 @@ pub(super) enum CommentCommand {
     /// Folds the comment under the cursor — or a sidebar directory, the one
     /// dual-target key in the map.
     ToggleFold,
+    Flag,
+    Acknowledge,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -259,10 +280,18 @@ impl Command {
                     | DiffCommand::NextSymbol
                     | DiffCommand::PrevSymbol
                     | DiffCommand::FindSymbol
+                    | DiffCommand::NextFlag
+                    | DiffCommand::PrevFlag
+                    | DiffCommand::Search
+                    | DiffCommand::NextMatch
+                    | DiffCommand::PrevMatch
+                    | DiffCommand::Definition
+                    | DiffCommand::References
             ),
             Command::Pane(command) => matches!(command, PaneCommand::Open),
             Command::App(command) => matches!(command, AppCommand::OpenEditor),
-            Command::Files(_) | Command::Layout(_) => false,
+            Command::Files(command) => matches!(command, FilesCommand::ToggleReviewed),
+            Command::Layout(_) => false,
         }
     }
 }

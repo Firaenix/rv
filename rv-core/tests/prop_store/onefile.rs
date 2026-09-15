@@ -193,6 +193,8 @@ proptest! {
             changes: changes.clone(),
             started_at: "epoch:1755460770".to_owned(),
             comments: Vec::new(),
+        flags: Vec::new(),
+        reviewed: Vec::new(),
         };
         store.write_review(&session).expect("write review");
 

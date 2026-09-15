@@ -939,3 +939,65 @@ Splitting followed as usual — `rv/tests/app_cases/support/fixtures.rs` crossed
 400 lines, so the shared `OnceLock` workspaces moved to `support/shared.rs`,
 which is the seam that was already there: a fixture built per call against one
 built once per binary.
+
+## 2026-09-15 — attention, progress, and finding your place again
+
+Four asks from one afternoon of reviewing, shipped together as 1.8:
+
+**Flags** (`docs/superpowers/specs/2026-09-15-rv-flags-and-reviewed-files-design.md`).
+The reviewer had been asking an agent to leave *comments* on the lines worth
+looking at first, which dragged reply/resolve semantics into notes that were
+never feedback and gated `rv status --check` on things nobody had to fix. A
+flag is an anchor, a reason and one bit — acknowledged or not — stored in
+`session.toml` beside the comments through the same atomic rewrite, and drawn
+under its line as one amber row rather than a bordered box, so it cannot be
+mistaken for a comment. `rv flag` / `flags` / `ack` / `unflag` mirror the
+comment triad; `F` and `A` write and acknowledge from the diff; `g f` / `g F`
+walk them. The one ruling that changed under implementation: the flag verbs
+are *direct* keys rather than `c f` / `c a`, because the `c` leader collapses
+onto its one live cursor child and that collapse is how a plain `c` writes a
+comment.
+
+**Reviewed ticks.** `x` records a file as read, scoped to what the pane was
+showing — the range's diff of it, or one change's — because reviewing every
+commit that touched a file is not the same act as reviewing the merged
+result. The tick is the durable fact and the fold is derived from it: ticking
+folds the file's comments and flags, and a fresh session re-folds from the
+ticks on disk without the collapse set itself ever reaching `.review/`, which
+keeps the inline-comments ruling that a view preference stays in the session.
+A tick carries a hash of the two blobs it was made against and renders `≈`
+once the file has changed under it — the anchors' "never present a guess as a
+fact" principle, applied to a whole file. The tick takes the file icon's
+column in the sidebar rather than a column of its own; `tree_1`'s narrow-pane
+tests were the argument, failing the moment every row paid two columns for
+something a few rows say.
+
+**Text search.** `/` takes a substring — no regex, on purpose — and `Enter`
+lands on the first match after the column cursor; `n` / `N` walk them,
+wrapping round the file; every match is underlined. Case follows the query.
+The query outlives the mode so `n` works after `Esc`. Search is within the
+shown diff only: reaching into other files would mean loading their diffs,
+and "I lost my place" is a question about the file on screen.
+
+**The column cursor, `g d` and `g r`.** A line with several symbols on it
+could not say which one the reviewer meant. The cursor is now a character
+offset into the selected line, clamped when read rather than maintained;
+`h` / `l` step it by word, and the word under it is drawn on a grey ground —
+not reversed video, which `syntax_1` pins as *not* the selected line's look.
+`g d` looks the word up in the symbol index that `g n` already walks; `g r`
+reads every in-scope blob for whole-word occurrences and visits them in file
+then line order, wrapping — a jump that lands in a line the change did not
+touch still lands in the right file, at its top, with the status naming the
+line wanted, exactly as `g n` already behaves.
+
+**The `?` popup was full.** Fifty-four rows in three columns of eighteen was
+the whole of what 80x24 could hold, so twelve more bindings meant a fourth
+column, which meant every `what` at nine characters or fewer and the groups
+dealt in an order that packs — `Group::ALL` is now ordered for the packer and
+says so. Search and the column cursor went under **Jump & scroll**, the ticks
+and flags under a new **Review** heading placed second so it shares the first
+column with **Move**.
+
+`ui/diff.rs` and `rows.rs` crossed 400 lines and split — the title into
+`ui/diff/title.rs`, wrapping into `rows/wrap.rs` — and `main.rs`'s subcommand
+enum moved to `cli.rs` for the same reason.

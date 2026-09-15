@@ -189,6 +189,10 @@ impl App {
                 Some(line) => self.comments_anchored_at(line),
                 None => Vec::new(),
             },
+            &|index| match lines.get(index) {
+                Some(line) => self.flags_anchored_at(line),
+                None => Vec::new(),
+            },
             &|comment| self.drift.get(&comment.id),
             &self.collapsed,
             self.body_width.get(),
@@ -220,7 +224,7 @@ impl App {
         self.plan().line_of_row(self.cursor_row()).unwrap_or(0)
     }
 
-    pub(super) fn selected_line(&self) -> Option<DiffLine> {
+    pub fn selected_line(&self) -> Option<DiffLine> {
         self.displayed_lines().get(self.line_index()).cloned()
     }
 

@@ -26,6 +26,7 @@ mod anchor;
 mod bindings;
 mod build;
 mod changes;
+mod column;
 mod comment;
 mod comments;
 mod commit_diff;
@@ -36,6 +37,7 @@ mod diffview;
 mod editor;
 mod enabled;
 mod errorlog;
+mod flags;
 mod focus;
 mod fold;
 mod hunks;
@@ -51,7 +53,9 @@ mod paint;
 mod query;
 mod refresh;
 mod regroup;
+pub mod reviewed;
 mod run;
+pub mod search;
 mod settle;
 mod sidebar;
 mod stack;
@@ -90,6 +94,8 @@ use std::collections::HashSet;
 use rv_core::diff::FileDiff;
 use rv_core::highlight::Highlights;
 use rv_core::store::Comment;
+use rv_core::store::Flag;
+use rv_core::store::ReviewedFile;
 
 use crate::gradient::Stat;
 use crate::layout::Layout;
@@ -140,6 +146,16 @@ pub struct App {
     /// [`diffs::Refiner`]. See [`super::merges`].
     merger: merges::Merger,
     comments: Vec<Comment>,
+    /// The flags, read through from the store exactly as `comments` is.
+    flags: Vec<Flag>,
+    /// The last `/` query, kept after the mode closes so `n` has something
+    /// to walk.
+    query: String,
+    /// The column cursor — see [`column`].
+    column: usize,
+    /// The files ticked off as reviewed, each with whether its diff has
+    /// changed since — surveyed when read, since the check costs blob reads.
+    reviewed: Vec<(ReviewedFile, reviewed::Freshness)>,
     /// What each comment's anchor has done since it was written, by id —
     /// surveyed alongside `comments` and refreshed with them, because every
     /// entry costs a blob read and the box that shows it is drawn per frame.

@@ -47,6 +47,8 @@ use super::pane::pane;
 use super::pane::selection_style;
 use super::text::shift;
 use crate::app::App;
+use crate::app::SidebarTab;
+use crate::app::reviewed::Freshness;
 use crate::tree::Node;
 use crate::tree::NodeKind;
 
@@ -58,12 +60,18 @@ pub(super) const MIN_PATH_COLUMNS: usize = 8;
 
 /// The mark a row that holds others carries: pointing down when its contents
 /// are shown, right when they are folded away. Three columns wide, like the
-/// change marks beside it, so names line up down the column.
-const OPEN: &str = "▾  ";
+/// change marks beside it, so names line up down the column; the third
+/// column is where a change row's tick goes.
+const OPEN: &str = "▾";
 /// See [`OPEN`].
-const FOLDED: &str = "▸  ";
+const FOLDED: &str = "▸";
 /// The mark on the row that leads back out of a zoomed subtree.
 const UP: &str = "▴  ";
+/// A reviewed file's tick, and the tick of one that changed after it was
+/// reviewed.
+pub(super) const TICK: char = '✓';
+/// See [`TICK`].
+pub(super) const TICK_STALE: char = '≈';
 
 /// # The shape and the order go on the bottom border
 ///
@@ -211,31 +219,70 @@ fn marker(kind: ChangeKind) -> &'static str {
 /// whether a row that holds others is open or folded — with a nerd-font folder
 /// icon, or the file's own kind of icon, beside it, unless `RV_ASCII` turned
 /// the patched glyphs off.
+///
+/// A reviewed tick takes the icon's column rather than one of its own: a file
+/// that has been read is the one thing its row most needs to say, and a column
+/// on every row would cost the names two characters each to say it on a few.
 fn row_mark(app: &App, node: &Node) -> String {
     let icons = !app.ascii();
+    let tick = tick_mark(app, node);
     match &node.kind {
         NodeKind::Dir { collapsed, .. } if icons => {
             let (mark, icon) = if *collapsed {
-                ("▸", DIR_ICON_FOLDED)
+                (FOLDED, DIR_ICON_FOLDED)
             } else {
-                ("▾", DIR_ICON_OPEN)
+                (OPEN, DIR_ICON_OPEN)
             };
             format!("{mark} {icon} ")
         }
         NodeKind::Dir { collapsed, .. } | NodeKind::Commit { collapsed, .. } => {
-            if *collapsed { FOLDED } else { OPEN }.to_owned()
+            let mark = if *collapsed { FOLDED } else { OPEN };
+            format!("{mark} {}", tick.unwrap_or(' '))
         }
         NodeKind::Up => UP.to_owned(),
         NodeKind::File { index } => match app.files().get(*index) {
-            Some(file) if icons => {
-                format!("{:<2}{} ", marker(file.kind), file_icon(&node.label))
-            }
-            Some(file) => format!("{:<2} ", marker(file.kind)),
+            Some(file) if icons => format!(
+                "{:<2}{} ",
+                marker(file.kind),
+                tick.unwrap_or_else(|| file_icon(&node.label))
+            ),
+            Some(file) => format!("{:<2}{}", marker(file.kind), tick.unwrap_or(' ')),
             // A row addressing a file the review does not have cannot happen —
             // the rows are built from that very list — and is drawn blank
             // rather than panicking a frame over it.
             None => " ".repeat(3),
         },
+    }
+}
+
+/// The row's reviewed tick: `✓` for a file reviewed as it stands, `≈` for one
+/// that changed under its tick, nothing otherwise — and on a change row, the
+/// tick every file under it shares. Only the tab's own scope counts: the files
+/// tab shows the range's ticks, the commits tab each change's.
+fn tick_mark(app: &App, node: &Node) -> Option<char> {
+    let freshness = match (&node.kind, app.sidebar_tab()) {
+        (NodeKind::File { index }, SidebarTab::Files) => app
+            .files()
+            .get(*index)
+            .and_then(|file| app.reviewed_mark(&file.path, None)),
+        (NodeKind::File { index }, SidebarTab::Commits) => {
+            let change = app.commit_change(*index);
+            let change_id = change.and_then(|change| app.changes().get(change));
+            app.commit_path(*index).and_then(|path| {
+                app.reviewed_mark(path, change_id.map(|change| change.change_id.as_str()))
+            })
+        }
+        (NodeKind::Commit { change_id, .. }, _) => app
+            .changes()
+            .iter()
+            .position(|change| change.change_id == *change_id)
+            .and_then(|change| app.change_reviewed(change)),
+        _ => None,
+    };
+    match freshness {
+        Some(Freshness::Current) => Some(TICK),
+        Some(Freshness::Changed) => Some(TICK_STALE),
+        None => None,
     }
 }
 

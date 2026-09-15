@@ -111,7 +111,14 @@ fn body_rows_by_kind(plan: &Plan<'_>) -> Vec<(BodyKind, String)> {
 fn a_line_with_no_comments_is_one_row() {
     let diff = diff_of(&["fn a() {", "    let x = 1;", "}"]);
 
-    let plan = plan(&diff.lines, &|_| Vec::new(), &|_| None, &HashSet::new(), 40);
+    let plan = plan(
+        &diff.lines,
+        &|_| Vec::new(),
+        &|_| Vec::new(),
+        &|_| None,
+        &HashSet::new(),
+        40,
+    );
 
     assert_eq!(plan.rows.len(), 3);
     assert!(matches!(plan.rows[0], Row::Diff { index: 0, .. }));
@@ -131,6 +138,7 @@ fn an_expanded_comment_adds_a_bordered_box_under_its_line() {
                 Vec::new()
             }
         },
+        &|_| Vec::new(),
         &|_| None,
         &HashSet::new(),
         40,
@@ -160,6 +168,7 @@ fn a_collapsed_comment_is_one_row() {
                 Vec::new()
             }
         },
+        &|_| Vec::new(),
         &|_| None,
         &collapsed,
         40,
@@ -177,6 +186,7 @@ fn a_long_body_wraps_instead_of_truncating() {
     let plan = plan(
         &diff.lines,
         &|_| vec![&comment],
+        &|_| Vec::new(),
         &|_| None,
         &HashSet::new(),
         20,
@@ -205,6 +215,7 @@ fn a_word_longer_than_the_width_is_broken_rather_than_dropped() {
     let plan = plan(
         &diff.lines,
         &|_| vec![&comment],
+        &|_| Vec::new(),
         &|_| None,
         &HashSet::new(),
         10,
@@ -230,6 +241,7 @@ fn a_zero_width_pane_still_makes_progress_one_character_at_a_time() {
     let plan = plan(
         &diff.lines,
         &|_| vec![&comment],
+        &|_| Vec::new(),
         &|_| None,
         &HashSet::new(),
         0,
@@ -252,6 +264,7 @@ fn a_reply_renders_inside_the_same_box() {
     let plan = plan(
         &diff.lines,
         &|_| vec![&comment],
+        &|_| Vec::new(),
         &|_| None,
         &HashSet::new(),
         40,
@@ -283,6 +296,7 @@ fn a_reply_marks_its_rows_as_reply_text() {
     let plan = plan(
         &diff.lines,
         &|_| vec![&comment],
+        &|_| Vec::new(),
         &|_| None,
         &HashSet::new(),
         40,
@@ -312,6 +326,7 @@ fn every_wrapped_row_of_a_reply_is_marked_as_reply_text() {
     let plan = plan(
         &diff.lines,
         &|_| vec![&comment],
+        &|_| Vec::new(),
         &|_| None,
         &HashSet::new(),
         20,
@@ -352,6 +367,7 @@ fn several_comments_stack_in_order() {
     let plan = plan(
         &diff.lines,
         &|_| vec![&first, &second],
+        &|_| Vec::new(),
         &|_| None,
         &HashSet::new(),
         40,
@@ -398,6 +414,7 @@ fn row_lookup_finds_a_line_pushed_down_by_a_tall_box() {
                 Vec::new()
             }
         },
+        &|_| Vec::new(),
         &|_| None,
         &HashSet::new(),
         12,
@@ -424,6 +441,7 @@ fn row_lookup_finds_each_box_in_a_stack_whether_it_is_open_or_collapsed() {
                 Vec::new()
             }
         },
+        &|_| Vec::new(),
         &|_| None,
         &collapsed,
         40,
@@ -456,6 +474,7 @@ fn row_lookup_reports_nothing_for_a_line_or_comment_that_is_not_there() {
                 Vec::new()
             }
         },
+        &|_| Vec::new(),
         &|_| None,
         &HashSet::new(),
         40,
@@ -478,7 +497,7 @@ proptest! {
             .collect();
         let refs: Vec<&Comment> = comments.iter().collect();
         let plan = plan(&diff.lines, &|line| if line == 0 { refs.clone() } else { Vec::new() },
-                        &|_| None, &HashSet::new(), 30);
+                        &|_| Vec::new(), &|_| None, &HashSet::new(), 30);
         for comment in &comments {
             let tops = plan.rows.iter().filter(|row| matches!(row,
                 Row::BoxTop { comment: c, .. } if c.id == comment.id)).count();
@@ -493,7 +512,7 @@ proptest! {
     fn planning_never_panics(width in 0usize..40, body in "[ -~]{0,200}") {
         let diff = diff_of(&["a", "b"]);
         let comment = comment_with_body(&body);
-        let plan = plan(&diff.lines, &|_| vec![&comment], &|_| None, &HashSet::new(), width);
+        let plan = plan(&diff.lines, &|_| vec![&comment], &|_| Vec::new(), &|_| None, &HashSet::new(), width);
         prop_assert!(plan.rows.len() >= 2);
     }
 
