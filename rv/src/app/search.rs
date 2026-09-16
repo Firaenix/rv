@@ -48,7 +48,6 @@ impl App {
                 self.mode = Mode::Browse;
                 if !typed.trim().is_empty() {
                     self.query = typed;
-                    self.focus = Focus::Diff;
                     self.jump_match_from(true, true)?;
                 }
             }
@@ -104,6 +103,9 @@ impl App {
         let row = self.plan().row_of_line(target_line).unwrap_or(0);
         self.set_cursor_row(row);
         self.set_column(start);
+        // A match is a place in the diff, so the cursor goes to it: `n` from
+        // the sidebar must not move a highlight in a pane the keys are not in.
+        self.focus = Focus::Diff;
         self.status = format!(
             "match {} of {} for \"{}\"",
             position + 1,

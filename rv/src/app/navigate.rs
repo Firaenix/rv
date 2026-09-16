@@ -9,7 +9,6 @@ use super::App;
 use super::Focus;
 use super::SidebarTab;
 use super::hunks;
-use super::sidebar::BrowserRow;
 use crate::tree::NodeKind;
 
 mod opening;
@@ -112,12 +111,12 @@ impl App {
     pub(super) fn step_browser(&mut self, forward: bool, count: usize) {
         self.sidebar_scroll = None;
         let rows = self.browser_rows();
-        let is_comment = |row: &usize| matches!(rows[*row], BrowserRow::Comment { .. });
+        let is_note = |row: &usize| rows[*row].is_note();
         for _ in 0..count {
             let found = if forward {
-                (self.browser_index.saturating_add(1)..rows.len()).find(is_comment)
+                (self.browser_index.saturating_add(1)..rows.len()).find(is_note)
             } else {
-                (0..self.browser_index).rev().find(is_comment)
+                (0..self.browser_index).rev().find(is_note)
             };
             match found {
                 Some(row) => self.browser_index = row,
@@ -130,8 +129,7 @@ impl App {
     pub(super) fn jump_browser(&mut self, forward: bool) {
         self.sidebar_scroll = None;
         let rows = self.browser_rows();
-        let mut comments =
-            (0..rows.len()).filter(|row| matches!(rows[*row], BrowserRow::Comment { .. }));
+        let mut comments = (0..rows.len()).filter(|row| rows[*row].is_note());
         let landing = if forward {
             comments.next_back()
         } else {

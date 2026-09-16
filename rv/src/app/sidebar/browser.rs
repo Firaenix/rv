@@ -39,6 +39,15 @@ pub enum BrowserRow {
     Flag { index: usize, depth: usize },
 }
 
+impl BrowserRow {
+    /// Whether the row is a note the cursor can rest on, rather than a
+    /// heading it steps over.
+    #[must_use]
+    pub fn is_note(&self) -> bool {
+        matches!(self, BrowserRow::Comment { .. } | BrowserRow::Flag { .. })
+    }
+}
+
 impl App {
     /// The comment browser's rows: every comment in the review under a heading
     /// naming its file, ordered by `(file, line)`.
@@ -153,7 +162,7 @@ impl App {
     }
 
     /// Which flag the browser's cursor is on, as a position in [`App::flags`].
-    pub(in crate::app) fn browsed_flag(&self) -> Option<&Flag> {
+    pub fn browsed_flag(&self) -> Option<&Flag> {
         match self.browser_rows().get(self.browser_index)? {
             BrowserRow::Flag { index, .. } => self.flags.get(*index),
             _ => None,

@@ -235,7 +235,13 @@ impl App {
                         && self.rt_binding_enabled(binding)
                 })
                 .collect();
-            if let [only] = live[..] {
+            // A leader with one live child runs it without waiting — that
+            // is how a bare `c` writes a comment. Never onto a delete: a
+            // key pressed to *open a menu* must not land on the one thing in
+            // it that asks a question, or the next key answers it blind.
+            if let [only] = live[..]
+                && only.command != Command::Comment(CommentCommand::Delete)
+            {
                 self.status = format!("{} → {}", leader.label(), only.what);
                 return self.run_command(only.command);
             }

@@ -214,6 +214,42 @@ fn the_flags_tab_lists_flags_and_the_file_list_marks_their_files() {
     );
 }
 
+/// Arrows walk the flag rows, stepping over headings, and `Space` opens its
+/// menu rather than collapsing onto the delete in it.
+#[test]
+fn arrows_walk_the_flags_tab_and_space_never_lands_on_delete() {
+    let workspace = Fixture::new();
+    let review = session::read(workspace.root(), None, None).expect("read the review");
+    session::flags::add_flag(&review, "a.rs", Side::Right, 1, "one").expect("flag");
+    session::flags::add_flag(&review, "a.rs", Side::Right, 2, "two").expect("flag");
+    session::flags::add_flag(&review, "b.rs", Side::Right, 2, "three").expect("flag");
+    let mut app = workspace.app();
+    app.on_key(KeyCode::Char('m')).expect("mode leader");
+    app.on_key(KeyCode::Char('F')).expect("flags");
+
+    let reasons = |app: &rv::app::App| app.browsed_flag().map(|flag| flag.reason.clone());
+    assert_eq!(reasons(&app).as_deref(), Some("one"));
+    app.on_key(KeyCode::Down).expect("down");
+    assert_eq!(reasons(&app).as_deref(), Some("two"));
+    app.on_key(KeyCode::Down)
+        .expect("down, over the b.rs heading");
+    assert_eq!(reasons(&app).as_deref(), Some("three"));
+    app.on_key(KeyCode::Down).expect("down at the end stays");
+    assert_eq!(reasons(&app).as_deref(), Some("three"));
+    app.on_key(KeyCode::Up).expect("up");
+    assert_eq!(reasons(&app).as_deref(), Some("two"));
+    app.on_key(KeyCode::End).expect("end");
+    assert_eq!(reasons(&app).as_deref(), Some("three"));
+    app.on_key(KeyCode::Home).expect("home");
+    assert_eq!(reasons(&app).as_deref(), Some("one"));
+
+    app.on_key(KeyCode::Char(' ')).expect("space");
+    assert_eq!(app.mode(), Mode::Browse, "Space collapsed onto delete");
+    assert_eq!(app.pending_leader(), Some(rv::app::Leader::Context));
+    app.on_key(KeyCode::Esc).expect("close the menu");
+    assert_eq!(workspace.store().flags().expect("read").len(), 3);
+}
+
 /// `d` in the Flags tab deletes the browsed flag, after the same question.
 #[test]
 fn d_in_the_flags_tab_deletes_the_browsed_flag_after_confirming() {
@@ -223,9 +259,11 @@ fn d_in_the_flags_tab_deletes_the_browsed_flag_after_confirming() {
     let mut app = workspace.app();
     app.on_key(KeyCode::Char('m')).expect("mode leader");
     app.on_key(KeyCode::Char('F')).expect("flags");
-    // `c` collapses straight onto `d`: delete is the one comment verb live
-    // on a flag, so the leader does not wait for a second key.
+    // Delete is the one comment verb live on a flag, but a leader never
+    // collapses onto a delete: `c` opens the menu and `d` picks it.
     app.on_key(KeyCode::Char('c')).expect("comment leader");
+    assert_eq!(app.mode(), Mode::Browse, "c collapsed onto delete");
+    app.on_key(KeyCode::Char('d')).expect("delete");
     assert!(
         app.status().contains("delete flag at a.rs:1"),
         "{}",
