@@ -132,20 +132,28 @@ fn help_rows(app: &App) -> Vec<HelpRow> {
     rows
 }
 
-/// The tip's rows: the leaders, with the keys they open on now, and the keys
-/// that mean something only where the cursor is.
+/// The tip's rows: every direct key that does something from where the
+/// cursor is — global or scoped to this pane, and live right now — then the
+/// leaders with the keys they open on. Pure cursor movement is left out: the
+/// arrows need no tip, and the corner has no room to spend on them.
 fn tip_rows(app: &App) -> Vec<(String, String)> {
     let context = app.context();
-    let mut rows: Vec<(String, String)> = Leader::ALL
+    let mut rows: Vec<(String, String)> = app
+        .keymap()
+        .bindings()
         .iter()
-        .map(|leader| (leader_label(app, *leader), format!("{} …", leader.title())))
+        .filter(|binding| {
+            binding.leader.is_none()
+                && !matches!(binding.group, Group::Move | Group::Scroll)
+                && (binding.contexts.is_empty() || binding.contexts.contains(&context))
+                && app.rt_binding_enabled(binding)
+        })
+        .map(|binding| (binding.keys_label.clone(), binding.what.to_owned()))
         .collect();
     rows.extend(
-        app.keymap()
-            .bindings()
+        Leader::ALL
             .iter()
-            .filter(|binding| binding.leader.is_none() && binding.contexts.contains(&context))
-            .map(|binding| (binding.keys_label.clone(), binding.what.to_owned())),
+            .map(|leader| (leader_label(app, *leader), format!("{} …", leader.title()))),
     );
     rows.push(("? ?".to_owned(), "all keys".to_owned()));
     rows

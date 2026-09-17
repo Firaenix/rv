@@ -40,3 +40,27 @@ fn the_overview_advertises_the_leaders_from_every_context() {
         );
     }
 }
+
+/// The tip lists every direct key that does something from where the cursor
+/// is — the global ones included — and not one that does nothing there. `X`
+/// ticks a file from the Files list; `C` has no line to comment on from it.
+#[test]
+fn the_tip_lists_the_keys_that_act_here_global_ones_included() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    app.on_key(KeyCode::Left).expect("focus the sidebar");
+    app.on_key(KeyCode::Char('?')).expect("?");
+    let files = buffer_text(&frame_at(&app, 100, 30));
+    assert!(files.contains("X      reviewed"), "{files}");
+    assert!(
+        !files.contains("comment  "),
+        "C is not live in the files list:\n{files}"
+    );
+
+    app.on_key(KeyCode::Esc).expect("close");
+    app.on_key(KeyCode::Right).expect("onto the diff");
+    app.on_key(KeyCode::Char('?')).expect("?");
+    let diff = buffer_text(&frame_at(&app, 100, 30));
+    assert!(diff.contains("C      comment"), "{diff}");
+    assert!(diff.contains("F      flag line"), "{diff}");
+}
