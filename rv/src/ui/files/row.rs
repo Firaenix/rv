@@ -4,6 +4,7 @@
 //! id whole rather than half — a hash printed as `e…` cannot be pasted, so a row
 //! that prints one invites a paste that cannot work.
 
+use ratatui::style::Color;
 use ratatui::style::Modifier;
 use ratatui::style::Style;
 use ratatui::text::Line;
@@ -19,6 +20,14 @@ use crate::theme;
 use crate::tree::Node;
 use crate::tree::NodeKind;
 
+/// A row's name as built by the list: the text, how many of its columns are
+/// indent and marks, and where its icon is.
+pub(super) struct Head {
+    pub(super) text: String,
+    pub(super) lead: usize,
+    pub(super) icon: Option<(usize, Color)>,
+}
+
 /// One row: its counts in the two columns shared by the whole list, then its
 /// name — tinted by its change's proportion where `tint` asks for it.
 ///
@@ -27,13 +36,18 @@ use crate::tree::NodeKind;
 /// context.
 pub(super) fn file_row(
     node: &Node,
-    head: &str,
-    lead: usize,
+    head: &Head,
     counts: &(String, String),
     columns: CountsColumns,
     width: usize,
     tint: bool,
 ) -> Line<'static> {
+    let Head {
+        text: head,
+        lead,
+        icon,
+    } = head;
+    let (lead, icon) = (*lead, *icon);
     // One column of gap at least, always: numbers clipped right up against
     // the name read as one word.
     let counts_width = columns.width();
@@ -43,7 +57,10 @@ pub(super) fn file_row(
         width.saturating_sub(counts_width + 1)
     };
     if counts_width > 0 && names < MIN_PATH_COLUMNS {
-        return Line::from(name_spans(node, &clip(head, width), lead, tint));
+        return Line::from(inked(
+            name_spans(node, &clip(head, width), lead, tint),
+            icon,
+        ));
     }
 
     // A commit row gives up its subject before it gives up an id, and gives up
@@ -57,8 +74,40 @@ pub(super) fn file_row(
         spans.extend(counts_spans(counts, columns));
         spans.push(Span::raw(" "));
     }
-    spans.extend(name_spans(node, &name, lead, tint));
+    spans.extend(inked(name_spans(node, &name, lead, tint), icon));
     Line::from(spans)
+}
+
+/// `spans` with the character at `icon`'s offset — counted from the start
+/// of the name, after any counts — painted in `icon`'s colour. The icon is
+/// one character inside the lead, which every other style treats as one
+/// run, so it is cut out here rather than threaded through each of them.
+fn inked(spans: Vec<Span<'static>>, icon: Option<(usize, Color)>) -> Vec<Span<'static>> {
+    let Some((at, ink)) = icon else {
+        return spans;
+    };
+    let mut out = Vec::with_capacity(spans.len() + 2);
+    let mut seen = 0;
+    for span in spans {
+        let length = span.content.chars().count();
+        if at < seen || at >= seen + length {
+            seen += length;
+            out.push(span);
+            continue;
+        }
+        let chars: Vec<char> = span.content.chars().collect();
+        let cut = at - seen;
+        let piece = |from: usize, to: usize| chars[from..to].iter().collect::<String>();
+        if cut > 0 {
+            out.push(Span::styled(piece(0, cut), span.style));
+        }
+        out.push(Span::styled(piece(cut, cut + 1), span.style.fg(ink)));
+        if cut + 1 < length {
+            out.push(Span::styled(piece(cut + 1, length), span.style));
+        }
+        seen += length;
+    }
+    out
 }
 
 /// The two numbers, each right-aligned in its column — or the columns left

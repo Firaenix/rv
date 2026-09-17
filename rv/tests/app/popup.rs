@@ -466,3 +466,35 @@ fn the_popup_covers_what_is_beneath_it() {
     // The bar is outside the popup and keeps its own row.
     assert_eq!(last_row(&beneath), last_row(&over), "the popup ate the bar");
 }
+
+/// The keymap fills a wide popup: on a wide terminal the columns are dealt
+/// shorter and more of them, spread across the width, rather than three
+/// tall ones pressed into the left-hand fifth of the screen.
+#[test]
+fn a_wide_popup_spreads_its_columns_across_the_width() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    app.on_key(KeyCode::Char('?')).expect("?");
+    app.on_key(KeyCode::Char('?'))
+        .expect("? again, for the whole keymap");
+    let frame = buffer_text(&frame_at(&app, 160, 45));
+
+    let widest_row = frame
+        .lines()
+        .filter(|row| row.starts_with('│'))
+        .map(|row| row.trim_end_matches('│').trim_end().chars().count())
+        .max()
+        .unwrap_or(0);
+    assert!(
+        widest_row > 100,
+        "the keymap uses {widest_row} of 160 columns:\n{frame}"
+    );
+    let used_rows = frame
+        .lines()
+        .filter(|row| row.starts_with('│') && !row.trim_matches('│').trim().is_empty())
+        .count();
+    assert!(
+        used_rows < 40,
+        "the keymap is one tall column: {used_rows} rows\n{frame}"
+    );
+}

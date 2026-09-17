@@ -33,13 +33,17 @@ mod counts;
 mod icons;
 mod row;
 
+use row::Head;
 use row::file_row;
 
 use counts::CountsColumns;
 use counts::counts;
+use icons::DIR_COLOUR;
 use icons::DIR_ICON_FOLDED;
 use icons::DIR_ICON_OPEN;
 use icons::file_icon;
+use icons::icon_colour;
+use ratatui::style::Color;
 
 use super::BORDER_ROWS;
 use super::list::list_state;
@@ -128,7 +132,14 @@ fn draw_nodes_titled(
     bottom: String,
 ) {
     let width = usize::from(area.width.saturating_sub(BORDER_ROWS));
-    let heads: Vec<String> = nodes.iter().map(|node| head(app, node)).collect();
+    let heads: Vec<Head> = nodes
+        .iter()
+        .map(|node| Head {
+            text: head(app, node),
+            lead: lead_of(app, node),
+            icon: icon_of(app, node),
+        })
+        .collect();
     // One pair of counts columns for the whole list, each as wide as its widest
     // entry, so the numbers and the names line up down the pane. Zero when
     // nothing in the review changed a line — or when the reviewer has put the
@@ -150,15 +161,7 @@ fn draw_nodes_titled(
         .zip(&heads)
         .zip(&counted)
         .map(|((node, head), counts)| {
-            ListItem::new(file_row(
-                node,
-                head,
-                lead_of(app, node),
-                counts,
-                columns,
-                width,
-                app.tint(),
-            ))
+            ListItem::new(file_row(node, head, counts, columns, width, app.tint()))
         })
         .collect();
     let list = List::new(items)
@@ -203,6 +206,24 @@ fn under_the_commits(app: &App) -> String {
 /// mark that says whether the row is open.
 fn lead_of(app: &App, node: &Node) -> usize {
     node.depth * 2 + row_mark(app, node).chars().count()
+}
+
+/// Where the row's nerd-font icon sits, as a character offset into the head,
+/// and the colour it takes — its file type's own, a folder's blue — or
+/// `None` where there is no icon or nothing to colour it: `RV_ASCII`, a tick
+/// standing in the icon's column, a plain document.
+fn icon_of(app: &App, node: &Node) -> Option<(usize, Color)> {
+    if app.ascii() {
+        return None;
+    }
+    let at = node.depth * 2 + flag_mark(app, node).chars().count() + 2;
+    match &node.kind {
+        NodeKind::Dir { .. } => Some((at, DIR_COLOUR)),
+        NodeKind::File { .. } if tick_mark(app, node).is_none() => {
+            icon_colour(&node.label).map(|colour| (at, colour))
+        }
+        _ => None,
+    }
 }
 
 /// The sidebar's one- or two-character mark for how a file changed.

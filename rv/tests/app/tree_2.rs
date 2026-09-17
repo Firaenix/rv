@@ -182,6 +182,22 @@ fn the_tree_carries_nerdfont_icons_unless_ascii_asks_otherwise() {
         text.contains('\u{e73e}'),
         "no markdown icon on a .md row:\n{text}"
     );
+    // The icon carries its language's colour, as every other browser paints
+    // it; the name beside it keeps the row's own style.
+    let frame = frame_at(&app, 100, 24);
+    let rows = rows_of(&frame);
+    let (y, row) = rows
+        .iter()
+        .enumerate()
+        .find(|(_, row)| row.contains('\u{e7a8}'))
+        .expect("the rust row");
+    let x = row.chars().position(|c| c == '\u{e7a8}').expect("the icon");
+    let cell = &frame[(u16::try_from(x).unwrap(), u16::try_from(y).unwrap())];
+    assert_eq!(
+        cell.fg,
+        ratatui::style::Color::Rgb(0xde, 0xa5, 0x84),
+        "the rust icon is not rust-coloured: {cell:?}"
+    );
 
     // Folding swaps the folder icon for its closed form.
     app.on_key(crossterm::event::KeyCode::Left)

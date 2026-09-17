@@ -52,6 +52,9 @@ const PANES: &[Context] = &[
 ];
 
 pub(super) enum HelpRow {
+    /// The empty row before a heading, so a section does not sit on the
+    /// one above it.
+    Blank,
     Heading(String),
     Key {
         chord: String,
@@ -111,6 +114,7 @@ fn help_rows(app: &App) -> Vec<HelpRow> {
         if global.is_empty() {
             continue;
         }
+        rows.push(HelpRow::Blank);
         rows.push(HelpRow::Heading(group.heading().to_owned()));
         rows.extend(global.into_iter().map(|binding| key_row(binding, app)));
     }
@@ -126,6 +130,7 @@ fn help_rows(app: &App) -> Vec<HelpRow> {
         if scoped.is_empty() {
             continue;
         }
+        rows.push(HelpRow::Blank);
         rows.push(HelpRow::Heading(pane_title(*pane).to_owned()));
         rows.extend(scoped.into_iter().map(|binding| key_row(binding, app)));
     }
@@ -249,22 +254,27 @@ fn help_text(app: &App, width: usize, height: usize) -> Text<'static> {
     if flowed.truncated && height > 1 {
         flowed = flow(&all, height - 1, width, HELP_GAP, app.help_scroll());
     }
-    let lines = (0..height)
-        .map(|row| {
-            let mut spans = Vec::with_capacity(flowed.columns.len() * 3);
-            for (index, column) in flowed.columns.iter().enumerate() {
-                if index > 0 {
-                    spans.push(Span::raw(" ".repeat(HELP_GAP)));
-                }
-                spans.extend(help_cell(
-                    column.rows.get(row).copied().flatten(),
-                    column.keys,
-                    column.width(HELP_GAP),
-                ));
-            }
-            clip_spans(spans, width)
-        })
-        .collect::<Vec<_>>();
+    // A short keymap on a tall screen sits a little way down rather than
+    // pressed against the top border.
+    let top = height.saturating_sub(flowed.height) / 3;
+    let mut lines: Vec<Line<'static>> = vec![Line::default(); top];
+    lines.extend((0..flowed.height).map(|row| {
+        let mut spans = Vec::with_capacity(flowed.columns.len() * 3);
+        for (index, column) in flowed.columns.iter().enumerate() {
+            spans.push(Span::raw(" ".repeat(if index > 0 {
+                flowed.gap
+            } else {
+                1
+            })));
+            spans.extend(help_cell(
+                column.rows.get(row).copied().flatten(),
+                column.keys,
+                column.width(HELP_GAP),
+            ));
+        }
+        clip_spans(spans, width)
+    }));
+    lines.resize(height, Line::default());
     let mut text = Text::from(lines);
     if flowed.truncated
         && let Some(last) = text.lines.last_mut()
@@ -277,7 +287,7 @@ fn help_text(app: &App, width: usize, height: usize) -> Text<'static> {
 fn help_cell(row: Option<&HelpRow>, keys_w: usize, column: usize) -> Vec<Span<'static>> {
     let what_w = column.saturating_sub(keys_w + HELP_GAP);
     match row {
-        None => vec![Span::raw(" ".repeat(column))],
+        None | Some(HelpRow::Blank) => vec![Span::raw(" ".repeat(column))],
         Some(HelpRow::Heading(heading)) => vec![Span::styled(
             format!("{heading:<column$}"),
             Style::default().add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
