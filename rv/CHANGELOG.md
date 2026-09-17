@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.0](https://github.com/Firaenix/rv/compare/v2.0.1...v2.1.0) - 2026-09-17
+
+### Added
+
+- *(tui)* a flag is a focus — click or Enter onto it, FLAG in the bar, D/A/s act on it
+
 ## [2.0.1](https://github.com/Firaenix/rv/compare/v2.0.0...v2.0.1) - 2026-09-17
 
 ### Fixed
