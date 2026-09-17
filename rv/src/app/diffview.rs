@@ -70,7 +70,7 @@ impl App {
         let Some(diff) = self.selected_diff() else {
             return &[];
         };
-        if !self.full_context {
+        if !self.view.full_context {
             return &diff.lines;
         }
         match self.merge_state_of(self.merge_target()) {
@@ -89,15 +89,15 @@ impl App {
     /// reaches this per keystroke; only a live transform owns a fresh stream.
     pub fn displayed_lines(&self) -> Cow<'_, [DiffLine]> {
         let base = self.base_lines();
-        if !self.grouped && self.view_side == ViewSide::Diffed {
+        if !self.view.grouped && self.view.view_side == ViewSide::Diffed {
             return Cow::Borrowed(base);
         }
-        let grouped = if self.grouped {
+        let grouped = if self.view.grouped {
             super::regroup::group(base.to_vec())
         } else {
             base.to_vec()
         };
-        Cow::Owned(self.view_side.filter(grouped))
+        Cow::Owned(self.view.view_side.filter(grouped))
     }
 
     /// Whether full-file context was attempted for the selected file **and
@@ -105,7 +105,7 @@ impl App {
     /// suffix can never appear on a file the merge was never asked about,
     /// nor on one the reviewer turned the merge off for with `f`.
     pub fn context_bailed(&self) -> bool {
-        if !self.full_context {
+        if !self.view.full_context {
             return false;
         }
         matches!(
@@ -119,7 +119,7 @@ impl App {
     /// declined, and this recovered where [`App::context_bailed`] used to
     /// be the last word. `ui/diff.rs::title` reads this to name the engine.
     pub fn context_via_fallback(&self) -> bool {
-        if !self.full_context {
+        if !self.view.full_context {
             return false;
         }
         matches!(
@@ -158,14 +158,14 @@ impl App {
     /// Whether the reviewer has the `f` toggle set to show full-file context.
     #[must_use]
     pub fn full_context(&self) -> bool {
-        self.full_context
+        self.view.full_context
     }
 
     /// Flips the `f` toggle. The next [`App::displayed`] read observes the
     /// change immediately — there is no cache to invalidate, because the
     /// toggle is checked at read time.
     pub fn set_full_context(&mut self, on: bool) {
-        self.full_context = on;
+        self.view.full_context = on;
     }
 
     /// Which **row** of the selected file's plan the cursor is on.

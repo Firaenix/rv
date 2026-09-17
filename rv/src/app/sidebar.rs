@@ -175,7 +175,7 @@ impl App {
             self.status = VIEW_KEYS_ARE_FOR_THE_FILE_LIST.to_owned();
             return;
         }
-        self.tree = !self.tree;
+        self.view.tree = !self.view.tree;
         self.resettle_sidebar();
     }
 
@@ -185,11 +185,11 @@ impl App {
     /// hold the cursor — every key would then be acting on a list the reviewer
     /// cannot see.
     pub(super) fn toggle_sidebar(&mut self) {
-        self.sidebar_hidden = !self.sidebar_hidden;
-        if self.sidebar_hidden && self.focus == Focus::Sidebar {
+        self.view.sidebar_hidden = !self.view.sidebar_hidden;
+        if self.view.sidebar_hidden && self.focus == Focus::Sidebar {
             self.focus = Focus::Diff;
         }
-        self.status = if self.sidebar_hidden {
+        self.status = if self.view.sidebar_hidden {
             "sidebar hidden — z brings it back".to_owned()
         } else {
             "sidebar shown".to_owned()
@@ -202,8 +202,8 @@ impl App {
             self.status = VIEW_KEYS_ARE_FOR_THE_FILE_LIST.to_owned();
             return;
         }
-        self.tint = !self.tint;
-        self.status = if self.tint {
+        self.view.tint = !self.view.tint;
+        self.status = if self.view.tint {
             "names tinted by their change — g turns it off".to_owned()
         } else {
             "names untinted".to_owned()
@@ -216,8 +216,8 @@ impl App {
             self.status = VIEW_KEYS_ARE_FOR_THE_FILE_LIST.to_owned();
             return;
         }
-        self.counts = !self.counts;
-        self.status = if self.counts {
+        self.view.counts = !self.view.counts;
+        self.status = if self.view.counts {
             "counts shown".to_owned()
         } else {
             "counts hidden — # brings them back".to_owned()
@@ -231,7 +231,7 @@ impl App {
             self.status = VIEW_KEYS_ARE_FOR_THE_FILE_LIST.to_owned();
             return;
         }
-        self.sort = self.sort.next();
+        self.view.sort = self.view.sort.next();
         self.resettle_sidebar();
     }
 

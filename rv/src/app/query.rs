@@ -54,28 +54,28 @@ impl App {
 
     /// Whether the file list is drawn as a directory tree. Session-only.
     pub fn tree_view(&self) -> bool {
-        self.tree
+        self.view.tree
     }
 
     /// The order the file list's rows are in. Session-only.
     pub fn sort(&self) -> tree::Sort {
-        self.sort
+        self.view.sort
     }
 
     /// Whether a sidebar row's name is tinted by its change. Session-only.
     pub fn tint(&self) -> bool {
-        self.tint
+        self.view.tint
     }
 
     /// Whether a commit row wraps its hash and subject onto as many rows as
     /// it takes. Session-only.
     pub fn wrap_commit_subjects(&self) -> bool {
-        self.wrap_commit_subjects
+        self.view.wrap_commit_subjects
     }
 
     /// Whether the sidebar shows its `+n -n` column. Session-only.
     pub fn counts_shown(&self) -> bool {
-        self.counts
+        self.view.counts
     }
 
     /// Which row of the file list the cursor is on — see the field.
@@ -108,7 +108,7 @@ impl App {
     /// Whether the reviewer has put the sidebar away.
     #[must_use]
     pub fn sidebar_hidden(&self) -> bool {
-        self.sidebar_hidden
+        self.view.sidebar_hidden
     }
 
     pub fn sidebar_row(&self) -> usize {
@@ -117,7 +117,7 @@ impl App {
 
     /// Whether the status bar draws in ASCII, decided once at startup.
     pub fn ascii(&self) -> bool {
-        self.ascii
+        self.view.ascii
     }
 
     /// The file list's rows, as the sidebar draws them and as the cursor walks
@@ -135,8 +135,8 @@ impl App {
         self.zoom_view(tree::build(
             &paths,
             &self.collapsed_dirs,
-            self.tree,
-            self.sort,
+            self.view.tree,
+            self.view.sort,
             &|index| self.stat(index),
         ))
     }
@@ -185,7 +185,7 @@ impl App {
 
     /// How the width is divided between the sidebar and the diff. Session-only.
     pub fn split(&self) -> Split {
-        self.split
+        self.view.split
     }
 
     /// Whether the `?` keymap is up, at either size.
@@ -238,13 +238,13 @@ impl App {
     /// Whether the diff is grouped (removals-then-additions per hunk) rather
     /// than interleaved — the `v g` toggle, read by the pane's title.
     pub fn grouped(&self) -> bool {
-        self.grouped
+        self.view.grouped
     }
 
     /// Which side of the change the diff pane is showing — the `v b` cycle, read
     /// by the pane's title.
     pub fn view_side(&self) -> super::ViewSide {
-        self.view_side
+        self.view.view_side
     }
 
     /// The leader whose which-key submenu is open, if any — drawn by the popup.

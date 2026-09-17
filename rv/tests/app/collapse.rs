@@ -340,6 +340,61 @@ fn a_refresh_keeps_the_file_you_were_reading() {
     );
 }
 
+/// Every `v` toggle survives a refresh. `v #` and `v c` used to be reset by
+/// `v r`, because the preferences were carried across one hand-listed field
+/// at a time; now they are one value, and this flips all of them at once so
+/// a new toggle that is left out of that value fails here.
+#[test]
+fn a_refresh_keeps_every_view_toggle() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    let before = (
+        app.counts_shown(),
+        app.tint(),
+        app.tree_view(),
+        app.sort(),
+        app.grouped(),
+        app.view_side(),
+        app.full_context(),
+        app.sidebar_hidden(),
+        app.wrap_commit_subjects(),
+        app.split(),
+    );
+    for key in ['#', 'c', 't', 'o', 'g', 'b', 'f', 'z', '>'] {
+        app.on_key(KeyCode::Char('v')).expect("view leader");
+        app.on_key(KeyCode::Char(key)).expect("toggle");
+    }
+    let flipped = |app: &rv::app::App| {
+        (
+            app.counts_shown(),
+            app.tint(),
+            app.tree_view(),
+            app.sort(),
+            app.grouped(),
+            app.view_side(),
+            app.full_context(),
+            app.sidebar_hidden(),
+            app.wrap_commit_subjects(),
+            app.split(),
+        )
+    };
+    let toggled = flipped(&app);
+    assert_ne!(toggled.0, before.0, "v # did not toggle counts");
+    assert_ne!(toggled.1, before.1, "v c did not toggle tint");
+    assert_ne!(toggled.2, before.2, "v t did not toggle tree");
+    assert_ne!(toggled.4, before.4, "v g did not toggle grouping");
+    assert_ne!(toggled.9, before.9, "v > did not widen the sidebar");
+
+    app.on_key(KeyCode::Char('v')).expect("view leader");
+    app.on_key(KeyCode::Char('r')).expect("refresh");
+    assert!(app.status().starts_with("refreshed"), "{}", app.status());
+    assert_eq!(
+        flipped(&app),
+        toggled,
+        "a refresh reset a view toggle (counts, tint, tree, sort, grouped, side, context, sidebar, wrap, split)"
+    );
+}
+
 /// Comments written by another process — a reviewer agent, via `rv comment` —
 /// arrive with the refresh, which is the worker half of the agent loop.
 #[test]

@@ -22,12 +22,10 @@ use super::diffs;
 use super::keymap::Keymap;
 use super::paint;
 use super::status::HELP;
+use super::view::View;
 use crate::config::Config;
 use crate::config::Settings;
-use crate::layout::Split;
 use crate::session::Review;
-use crate::statusbar;
-use crate::tree::Sort;
 use crate::ui;
 
 impl App {
@@ -100,7 +98,7 @@ impl App {
             diffs,
             blobs,
             merges,
-            full_context: settings.full_context.unwrap_or(true),
+            view: View::from_settings(settings),
             merger: super::merges::Merger::default(),
             comments,
             flags: Vec::new(),
@@ -118,26 +116,15 @@ impl App {
             flag_index: 0,
             collapsed,
             collapsed_dirs: HashSet::new(),
-            tree: settings.tree.unwrap_or(false),
-            sort: settings.sort.map_or_else(Sort::default, Sort::from),
-            tint: settings.tint.unwrap_or(true),
-            counts: settings.counts.unwrap_or(true),
-            wrap_commit_subjects: settings.wrap_commit_subjects.unwrap_or(false),
             zoom: Vec::new(),
             nodes_cache: std::cell::RefCell::new(None),
             sidebar_row: 0,
             stats,
-            // `RV_ASCII` set still wins — an environment override outranks a
-            // settings file the way a flag outranks both.
-            ascii: statusbar::ascii_from_env() || settings.ascii.unwrap_or(false),
-            split: settings.split.map_or_else(Split::default, Split::new),
             keymap,
             watch,
             help: HelpStage::Closed,
             help_scroll: 0,
             pending_leader: None,
-            grouped: settings.grouped.unwrap_or(false),
-            view_side: super::viewside::ViewSide::default(),
             body_width: Cell::new(ui::default_body_width()),
             highlights: HashMap::new(),
             painted: Cell::new(ui::default_layout()),
@@ -164,9 +151,7 @@ impl App {
             refining: HashSet::new(),
             refined: HashSet::new(),
             refiner: diffs::Refiner::default(),
-            info_dismissed: false,
             info_scroll: 0,
-            sidebar_hidden: settings.sidebar_hidden.unwrap_or(false),
             commits: commits::Commits::default(),
             pending_edit: None,
         };

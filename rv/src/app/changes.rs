@@ -48,7 +48,7 @@ impl App {
     /// Everything the tooltip shows about the change the cursor is in.
     #[must_use]
     pub fn change_info(&self) -> Option<ChangeInfo> {
-        if self.info_dismissed
+        if self.view.info_dismissed
             || self.focus() != Focus::Sidebar
             || self.sidebar_tab() != SidebarTab::Commits
         {

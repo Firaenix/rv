@@ -122,8 +122,8 @@ impl App {
         let nodes = tree::build(
             &paths,
             &std::collections::HashSet::new(),
-            self.tree,
-            self.sort,
+            self.view.tree,
+            self.view.sort,
             &stat_of,
         );
 

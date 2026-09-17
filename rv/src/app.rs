@@ -61,6 +61,7 @@ mod sidebar;
 mod stack;
 mod status;
 mod symbols;
+mod view;
 mod viewside;
 mod watch;
 mod zoom;
@@ -99,9 +100,7 @@ use rv_core::store::ReviewedFile;
 
 use crate::gradient::Stat;
 use crate::layout::Layout;
-use crate::layout::Split;
 use crate::session::Review;
-use crate::tree::Sort;
 
 /// One interactive review.
 ///
@@ -137,11 +136,9 @@ pub struct App {
     /// See `docs/superpowers/specs/2026-08-21-rv-full-file-context-design.md`
     /// Appendix A (the caching architecture the shipped feature omitted).
     merges: Vec<Option<merges::MergeState>>,
-    /// Whether the reviewer wants full-file context (spec §5, walked back to
-    /// let a toggle stand — see [`crate::app::context`]). Reviewer default is
-    /// `true`, and `f` flips it. Not persisted: this is a display preference
-    /// scoped to one run, not a review artefact.
-    full_context: bool,
+    /// Every display preference, as one value a refresh carries whole — see
+    /// [`view`].
+    view: view::View,
     /// The merge worker: single-slot, latest-wins, mirroring
     /// [`diffs::Refiner`]. See [`super::merges`].
     merger: merges::Merger,
@@ -217,19 +214,6 @@ pub struct App {
     /// apart from `collapsed` because one set holding both would let a comment
     /// id and a path collide.
     collapsed_dirs: HashSet<String>,
-    /// Whether the file list is drawn as a directory tree rather than as a flat
-    /// list of whole paths.
-    tree: bool,
-    /// The order the file list's rows are in.
-    sort: Sort,
-    /// Whether a sidebar row's name is tinted by its change's proportion —
-    /// green through the seam to red, across the text itself.
-    tint: bool,
-    /// Whether a commit row in the commits list wraps its hash and subject
-    /// onto as many rows as it takes, rather than clipping the subject to
-    /// one. Commits-only, unlike `tint`/`counts`: a file or directory row
-    /// has no subject to wrap.
-    wrap_commit_subjects: bool,
     /// Where the sidebar is zoomed into, innermost last — see [`zoom`].
     zoom: Vec<zoom::Zoom>,
     /// The built sidebar rows, memoized against a fingerprint of what shapes
@@ -238,8 +222,6 @@ pub struct App {
     /// the commits list crawl. A refresh builds a fresh `App`, so the cache
     /// never outlives the files it was built from.
     nodes_cache: std::cell::RefCell<Option<(u64, Vec<crate::tree::Node>)>>,
-    /// Whether the sidebar shows the `+n -n` column at all.
-    counts: bool,
     /// Which **row of the file list** the cursor is on.
     ///
     /// A row rather than a file, because a tree has rows that are not files and
@@ -254,12 +236,6 @@ pub struct App {
     /// moved as the reviewer browsed, which is the one thing a change bar must
     /// not do.
     stats: Vec<Stat>,
-    /// Whether the status bar draws its separators in ASCII, read from
-    /// `RV_ASCII` **once** at startup: the renderer runs on every keystroke and
-    /// the environment cannot change under a running process.
-    ascii: bool,
-    /// How the width is divided between the two panes.
-    split: Split,
     /// Whether the `?` keymap is up, and at which size. While it is, every key
     /// but the five it answers is inert: a reviewer reading about `d` must not
     /// discover what it does by pressing it.
@@ -275,14 +251,6 @@ pub struct App {
     /// The op-head watch behind auto-refresh — see [`watch`].
     watch: watch::Watch,
     pending_leader: Option<bindings::Leader>,
-    /// Whether the diff pane groups each hunk's removals before its additions,
-    /// the way a unified diff prints — rather than difftastic's interleaving of
-    /// the two sides. Session-only, `v g` flips it. See [`crate::app::regroup`].
-    grouped: bool,
-    /// Which side of the change the diff pane shows: both (the default), the
-    /// base alone, or the head alone. Session-only, `v b` cycles it. See
-    /// [`crate::app::viewside`].
-    view_side: viewside::ViewSide,
     /// How many columns of body text a comment box was drawn with on the last
     /// frame — reported by [`crate::ui::visible`], never decided here.
     ///
@@ -373,16 +341,7 @@ pub struct App {
     refining: HashSet<diffs::Target>,
     refined: HashSet<diffs::Target>,
     refiner: diffs::Refiner,
-    /// Whether `i` has put the change tooltip away, and how far down it is
-    /// scrolled.
-    info_dismissed: bool,
     info_scroll: usize,
-    /// Whether the reviewer has put the sidebar away with `z`.
-    ///
-    /// What they asked for, not what they get: a terminal narrow enough hides
-    /// it regardless, and that decision belongs to [`crate::layout`], which is
-    /// the only place that knows how wide the screen is.
-    sidebar_hidden: bool,
     /// The commits view, built the first frame that asks for it.
     ///
     /// A [`std::cell::OnceCell`] because [`crate::ui::draw`] takes `&App`, and

@@ -121,9 +121,9 @@ impl App {
     /// in: a reviewer who wants the diff pane whole while they walk a stack should
     /// not have to move the cursor off a change to get it.
     fn toggle_info(&mut self) {
-        self.info_dismissed = !self.info_dismissed;
+        self.view.info_dismissed = !self.view.info_dismissed;
         self.info_scroll = 0;
-        self.status = if self.info_dismissed {
+        self.status = if self.view.info_dismissed {
             "change details hidden — i brings them back".to_owned()
         } else {
             "change details shown".to_owned()
@@ -174,10 +174,10 @@ impl App {
     #[tracing::instrument(level = "debug", skip(self))]
     fn toggle_grouped(&mut self) {
         let reading = self.cursor_position();
-        self.grouped = !self.grouped;
+        self.view.grouped = !self.view.grouped;
         self.keep_cursor_at(reading);
-        tracing::debug!(grouped = self.grouped, "toggle_grouped");
-        self.status = if self.grouped {
+        tracing::debug!(grouped = self.view.grouped, "toggle_grouped");
+        self.status = if self.view.grouped {
             "grouped diff — v g interleaves again".to_owned()
         } else {
             "interleaved diff — v g groups by side".to_owned()
@@ -188,10 +188,10 @@ impl App {
     /// head alone.
     #[tracing::instrument(level = "debug", skip(self))]
     fn cycle_view_side(&mut self) {
-        self.view_side = self.view_side.next();
+        self.view.view_side = self.view.view_side.next();
         self.clamp_cursor_to_plan();
-        tracing::debug!(side = self.view_side.label(), "cycle_view_side");
-        self.status = format!("showing {} — v b cycles", self.view_side.label());
+        tracing::debug!(side = self.view.view_side.label(), "cycle_view_side");
+        self.status = format!("showing {} — v b cycles", self.view.view_side.label());
     }
 
     /// Moves the keymap by `delta` rows, which only ever moves anything on a
@@ -340,8 +340,8 @@ impl App {
 
     fn run_layout(&mut self, command: LayoutCommand) {
         match command {
-            LayoutCommand::SidebarNarrower => self.split = self.split.nudged(-NUDGE),
-            LayoutCommand::SidebarWider => self.split = self.split.nudged(NUDGE),
+            LayoutCommand::SidebarNarrower => self.view.split = self.view.split.nudged(-NUDGE),
+            LayoutCommand::SidebarWider => self.view.split = self.view.split.nudged(NUDGE),
             LayoutCommand::ToggleSidebar => self.toggle_sidebar(),
         }
     }

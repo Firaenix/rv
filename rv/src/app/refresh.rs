@@ -48,8 +48,8 @@ impl App {
     /// Built as a fresh `App` and moved into place rather than patched field by
     /// field: everything derived — diffs, stats, highlights, the symbol index,
     /// the commits view — must be re-derived from the new snapshot, and a list
-    /// of fields to clear is a list that rots. What is *kept* is the short
-    /// list: view preferences, and the fold state, which describes the
+    /// of fields to clear is a list that rots. What is *kept* is the
+    /// [`View`](super::view::View), and the fold state, which describes the
     /// reviewer's screen rather than the repository.
     pub(super) fn refresh(&mut self) -> Result<()> {
         let (from, to) = self.review.asked.clone();
@@ -73,22 +73,15 @@ impl App {
         )?;
         std::mem::swap(&mut fresh.keymap, &mut self.keymap);
         std::mem::swap(&mut fresh.watch, &mut self.watch);
-        fresh.split = self.split;
-        fresh.tree = self.tree;
-        fresh.sort = self.sort;
+        // Every display preference at once — not a list of fields, which is
+        // how `v #` and `v c` came to be lost on refresh.
+        fresh.view = self.view;
         fresh.sidebar_tab = self.sidebar_tab;
-        fresh.sidebar_hidden = self.sidebar_hidden;
-        fresh.info_dismissed = self.info_dismissed;
         // Cloned, not taken: `select_file` below can fail, and an error path
         // that had already emptied the old app's fold state would leave the
         // reviewer in the un-refreshed review with their folds gone.
         fresh.collapsed = self.collapsed.clone();
         fresh.collapsed_dirs = self.collapsed_dirs.clone();
-        // Carry the `f` toggle across: it is a display preference like the
-        // split and the sort, and losing it on `R` would silently reset a
-        // reviewer's chosen view.
-        fresh.set_full_context(self.full_context());
-        fresh.wrap_commit_subjects = self.wrap_commit_subjects;
 
         // The file, not the index: a rebased stack lists files in a new order,
         // and index 3 of the new list is not what the reviewer was reading.

@@ -1090,3 +1090,25 @@ seventh pane is one line in one file. `rows.rs` crossed 400 lines with
 `flag_focus::the_tip_lists_delete_on_a_flag_and_not_on_its_line` is the
 test the report asked for: `?` on the bare line shows no delete, `?` on the
 flag shows `D delete` and `A ack flag`, and neither is hand-listed anywhere.
+
+## 2026-09-17 — the preference list that rotted
+
+`v r` rebuilds the app from a fresh snapshot and carries the reviewer's
+display preferences across — by naming them one at a time. The refresh
+module's own doc said why the *derived* state is not patched field by
+field: "a list of fields to clear is a list that rots." The list of fields
+to *keep* rotted instead: `v #` (counts), `v c` (tint), `v g` (grouping)
+and `v b` (side) were all reset by a refresh, because each arrived after
+the list was written and nobody was reminded to add them.
+
+**The preferences are one value now.** `app/view.rs` holds a `View` with
+every toggle `Settings` seeds and the `v` leader flips — context, tree,
+sort, tint, counts, wrap, ascii, split, grouped, side, details, sidebar —
+built by `View::from_settings` and copied across a refresh in one
+assignment. A dozen fields left `App`; `self.tint` became
+`self.view.tint` at each of its seventy-odd uses.
+
+`collapse::a_refresh_keeps_every_view_toggle` flips every one of them,
+refreshes, and compares the lot. Written before the fix, it failed on
+exactly the four the report named — which is also how it caught that the
+first attempt at the fix had not landed on disk.

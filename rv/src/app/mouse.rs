@@ -219,7 +219,7 @@ impl App {
             return;
         }
         let asked = u32::from(column.saturating_sub(painted.sidebar.x)) * 100 / shared;
-        self.split = Split::new(u16::try_from(asked).unwrap_or(Split::MAX_RATIO));
+        self.view.split = Split::new(u16::try_from(asked).unwrap_or(Split::MAX_RATIO));
     }
 
     /// The wheel: park the view of whichever pane the pointer is over, `delta`

@@ -167,8 +167,8 @@ impl App {
         self.zoom_view(tree::build_grouped(
             &groups,
             &self.collapsed_dirs,
-            self.tree,
-            self.sort,
+            self.view.tree,
+            self.view.sort,
             &|file| index.stats.get(file).copied().unwrap_or_default(),
         ))
     }
@@ -208,8 +208,8 @@ impl App {
         use std::hash::Hasher;
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         (self.sidebar_tab() as u8).hash(&mut hasher);
-        self.tree.hash(&mut hasher);
-        (self.sort as u8).hash(&mut hasher);
+        self.view.tree.hash(&mut hasher);
+        (self.view.sort as u8).hash(&mut hasher);
         // Sorted so a fold then unfold hashes the same set, order aside.
         let mut folded: Vec<&String> = self.collapsed_dirs.iter().collect();
         folded.sort();
