@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0](https://github.com/Firaenix/rv/compare/v1.9.0...v2.0.0) - 2026-09-17
+
+### Added
+
+- *(rv)* [**breaking**] uppercase acts, and the ? popup is generated from the runtime keymap
+
+### Fixed
+
+- *(rv)* arrows walk the Flags tab, and a leader never collapses onto delete
+
 ## [1.9.0](https://github.com/Firaenix/rv/compare/v1.8.0...v1.9.0) - 2026-09-15
 
 ### Added
