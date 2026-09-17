@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.1](https://github.com/Firaenix/rv/compare/v2.0.0...v2.0.1) - 2026-09-17
+
+### Fixed
+
+- *(rv)* the keymap fills the popup, and file icons take their language's colour
+- *(rv)* the ? tip lists every key that acts here, global ones included
+
 ## [2.0.0](https://github.com/Firaenix/rv/compare/v1.9.0...v2.0.0) - 2026-09-17
 
 ### Added
