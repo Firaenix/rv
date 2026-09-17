@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.1](https://github.com/Firaenix/rv/compare/v2.1.0...v2.1.1) - 2026-09-17
+
+### Fixed
+
+- *(tui)* v r keeps every view toggle — preferences are one View value
+
+### Other
+
+- *(app_cases)* rewind unfolds the commits list's headings
+
 ## [2.1.0](https://github.com/Firaenix/rv/compare/v2.0.1...v2.1.0) - 2026-09-17
 
 ### Added
