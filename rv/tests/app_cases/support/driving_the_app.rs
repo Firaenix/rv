@@ -10,6 +10,7 @@ use rv::app::Focus;
 use rv::app::Mode;
 use rv::app::SidebarTab;
 use rv::app::anchored_side;
+use rv::tree::NodeKind;
 use rv::tree::Sort;
 use rv_core::diff::DiffLine;
 use rv_core::diff::DiffSource;
@@ -40,9 +41,16 @@ use std::cell::RefCell;
 ///   listing whichever of the two it last flipped to, with its cursor wherever
 ///   `j` left it — and `j` then means something different in the next case
 ///   than it did in this one.
+/// * **The commits list's headings are unfolded.** A click or `s` on a change
+///   row folds its files away, and a fold survives every key above; after a
+///   couple of such cases the commits tab lists no file rows at all, and a
+///   property with a "click a file row in the commits tab" arm can never
+///   reach it again — which is exactly how it flaked on one seed and not
+///   another.
 pub fn rewind(app: &mut App) {
     app.on_key(KeyCode::Esc).expect("leave comment mode");
     app.on_key(KeyCode::Left).expect("out of the stack");
+    unfold_commits(app);
     to_comments(app);
     for _ in 0..=app.browser_rows().len() {
         // Bounded for the same reason the line loop below is: this presses the
@@ -314,6 +322,25 @@ pub fn to_flags(app: &mut App) {
     app.on_key(KeyCode::Char('m')).expect("mode leader");
     app.on_key(KeyCode::Char('F')).expect("the flags mode");
     assert_eq!(app.sidebar_tab(), SidebarTab::Flags);
+}
+
+/// Unfolds every folded change heading in the commits list, walking its rows
+/// from the top with the keys a reviewer has. Bounded by the row count as the
+/// other loops are.
+fn unfold_commits(app: &mut App) {
+    to_commits(app);
+    for _ in 0..=app.nodes().len() {
+        app.on_key(KeyCode::Up).expect("top of the commits list");
+    }
+    for _ in 0..=app.nodes().len() {
+        if let Some(NodeKind::Commit {
+            collapsed: true, ..
+        }) = app.nodes().get(app.sidebar_row()).map(|node| &node.kind)
+        {
+            app.on_key(KeyCode::Char('s')).expect("unfold the change");
+        }
+        app.on_key(KeyCode::Down).expect("next row");
+    }
 }
 
 /// The same, for the tab that lists the stack's changes: `2`.
