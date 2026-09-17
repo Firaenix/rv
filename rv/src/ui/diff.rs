@@ -62,7 +62,7 @@ const SUPPRESSED_NOTE: &str = "no semantic change — the difference is not visi
 pub(super) fn draw_diff(frame: &mut Frame, app: &App, area: Rect) {
     // The stack is drawn *inside* this pane, so it marks this pane as the one
     // the next keystroke lands in.
-    let focused = matches!(app.focus(), Focus::Diff | Focus::Stack);
+    let focused = matches!(app.focus(), Focus::Diff | Focus::Stack | Focus::Flag);
     let Some(file) = app.selected_file() else {
         frame.render_widget(
             Paragraph::new("no changed files in this range")
@@ -266,13 +266,14 @@ fn draw_row(
         Row::BoxCollapsed { comment, .. } => comment_box::box_collapsed(app, comment, width),
         Row::Flag {
             flag, text, first, ..
-        } => flag_row::flag_row(flag, text, *first, width),
-        Row::FlagCollapsed { flag, .. } => flag_row::flag_collapsed(flag, width),
+        } => flag_row::flag_row(app, flag, text, *first, width),
+        Row::FlagCollapsed { flag, .. } => flag_row::flag_collapsed(app, flag, width),
     }
 }
 
 /// The row the window is centred on: the selected comment's box while the
-/// cursor is inside a stack, and the **row cursor** otherwise.
+/// cursor is inside a stack, the selected flag while it is on one, and the
+/// **row cursor** otherwise.
 ///
 /// A cursor that could scroll off the pane it is steering is a cursor the
 /// reviewer cannot use, and inside a stack the thing being steered is the box
@@ -287,6 +288,11 @@ fn draw_row(
 fn anchor_row(app: &App, plan: &Plan) -> usize {
     if app.focus() == Focus::Stack
         && let Some(row) = plan.row_of_comment(app.line_index(), app.comment_index())
+    {
+        return row;
+    }
+    if app.focus() == Focus::Flag
+        && let Some(row) = plan.row_of_flag(app.line_index(), app.flag_index())
     {
         return row;
     }

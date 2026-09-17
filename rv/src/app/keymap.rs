@@ -23,17 +23,6 @@ use super::Context;
 use super::bindings::{BINDINGS, Binding, Command, Group, Leader};
 use crate::config::{Bind, Config};
 
-/// The panes a binding can be scoped to — the browse contexts, without the
-/// modal typing states.
-const ALL_PANES: &[Context] = &[
-    Context::Files,
-    Context::Commits,
-    Context::Comments,
-    Context::Flags,
-    Context::Diff,
-    Context::Stack,
-];
-
 #[derive(Debug)]
 pub struct RuntimeBinding {
     pub keys_label: String,
@@ -247,7 +236,7 @@ impl Keymap {
                     }
                     if row.contexts.is_empty() {
                         // A global row survives everywhere but here.
-                        row.contexts = ALL_PANES
+                        row.contexts = Context::PANES
                             .iter()
                             .copied()
                             .filter(|other| *other != pane)

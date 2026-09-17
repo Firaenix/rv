@@ -77,10 +77,10 @@ impl Keymap {
                 body.push_str(&format!("\n[{name}]\n"));
                 push_binds(&mut body, prefix, &global);
             }
-            for (pane_name, pane) in crate::config::PANES {
+            for pane in Context::PANES {
                 let scoped = self.merged_rows(*leader, Some(*pane));
                 if !scoped.is_empty() {
-                    body.push_str(&format!("\n[{name}.{pane_name}]\n"));
+                    body.push_str(&format!("\n[{name}.{}]\n", pane.pane_name()));
                     push_binds(&mut body, prefix, &scoped);
                 }
             }

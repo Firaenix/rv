@@ -46,17 +46,6 @@ pub struct Bind {
     pub keys: Vec<KeyCode>,
 }
 
-/// The panes a bind can be scoped to. `writing`/`confirming`/`finding` are
-/// modal text handlers, not table-driven, and are rejected by name.
-pub const PANES: &[(&str, Context)] = &[
-    ("files", Context::Files),
-    ("commits", Context::Commits),
-    ("comments", Context::Comments),
-    ("flags", Context::Flags),
-    ("diff", Context::Diff),
-    ("stack", Context::Stack),
-];
-
 #[derive(Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 struct RawConfig {
@@ -206,14 +195,19 @@ fn leader_named(name: &str) -> Result<Leader> {
     )
 }
 
+/// `writing`/`confirming`/`finding` are modal text handlers, not
+/// table-driven, and are rejected by name.
 fn pane_named(name: &str) -> Result<Context> {
-    if let Some((_, pane)) = PANES.iter().find(|(known, _)| *known == name) {
+    if let Some(pane) = Context::PANES.iter().find(|pane| pane.pane_name() == name) {
         return Ok(*pane);
     }
     if matches!(name, "writing" | "confirming" | "finding") {
         bail!("{name:?} is a typing mode, not a pane — its keys are not remappable");
     }
-    let panes = PANES.iter().map(|(known, _)| *known).collect::<Vec<_>>();
+    let panes = Context::PANES
+        .iter()
+        .map(|pane| pane.pane_name())
+        .collect::<Vec<_>>();
     match closest(name, &panes) {
         Some(suggestion) => bail!("unknown pane {name:?} — did you mean {suggestion:?}?"),
         None => bail!("unknown pane {name:?} — the panes are {}", panes.join(", ")),

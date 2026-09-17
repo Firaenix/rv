@@ -29,6 +29,10 @@ impl App {
                 let last = self.stack_len().saturating_sub(1);
                 self.comment_index = self.comment_index.saturating_add(1).min(last);
             }
+            Focus::Flag => {
+                let last = self.flag_stack_len().saturating_sub(1);
+                self.flag_index = self.flag_index.saturating_add(1).min(last);
+            }
         }
         Ok(())
     }
@@ -43,6 +47,7 @@ impl App {
             },
             Focus::Diff => self.set_cursor_row(self.cursor_row().saturating_sub(1)),
             Focus::Stack => self.comment_index = self.comment_index.saturating_sub(1),
+            Focus::Flag => self.flag_index = self.flag_index.saturating_sub(1),
         }
         Ok(())
     }
@@ -151,7 +156,7 @@ impl App {
             Focus::Sidebar => {
                 self.sidebar_hscroll = self.sidebar_hscroll.saturating_add_signed(delta);
             }
-            Focus::Diff | Focus::Stack => {
+            Focus::Diff | Focus::Stack | Focus::Flag => {
                 self.diff_hscroll = self.diff_hscroll.saturating_add_signed(delta);
             }
         }

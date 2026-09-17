@@ -115,6 +115,7 @@ impl App {
             sidebar_tab: SidebarTab::Files,
             browser_index: 0,
             comment_index: 0,
+            flag_index: 0,
             collapsed,
             collapsed_dirs: HashSet::new(),
             tree: settings.tree.unwrap_or(false),

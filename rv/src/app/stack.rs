@@ -79,7 +79,8 @@ impl App {
         Ok(())
     }
 
-    /// Steps the cursor into the selected line's comment stack.
+    /// Steps the cursor into the selected line's comment stack — or, with the
+    /// row cursor resting on one of the line's flags, onto that flag.
     ///
     /// From [`Focus::Diff`] only. From the Files tab `Enter` is unbound, and
     /// from inside the stack it is inert rather than a jump back to the first
@@ -92,6 +93,10 @@ impl App {
         if self.focus != Focus::Diff {
             return;
         }
+        if let Some(position) = self.flag_under_cursor() {
+            self.enter_flag(position);
+            return;
+        }
         if self.comments_for_line(self.line_index()).is_empty() {
             self.status = NO_COMMENTS.to_owned();
             return;
@@ -100,11 +105,21 @@ impl App {
         self.comment_index = 0;
     }
 
+    /// Which of the selected line's flags the row cursor is resting on, if it
+    /// is on a flag row at all.
+    pub(super) fn flag_under_cursor(&self) -> Option<usize> {
+        let plan = self.plan();
+        let id = plan.rows.get(self.cursor_row())?.flag()?.id.clone();
+        self.flags_for_line(self.line_index())
+            .iter()
+            .position(|flag| flag.id == id)
+    }
+
     /// `Esc`: out of the stack, or one zoom level back out of the file list —
     /// wherever the reviewer has stepped *into* something, this is the step
     /// back, so nowhere is somewhere they can get stuck.
     pub(super) fn escape(&mut self) {
-        if self.focus == Focus::Stack {
+        if matches!(self.focus, Focus::Stack | Focus::Flag) {
             self.focus = Focus::Diff;
             return;
         }
@@ -124,7 +139,8 @@ impl App {
     /// shipped once and its test passed vacuously.
     pub(super) fn reset_stack(&mut self) {
         self.comment_index = 0;
-        if self.focus == Focus::Stack {
+        self.flag_index = 0;
+        if matches!(self.focus, Focus::Stack | Focus::Flag) {
             self.focus = Focus::Diff;
         }
     }
@@ -146,6 +162,15 @@ impl App {
                 }
             }
             total => self.comment_index = self.comment_index.min(total - 1),
+        }
+        match self.flag_stack_len() {
+            0 => {
+                self.flag_index = 0;
+                if self.focus == Focus::Flag {
+                    self.focus = Focus::Diff;
+                }
+            }
+            total => self.flag_index = self.flag_index.min(total - 1),
         }
     }
 

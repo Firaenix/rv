@@ -50,6 +50,14 @@ impl App {
                     self.comment_index.saturating_sub(step)
                 };
             }
+            Focus::Flag => {
+                let last = self.flag_stack_len().saturating_sub(1);
+                self.flag_index = if forward {
+                    self.flag_index.saturating_add(step).min(last)
+                } else {
+                    self.flag_index.saturating_sub(step)
+                };
+            }
         }
         Ok(())
     }
@@ -85,6 +93,13 @@ impl App {
                     0
                 };
             }
+            Focus::Flag => {
+                self.flag_index = if forward {
+                    self.flag_stack_len().saturating_sub(1)
+                } else {
+                    0
+                };
+            }
         }
         Ok(())
     }
@@ -95,7 +110,7 @@ impl App {
         let painted = self.painted.get();
         let pane = match self.focus {
             Focus::Sidebar => painted.sidebar,
-            Focus::Diff | Focus::Stack => painted.diff,
+            Focus::Diff | Focus::Stack | Focus::Flag => painted.diff,
         };
         let rows = usize::from(pane.height.saturating_sub(crate::ui::BORDER_ROWS));
         match rows {

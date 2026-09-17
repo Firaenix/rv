@@ -206,6 +206,9 @@ pub struct App {
     /// walks with `j`/`k`. Reset whenever the selection moves, so it can never
     /// address a comment on a line the reviewer has left.
     comment_index: usize,
+    /// The same for the line's flags, meaningful only while the focus is
+    /// [`Focus::Flag`].
+    flag_index: usize,
     /// The comments the reviewer has folded away, by id — keyed by id rather
     /// than position so that folding survives a delete, a save, or a walk to
     /// another file and back.

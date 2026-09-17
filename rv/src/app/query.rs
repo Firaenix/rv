@@ -167,6 +167,7 @@ impl App {
             Mode::Browse => match self.focus {
                 Focus::Diff => Context::Diff,
                 Focus::Stack => Context::Stack,
+                Focus::Flag => Context::Flag,
                 Focus::Sidebar => match self.sidebar_tab {
                     SidebarTab::Files => Context::Files,
                     SidebarTab::Commits => Context::Commits,

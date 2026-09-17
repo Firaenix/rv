@@ -166,20 +166,26 @@ impl App {
     }
 
     /// A click in the diff pane: the row under the pointer becomes the cursor,
-    /// and a box row takes the focus into that comment's stack.
+    /// a box row takes the focus into that comment's stack, and a flag row
+    /// onto that flag.
     ///
-    /// Which comment is read off the plan *before* the cursor moves, because
-    /// the click was resolved against that plan.
+    /// Which comment or flag is read off the plan *before* the cursor moves,
+    /// because the click was resolved against that plan.
     fn click_diff(&mut self, painted: &Layout, row: usize) {
         let Some(index) = ui::diff_row_at(self, painted.diff, row) else {
             return;
         };
-        let clicked = self.plan().rows.get(index).and_then(comment_of_row);
+        let plan = self.plan();
+        let clicked = plan.rows.get(index);
+        let comment = clicked
+            .and_then(Row::comment)
+            .map(|comment| comment.id.clone());
+        let flag = clicked.and_then(Row::flag).map(|flag| flag.id.clone());
         self.set_cursor_row(index);
         self.focus = Focus::Diff;
         // `set_cursor_row` has just put the stack cursor back at the top, so
         // this is the whole of the stack's state and cannot be stale.
-        if let Some(id) = clicked
+        if let Some(id) = comment
             && let Some(position) = self
                 .comments_for_line(self.line_index())
                 .iter()
@@ -187,6 +193,14 @@ impl App {
         {
             self.focus = Focus::Stack;
             self.comment_index = position;
+        }
+        if let Some(id) = flag
+            && let Some(position) = self
+                .flags_for_line(self.line_index())
+                .iter()
+                .position(|flag| flag.id == id)
+        {
+            self.enter_flag(position);
         }
     }
 
@@ -234,23 +248,5 @@ impl App {
             }
             _ => {}
         }
-    }
-}
-
-/// Which comment a row of the plan belongs to, or `None` for a row of the diff
-/// itself.
-///
-/// The mouse's question and nobody else's: the keyboard reaches a box by
-/// walking into it, so only a caller handed a row by a pointer has to turn one
-/// back into a comment.
-fn comment_of_row(row: &Row<'_>) -> Option<String> {
-    match row {
-        Row::Diff { .. } | Row::Flag { .. } | Row::FlagCollapsed { .. } => None,
-        Row::BoxTop { comment, .. }
-        | Row::BoxBody { comment, .. }
-        | Row::BoxRule { comment, .. }
-        | Row::BoxDiff { comment, .. }
-        | Row::BoxBottom { comment, .. }
-        | Row::BoxCollapsed { comment, .. } => Some(comment.id.clone()),
     }
 }

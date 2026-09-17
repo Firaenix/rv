@@ -26,6 +26,34 @@ impl App {
         self.flags_anchored_at(line)
     }
 
+    /// Which flag of the selected line the cursor is on. Only meaningful while
+    /// the focus is [`Focus::Flag`].
+    pub fn flag_index(&self) -> usize {
+        self.flag_index
+    }
+
+    /// The flag the cursor is on, or `None` off [`Focus::Flag`] — for the
+    /// reason [`App::selected_comment`] is `None` off the stack: `D` asks this,
+    /// and a flag the reviewer has not selected is the wrong one to delete.
+    pub fn selected_flag(&self) -> Option<&Flag> {
+        if self.focus != Focus::Flag {
+            return None;
+        }
+        self.flags_for_line(self.line_index())
+            .get(self.flag_index)
+            .copied()
+    }
+
+    pub(super) fn flag_stack_len(&self) -> usize {
+        self.flags_for_line(self.line_index()).len()
+    }
+
+    /// Steps the cursor onto the `position`-th flag of the selected line.
+    pub(super) fn enter_flag(&mut self, position: usize) {
+        self.focus = Focus::Flag;
+        self.flag_index = position;
+    }
+
     pub(super) fn flags_anchored_at(&self, line: &DiffLine) -> Vec<&Flag> {
         let Some(target) = self.anchor_target(line) else {
             return Vec::new();
@@ -81,12 +109,17 @@ impl App {
         Ok(())
     }
 
-    /// Which flags `a`-on-a-flag would acknowledge: the selected line's, from
-    /// the diff.
+    /// Which flags `A` would acknowledge: the one the cursor is on, in the
+    /// flag browser or on a flag; every one on the selected line, from the
+    /// diff.
     fn ack_targets(&self) -> Vec<(String, bool)> {
-        if self.focus == Focus::Sidebar {
-            return self
-                .browsed_flag()
+        let one = match self.focus {
+            Focus::Sidebar => Some(self.browsed_flag()),
+            Focus::Flag => Some(self.selected_flag()),
+            Focus::Diff | Focus::Stack => None,
+        };
+        if let Some(flag) = one {
+            return flag
                 .map(|flag| (flag.id.clone(), flag.acknowledged))
                 .into_iter()
                 .collect();

@@ -33,6 +33,7 @@ mod delete;
 mod editor;
 mod enginelabel;
 mod export;
+mod flag_focus;
 mod fold;
 mod fullcontext;
 mod hscroll;

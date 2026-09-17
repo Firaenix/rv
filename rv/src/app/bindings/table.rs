@@ -64,9 +64,14 @@ const LISTS: &[Context] = &[Context::Files, Context::Commits];
 /// The modes whose `Space` menu offers the comment verbs.
 const COMMENTED: &[Context] = &[Context::Stack, Context::Comments];
 
-/// The modes whose `Space` menu offers `d`: the comment verbs' modes, and the
-/// flag browser, where `d` deletes the browsed flag.
-const DELETABLE: &[Context] = &[Context::Stack, Context::Comments, Context::Flags];
+/// The modes whose `Space` menu offers `d`: the comment verbs' modes, and a
+/// flag — in the browser or under its line — where `d` deletes that flag.
+const DELETABLE: &[Context] = &[
+    Context::Stack,
+    Context::Comments,
+    Context::Flags,
+    Context::Flag,
+];
 
 /// A direct key or a non-contextual leader child: no `contexts`.
 const ANY: &[Context] = &[];

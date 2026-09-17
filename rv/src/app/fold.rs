@@ -72,6 +72,12 @@ impl App {
                 .map(|comment| comment.id.clone())
                 .into_iter()
                 .collect(),
+            (Focus::Flag, _) => self
+                .selected_flag()
+                .filter(|flag| !flag.acknowledged)
+                .map(|flag| flag.id.clone())
+                .into_iter()
+                .collect(),
             (Focus::Sidebar, SidebarTab::Flags) => self
                 .browsed_flag()
                 .filter(|flag| !flag.acknowledged)

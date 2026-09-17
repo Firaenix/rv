@@ -15,7 +15,6 @@
 //! the app's state.
 
 use std::collections::HashSet;
-use std::ops::Range;
 
 use rv_core::diff::DiffLine;
 use rv_core::diff::LineKind;
@@ -25,8 +24,10 @@ use rv_core::store::Flag;
 
 use crate::stale::Drift;
 
+mod plan;
 mod wrap;
 
+pub use plan::window;
 use wrap::wrap;
 
 /// What a reply is labelled with inside its comment's box. A reply is part of
@@ -303,57 +304,31 @@ fn before_after_rows<'a>(
     }
 }
 
-impl Plan<'_> {
-    /// The row holding diff line `line`, or `None` when the diff has no such
-    /// line.
+impl Row<'_> {
+    /// The comment a box row belongs to, or `None` for any other row.
     ///
-    /// Linear, like [`Plan::row_of_comment`]: a plan is rebuilt every frame and
-    /// a reviewed file is thousands of rows at the very outside, so an index
-    /// would cost more to keep correct than the scan costs to run.
-    pub fn row_of_line(&self, line: usize) -> Option<usize> {
-        self.rows
-            .iter()
-            .position(|row| matches!(row, Row::Diff { index, .. } if *index == line))
+    /// A pointer's question and `Enter`'s: the keyboard's `j`/`k` reach a box
+    /// by walking into it, so only a caller handed a row has to turn it back
+    /// into what it draws.
+    #[must_use]
+    pub fn comment(&self) -> Option<&Comment> {
+        match self {
+            Row::Diff { .. } | Row::Flag { .. } | Row::FlagCollapsed { .. } => None,
+            Row::BoxTop { comment, .. }
+            | Row::BoxBody { comment, .. }
+            | Row::BoxRule { comment, .. }
+            | Row::BoxDiff { comment, .. }
+            | Row::BoxBottom { comment, .. }
+            | Row::BoxCollapsed { comment, .. } => Some(comment),
+        }
     }
 
-    /// The diff line that owns row `row`, or `None` when the plan has no such
-    /// row.
-    ///
-    /// The inverse of [`Plan::row_of_line`] for a diff row, and the whole of
-    /// what makes the row cursor usable for a box row: see [`Row::line`].
-    pub fn line_of_row(&self, row: usize) -> Option<usize> {
-        self.rows.get(row).map(Row::line)
+    /// The flag a flag row belongs to, or `None` for any other row.
+    #[must_use]
+    pub fn flag(&self) -> Option<&Flag> {
+        match self {
+            Row::Flag { flag, .. } | Row::FlagCollapsed { flag, .. } => Some(flag),
+            _ => None,
+        }
     }
-
-    /// The row where the `comment_index`-th box under diff line `line` starts
-    /// — its top border, or the single row of a collapsed box — or `None` when
-    /// that line has no such box.
-    pub fn row_of_comment(&self, line: usize, comment_index: usize) -> Option<usize> {
-        self.rows
-            .iter()
-            .enumerate()
-            .filter(|(_, row)| match row {
-                Row::BoxTop { line: at, .. } | Row::BoxCollapsed { line: at, .. } => *at == line,
-                _ => false,
-            })
-            .nth(comment_index)
-            .map(|(row, _)| row)
-    }
-}
-
-/// The half-open range of rows to draw: `height` of them where there are that
-/// many, centered on `anchor` as far as the ends of the list allow.
-///
-/// The anchor is always inside the returned range when there is anything to
-/// return, so the cursor can never scroll off the pane it is meant to be
-/// steering.
-pub fn window(rows: usize, anchor: usize, height: usize) -> Range<usize> {
-    if rows == 0 || height == 0 {
-        return 0..0;
-    }
-    if rows <= height {
-        return 0..rows;
-    }
-    let start = anchor.saturating_sub(height / 2).min(rows - height);
-    start..start + height
 }

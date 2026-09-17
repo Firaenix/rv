@@ -319,7 +319,7 @@ left it.
 | `Shift`+`→` | The other way, to read the tail of lines wider than the pane; a trackpad's sideways flick does the same |
 | `]` | Next file, from whichever pane the cursor is in |
 | `[` | Previous file, likewise |
-| `Enter` | To the diff for the highlighted item: opens the file under the sidebar cursor (moving the focus to the diff), steps into the selected diff line's comment stack, or from the Comments tab jumps to the comment's code. It no longer fires on a directory or change row — `→` drills into those |
+| `Enter` | To the diff for the highlighted item: opens the file under the sidebar cursor (moving the focus to the diff), steps into the selected diff line's comment stack — or onto the flag the cursor is resting on — or from the Comments tab jumps to the comment's code. It no longer fires on a directory or change row — `→` drills into those |
 | `Tab` | To the next mode, looping: Files → Commits → Comments → Flags → Diff. A file row under a change shows *that change's* diff of it |
 | `s` | Fold a comment box away, or a directory in the file list — again to unfold |
 | `f` | On the diff: toggle full-file context (also `v` `f` from anywhere) |
@@ -327,7 +327,7 @@ left it.
 | `E` | Open the selected file at the cursor's line in `$EDITOR`, and come back to the review when it exits. Unset `$EDITOR` is reported in the status line rather than guessed at |
 | `+` | Widen the sidebar |
 | `_` | Narrow it |
-| `Esc` | Leave the comment stack, or back out of a zoomed directory |
+| `Esc` | Leave the comment stack or the flag, or back out of a zoomed directory |
 | `?` | What the keys do **here**: a contextual tip in the corner above the bar. `?` again unrolls the whole keymap; `Esc` or `q` closes either |
 | `q` | Quit |
 | `Ctrl+C` | Quit from anywhere, including out of a half-typed comment |
@@ -336,7 +336,7 @@ left it.
 | `R` | Resolve the comment under the cursor — again to reopen |
 | `X` | Tick the file off as **reviewed** — again to untick. From the file list it ticks the range's diff of the file, from a row under a change it ticks *that change's* diff of it, and on a change row it ticks every file the change touched. Ticking folds the file's comments and flags away; the tick shows as `✓` on the row and in the diff's title, `≈` once the file has changed under it |
 | `F` | (Diff) Flag the highlighted line: type why it deserves a look, `Enter` saves. A flag is attention, not feedback — it never blocks `rv status --check` |
-| `A` | (Diff) Acknowledge the line's flags — again to reopen them |
+| `A` | (Diff) Acknowledge the line's flags — again to reopen them. On a flag (**FLAG** in the bar, reached by clicking it or `Enter` on its row), just that one |
 | `/` | Find text in the diff: type, `Enter` jumps to the first match after the cursor, `Esc` cancels. Case-blind unless the query has a capital; every match is underlined |
 | `n` | The next match of the last `/` query, wrapping round the file |
 | `N` | The previous one |
@@ -435,8 +435,12 @@ the selected one — so `c` there comments on the code the box is about.
 
 `Enter` steps the cursor *into* the stack under the selected line, where `j` and
 `k` move between the boxes rather than between the lines; `Esc` or `←` steps
-back out. The selected box is drawn brighter and bold, so `d` and `s` visibly
-have a target.
+back out. The selected box is drawn brighter and bold, so `D` and `s` visibly
+have a target. The bar says **STACK** while you are there.
+
+A flag is the same kind of thing: click one, or press `Enter` with the row
+cursor on it, and the bar says **FLAG** — `j`/`k` walk the line's flags, the
+selected one is drawn bright, and `D`, `A` and `s` act on it alone.
 
 A reply — stored by a coding agent with `rv reply` — renders **inside the same
 box**, beneath the comment body, prefixed `reply:` and dimmed. It is part of the same conversation, and

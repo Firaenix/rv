@@ -53,6 +53,9 @@ pub enum Focus {
     /// Inside the selected line's comment stack, where `j`/`k` move between
     /// comments rather than between lines.
     Stack,
+    /// Inside the selected line's flags, the same way: `j`/`k` move between
+    /// flags, and `D`/`A`/`s` act on the one the cursor is on.
+    Flag,
 }
 
 /// What the event loop does next with the key it just handed over.
@@ -87,6 +90,8 @@ pub enum Context {
     Diff,
     /// Inside a line's comment stack.
     Stack,
+    /// On one of a line's flags.
+    Flag,
     /// Typing a comment.
     Writing,
     /// Answering a delete confirmation.
@@ -96,6 +101,19 @@ pub enum Context {
 }
 
 impl Context {
+    /// The panes a binding can be scoped to — every browse context, without
+    /// the modal typing states — in the order the keymap lists them. The one
+    /// list the config parser, the keymap and the `? ?` popup all read.
+    pub const PANES: &[Context] = &[
+        Context::Files,
+        Context::Commits,
+        Context::Comments,
+        Context::Flags,
+        Context::Diff,
+        Context::Stack,
+        Context::Flag,
+    ];
+
     /// The word the bar's mode segment shows.
     #[must_use]
     pub fn name(self) -> &'static str {
@@ -106,9 +124,42 @@ impl Context {
             Context::Flags => "FLAGS",
             Context::Diff => "DIFF",
             Context::Stack => "STACK",
+            Context::Flag => "FLAG",
             Context::Writing => "COMMENT",
             Context::Confirming => "CONFIRM",
             Context::Finding => "FIND",
+        }
+    }
+
+    /// The name a config file scopes a bind with — `[keys.stack]` — and the
+    /// heading the `? ?` popup groups a pane's keys under.
+    #[must_use]
+    pub fn pane_name(self) -> &'static str {
+        match self {
+            Context::Files => "files",
+            Context::Commits => "commits",
+            Context::Comments => "comments",
+            Context::Flags => "flags",
+            Context::Diff => "diff",
+            Context::Stack => "stack",
+            Context::Flag => "flag",
+            Context::Writing => "writing",
+            Context::Confirming => "confirming",
+            Context::Finding => "finding",
+        }
+    }
+
+    #[must_use]
+    pub fn pane_title(self) -> &'static str {
+        match self {
+            Context::Files => "Files list",
+            Context::Commits => "Commits list",
+            Context::Comments => "Comments list",
+            Context::Flags => "Flags list",
+            Context::Diff => "Diff",
+            Context::Stack => "Comment stack",
+            Context::Flag => "Flag",
+            Context::Writing | Context::Confirming | Context::Finding => "",
         }
     }
 
@@ -126,7 +177,7 @@ impl Context {
             Context::Comments | Context::Stack | Context::Writing => theme::COMMENT,
             // A flag is amber wherever it is drawn, and the alert yellow is
             // the nearest the palette has.
-            Context::Flags | Context::Confirming => theme::ALERT,
+            Context::Flags | Context::Flag | Context::Confirming => theme::ALERT,
         }
     }
 }

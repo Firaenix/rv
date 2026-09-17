@@ -1060,3 +1060,33 @@ rebound key, a moved leader and a pane-scoped addition all appear as the
 config left them. The fits-at-80x24 test became two — fits without
 scrolling at 100x30, every binding reachable by scrolling at 80x24 — since
 the popup is no longer held to a hand-tuned size.
+
+## 2026-09-17 — a flag you can stand on
+
+Clicking a comment box put the cursor *into* that comment — `STACK` in the
+bar, the box drawn bright, `D` aimed at it. Clicking a flag row did nothing
+of the kind: the row cursor landed on it, the bar still said `DIFF`, and `D`
+was aimed at the line's newest *comment*, which on a flagged line is usually
+none — so the `?` tip, which is generated from what is live, listed no
+delete at all. Nothing said the flag had been selected because nothing had
+selected it.
+
+**A flag is now a focus.** `Focus::Flag` sits beside `Focus::Stack` with a
+`flag_index` beside `comment_index`; a click on a flag row or `Enter` with
+the row cursor resting on one steps onto that flag, `j`/`k` walk the line's
+flags, `Esc`/`←` step back, and the bar reads `FLAG` in the flags' amber.
+The selected flag is drawn bright and bold, the way the selected box is, and
+`D`, `A` and `s` act on it alone — where from the diff `A` still takes the
+whole line. The window anchors on the flag while the cursor is on it, so a
+flag under a tall stack cannot scroll away from the keys steering it.
+
+Adding the context showed up a copy: the list of panes a bind can be scoped
+to lived in three places — the config parser, the keymap and the `? ?`
+popup — each spelling the same six names. They are one `Context::PANES` now,
+with the config name and the popup heading as methods on the context, so a
+seventh pane is one line in one file. `rows.rs` crossed 400 lines with
+`row_of_flag` and split its `Plan` lookups into `rows/plan.rs`.
+
+`flag_focus::the_tip_lists_delete_on_a_flag_and_not_on_its_line` is the
+test the report asked for: `?` on the bare line shows no delete, `?` on the
+flag shows `D delete` and `A ack flag`, and neither is hand-listed anywhere.

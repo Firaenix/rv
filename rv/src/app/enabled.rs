@@ -65,7 +65,7 @@ impl App {
             CursorCommand::ScrollRight => true,
             CursorCommand::ScrollLeft => match self.focus {
                 Focus::Sidebar => self.sidebar_hscroll > 0,
-                Focus::Diff | Focus::Stack => self.diff_hscroll > 0,
+                Focus::Diff | Focus::Stack | Focus::Flag => self.diff_hscroll > 0,
             },
             CursorCommand::WordLeft | CursorCommand::WordRight => {
                 self.focus == Focus::Diff && self.selected_line().is_some()
@@ -97,11 +97,15 @@ impl App {
                     self.nodes().get(self.sidebar_row).map(|node| &node.kind),
                     Some(NodeKind::Dir { .. } | NodeKind::Commit { .. } | NodeKind::Up)
                 ),
-                (Focus::Diff, _) => !self.comments_for_line(self.line_index()).is_empty(),
-                (Focus::Stack, _) => false,
+                (Focus::Diff, _) => {
+                    self.flag_under_cursor().is_some()
+                        || !self.comments_for_line(self.line_index()).is_empty()
+                }
+                (Focus::Stack | Focus::Flag, _) => false,
             },
             PaneCommand::BackOut => {
-                self.focus == Focus::Stack || (self.focus == Focus::Sidebar && self.zoomed())
+                matches!(self.focus, Focus::Stack | Focus::Flag)
+                    || (self.focus == Focus::Sidebar && self.zoomed())
             }
         }
     }
@@ -145,23 +149,25 @@ impl App {
         match command {
             // A write is about the diff line under the cursor, live only where
             // that cursor is the one being steered.
-            CommentCommand::Write => {
-                matches!(self.focus, Focus::Diff | Focus::Stack) && self.selected_line().is_some()
-            }
+            CommentCommand::Write => self.on_a_line(),
             CommentCommand::Delete => {
-                self.delete_target().is_some()
-                    || (self.focus == Focus::Sidebar && self.browsed_flag().is_some())
+                self.delete_target().is_some() || self.flag_delete_target().is_some()
             }
             CommentCommand::Resolve | CommentCommand::Abandon => self.settle_target().is_some(),
             // Two things under one key, so two ways for it to have a target.
             CommentCommand::ToggleFold => {
                 self.sidebar_fold_key().is_some() || !self.fold_targets().is_empty()
             }
-            CommentCommand::Flag => {
-                matches!(self.focus, Focus::Diff | Focus::Stack) && self.selected_line().is_some()
-            }
+            CommentCommand::Flag => self.on_a_line(),
             CommentCommand::Acknowledge => self.can_acknowledge(),
         }
+    }
+
+    /// Whether a write is about a diff line under the cursor: live only where
+    /// that cursor is the one being steered.
+    fn on_a_line(&self) -> bool {
+        matches!(self.focus, Focus::Diff | Focus::Stack | Focus::Flag)
+            && self.selected_line().is_some()
     }
 
     fn app_enabled(&self, command: AppCommand) -> bool {
@@ -192,6 +198,7 @@ impl App {
             },
             Focus::Diff => self.cursor_row() + 1 < self.row_count(),
             Focus::Stack => self.comment_index + 1 < self.stack_len(),
+            Focus::Flag => self.flag_index + 1 < self.flag_stack_len(),
         }
     }
     fn hunk_ahead(&self, forward: bool) -> bool {
@@ -217,6 +224,7 @@ impl App {
             },
             Focus::Diff => self.cursor_row() > 0,
             Focus::Stack => self.comment_index > 0,
+            Focus::Flag => self.flag_index > 0,
         }
     }
 }

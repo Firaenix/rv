@@ -4,7 +4,6 @@ use anyhow::Result;
 use anyhow::bail;
 use crossterm::event::KeyCode;
 
-use super::ALL_PANES;
 use super::Keymap;
 use super::keys_label;
 use super::spec;
@@ -38,7 +37,7 @@ impl Keymap {
                 // A scoped steal narrows the loser out of the winner's panes,
                 // so the key keeps meaning what it always did elsewhere.
                 if loser.contexts.is_empty() {
-                    loser.contexts = ALL_PANES.to_vec();
+                    loser.contexts = Context::PANES.to_vec();
                 }
                 loser.contexts.retain(|pane| !user_contexts.contains(pane));
                 loser.contexts.is_empty()

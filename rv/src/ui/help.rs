@@ -41,16 +41,6 @@ const HELP_GAP: usize = 2;
 /// What the last row of a scrolled keymap says.
 const MORE: &str = "… j/k for more";
 
-/// The panes a binding can be scoped to, in the order the keymap lists them.
-const PANES: &[Context] = &[
-    Context::Files,
-    Context::Commits,
-    Context::Comments,
-    Context::Flags,
-    Context::Diff,
-    Context::Stack,
-];
-
 pub(super) enum HelpRow {
     /// The empty row before a heading, so a section does not sit on the
     /// one above it.
@@ -81,18 +71,6 @@ fn leader_label(app: &App, leader: Leader) -> String {
     }
 }
 
-fn pane_title(context: Context) -> &'static str {
-    match context {
-        Context::Files => "Files list",
-        Context::Commits => "Commits list",
-        Context::Comments => "Comments list",
-        Context::Flags => "Flags list",
-        Context::Diff => "Diff",
-        Context::Stack => "Comment stack",
-        Context::Writing | Context::Confirming | Context::Finding => "",
-    }
-}
-
 fn key_row(binding: &RuntimeBinding, app: &App) -> HelpRow {
     HelpRow::Key {
         chord: chord(binding, app),
@@ -118,7 +96,7 @@ fn help_rows(app: &App) -> Vec<HelpRow> {
         rows.push(HelpRow::Heading(group.heading().to_owned()));
         rows.extend(global.into_iter().map(|binding| key_row(binding, app)));
     }
-    for pane in PANES {
+    for pane in Context::PANES {
         let scoped: Vec<&RuntimeBinding> = Group::ALL
             .iter()
             .flat_map(|group| {
@@ -131,7 +109,7 @@ fn help_rows(app: &App) -> Vec<HelpRow> {
             continue;
         }
         rows.push(HelpRow::Blank);
-        rows.push(HelpRow::Heading(pane_title(*pane).to_owned()));
+        rows.push(HelpRow::Heading(pane.pane_title().to_owned()));
         rows.extend(scoped.into_iter().map(|binding| key_row(binding, app)));
     }
     rows

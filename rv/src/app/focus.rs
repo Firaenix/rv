@@ -15,7 +15,7 @@ impl App {
     /// level of the tree the reviewer drilled into with `→`.
     pub(super) fn focus_left(&mut self) -> Result<()> {
         match self.focus {
-            Focus::Stack => self.focus = Focus::Diff,
+            Focus::Stack | Focus::Flag => self.focus = Focus::Diff,
             Focus::Diff => self.focus = Focus::Sidebar,
             Focus::Sidebar => match self.sidebar_tab {
                 // The comment browser has no tree to climb, so `←` leads out to
@@ -52,7 +52,7 @@ impl App {
     /// the commits list, the comment browser, the flag browser, then the diff. A comment stack
     /// counts as the diff it lives in, so `Tab` from it lands on the files list.
     pub(super) fn cycle_mode(&mut self) -> Result<()> {
-        let on_diff = matches!(self.focus, Focus::Diff | Focus::Stack);
+        let on_diff = matches!(self.focus, Focus::Diff | Focus::Stack | Focus::Flag);
         match (on_diff, self.sidebar_tab) {
             (true, _) => self.goto_mode(SidebarTab::Files),
             (false, SidebarTab::Files) => self.goto_mode(SidebarTab::Commits),

@@ -10,6 +10,7 @@ use anyhow::Context as _;
 use anyhow::Result;
 use crossterm::event::KeyCode;
 use rv_core::store::Comment;
+use rv_core::store::Flag;
 
 use super::Action;
 use super::App;
@@ -33,6 +34,17 @@ impl App {
             // `browsed_comment` is already `None` on the Files tab, so this
             // covers both of the sidebar's shapes.
             Focus::Sidebar => self.browsed_comment(),
+            Focus::Flag => None,
+        }
+    }
+
+    /// Which flag `D` would ask about: the one the cursor is on, in the flag
+    /// browser or on a flag under its line. The diff's `D` takes a comment.
+    pub(super) fn flag_delete_target(&self) -> Option<&Flag> {
+        match (self.focus, self.sidebar_tab) {
+            (Focus::Sidebar, SidebarTab::Flags) => self.browsed_flag(),
+            (Focus::Flag, _) => self.selected_flag(),
+            _ => None,
         }
     }
 
@@ -51,10 +63,13 @@ impl App {
     ///
     /// With nothing to delete there is no question worth asking.
     pub(super) fn begin_delete(&mut self) {
-        // In the Flags tab `d` takes the browsed flag, through the same
-        // question; the confirmation removes whichever kind the id names.
-        if self.focus == Focus::Sidebar && self.sidebar_tab == SidebarTab::Flags {
-            let Some(flag) = self.browsed_flag() else {
+        // On a flag `d` takes that flag, through the same question; the
+        // confirmation removes whichever kind the id names.
+        if matches!(
+            (self.focus, self.sidebar_tab),
+            (Focus::Sidebar, SidebarTab::Flags) | (Focus::Flag, _)
+        ) {
+            let Some(flag) = self.flag_delete_target() else {
                 self.status = NO_FLAGS_IN_REVIEW.to_owned();
                 return;
             };
@@ -120,6 +135,7 @@ impl App {
             self.collapsed.remove(&id);
             self.clamp_browser();
             self.resettle_cursor(line);
+            self.sync_stack();
             self.status = if removed {
                 format!("deleted the flag at {label}")
             } else {
