@@ -18,7 +18,7 @@ fn the_mouse_is_inert_while_a_comment_is_being_typed() {
     let sidebar = sidebar_pane_row(&app, 100, 24, 1);
     let divider = divider_column(&app, 100, 24);
 
-    app.on_key(KeyCode::Char('c')).expect("open the box");
+    app.on_key(KeyCode::Char('C')).expect("open the box");
     let before = (
         app.focus(),
         app.line_index(),

@@ -28,8 +28,8 @@ pub const BINDINGS: &[Binding] = &concat();
 
 /// Concatenates the two halves of the table at compile time. Sizes are spelled
 /// out because stable Rust cannot add const generics in an array length.
-const fn concat() -> [Binding; 69] {
-    let mut out = [HEAD[0]; 69];
+const fn concat() -> [Binding; 72] {
+    let mut out = [HEAD[0]; 72];
     let mut n = 0;
     let mut i = 0;
     while i < HEAD.len() {

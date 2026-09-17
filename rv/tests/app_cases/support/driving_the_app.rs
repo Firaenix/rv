@@ -136,15 +136,7 @@ pub fn press_n(app: &mut App, key: KeyCode, times: usize) {
 /// write — a test that means "start a comment" should not depend on which other
 /// verbs happen to be live where the cursor is.
 pub fn comment(app: &mut App) -> Action {
-    let action = press(app, KeyCode::Char('c'));
-    // On a line whose only live comment verb is the write, the first `c`
-    // smart-collapses straight into the comment box; otherwise it opened the
-    // menu and the second `c` is the write. Pressing again only when the menu is
-    // still pending keeps a literal `c` out of the buffer.
-    if app.pending_leader().is_some() {
-        return press(app, KeyCode::Char('c'));
-    }
-    action
+    press(app, KeyCode::Char('C'))
 }
 
 /// Walks the cursor down onto diff line `index` with `j`, the way a reviewer

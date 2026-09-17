@@ -59,26 +59,15 @@ pub(super) const TOP_BORDER: u16 = 1;
 /// content row one past the last row [`crate::ui`] paints.
 pub(super) const BOTTOM_BORDER: u16 = 1;
 
-/// How much of the area the help popup covers, in tenths. Large enough to hold
-/// the keymap, small enough that the panes stay visible around it — a reviewer
-/// reading about a key wants to see what it would act on.
+/// The `? ?` keymap takes every row above the bar. It covered nine tenths of
+/// the screen while the table was small enough to pack by hand around a
+/// two-row frame of the panes; now that it is dealt into columns from the
+/// runtime keymap, **a keymap you must scroll to read is a keymap you will
+/// not read** outranks seeing the panes round its edge, and the bar it sits
+/// on still names where the cursor is.
 ///
-/// Raised twice as the keymap grew, and by the same argument each time: **a
-/// keymap you must scroll to read is a keymap you will not read**, which outranks
-/// keeping the panes visible around it.
-///
-/// At seven tenths a 24-row terminal gave the popup fourteen content rows and the
-/// groups could not be dealt into two columns without splitting one; at eight,
-/// sixteen rows, and twenty-two bindings in five groups need seventeen. Nine
-/// leaves a two-row, four-column frame of the panes showing, which is enough to
-/// see what a key would act on.
-///
-/// The alternative was abbreviating the manual — `previous symbol` to
-/// `prev symbol` — to make three narrower columns fit. A keymap that has to be
-/// decoded is worth less than two rows of visible diff.
-const POPUP_TENTHS: u16 = 9;
-
-/// The same for a toast, which is one line of text and its border.
+/// A toast covers this much of the area, in tenths: one line of text and
+/// its border.
 const TOAST_TENTHS: u16 = 6;
 
 /// Rows a toast occupies: its two borders and the message.
@@ -232,7 +221,12 @@ pub fn layout(area: Rect, split: Split, chrome: Chrome) -> Layout {
         bar,
         popup: match chrome.help {
             HelpChrome::Closed => None,
-            HelpChrome::Full => Some(centered(area, POPUP_TENTHS)),
+            HelpChrome::Full => Some(Rect::new(
+                area.x,
+                area.y,
+                area.width,
+                bar.y.saturating_sub(area.y),
+            )),
             // In the corner, sitting on the bar so it points at the `? help`
             // hint underneath it — the key that grew it is the key it names.
             HelpChrome::Tip { rows, columns } => Some(corner(area, bar, rows, columns)),
@@ -270,22 +264,6 @@ fn corner(area: Rect, bar: Rect, rows: u16, columns: u16) -> Rect {
     )
 }
 
-/// A rectangle `tenths` of the area's size, centred in it.
-fn centered(area: Rect, tenths: u16) -> Rect {
-    // Trimmed to the area's own parity, so the margin left over is even and can
-    // be split in half exactly. Without it a popup one row off the area's parity
-    // sits a row higher than it sits low, which reads as a mis-drawn frame
-    // rather than as a rounding decision nobody made.
-    let width = even_margin(area.width, area.width * tenths / 10);
-    let height = even_margin(area.height, area.height * tenths / 10);
-    Rect::new(
-        area.x + (area.width - width) / 2,
-        area.y + (area.height - height) / 2,
-        width,
-        height,
-    )
-}
-
 /// Where a tooltip hanging off sidebar `row` goes: in the diff pane, top-aligned
 /// with the row, `rows` tall and as wide as the pane allows.
 ///
@@ -308,15 +286,6 @@ fn beside(sidebar: Rect, diff: Rect, row: u16, rows: u16) -> Option<Rect> {
         .saturating_add(row)
         .min(diff.bottom().saturating_sub(height));
     Some(Rect::new(diff.x, top.max(diff.y), diff.width, height))
-}
-
-/// `size`, less one where that is what makes `whole - size` even.
-fn even_margin(whole: u16, size: u16) -> u16 {
-    if (whole - size).is_multiple_of(2) {
-        size
-    } else {
-        size.saturating_sub(1)
-    }
 }
 
 /// Where an alert floats: top-centre, three rows tall, over whatever the panes

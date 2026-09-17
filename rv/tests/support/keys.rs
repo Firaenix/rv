@@ -27,14 +27,9 @@ pub fn select_line(app: &mut App, wanted: impl Fn(&DiffLine) -> bool) -> DiffLin
     app.displayed_lines()[index].clone()
 }
 
-/// Presses `c`, types `body`, and presses Enter — one whole comment.
+/// Presses `C`, types `body`, and presses Enter — one whole comment.
 pub fn write_comment(app: &mut App, body: &str) {
-    app.on_key(KeyCode::Char('c')).expect("comment leader");
-    // The first `c` smart-collapses to the write when it is the only live
-    // comment verb; press again only if it merely opened the menu.
-    if app.pending_leader().is_some() {
-        app.on_key(KeyCode::Char('c')).expect("enter comment mode");
-    }
+    app.on_key(KeyCode::Char('C')).expect("enter comment mode");
     type_text(app, body);
     app.on_key(KeyCode::Enter).expect("save the comment");
 }

@@ -29,16 +29,16 @@ fn ctrl_c_quits_instead_of_opening_a_comment() {
 }
 
 #[test]
-fn a_plain_c_still_opens_a_comment() {
+fn a_shift_c_still_opens_a_comment() {
     let workspace = Fixture::new();
     let mut app = workspace.app();
 
     let action = app
-        .on_key_event(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE))
-        .expect("c");
+        .on_key_event(KeyEvent::new(KeyCode::Char('C'), KeyModifiers::SHIFT))
+        .expect("C");
 
     assert_eq!(action, Action::Continue);
-    assert_eq!(app.mode(), Mode::Comment, "plain c is unchanged");
+    assert_eq!(app.mode(), Mode::Comment, "shift-c is unchanged");
 }
 
 /// The abort is an abort from anywhere: a half-typed comment is not a state a
@@ -47,7 +47,7 @@ fn a_plain_c_still_opens_a_comment() {
 fn ctrl_c_aborts_from_inside_a_half_typed_comment() {
     let workspace = Fixture::new();
     let mut app = workspace.app();
-    app.on_key(KeyCode::Char('c')).expect("enter comment mode");
+    app.on_key(KeyCode::Char('C')).expect("enter comment mode");
     type_text(&mut app, "half a thought");
 
     let action = app

@@ -1,3 +1,17 @@
+//! The `?` tip and the `? ?` keymap, both drawn from the runtime keymap —
+//! the shipped table plus whatever `keybindings.toml` changed — so a key can
+//! be rebound, added or unbound without either popup needing to be told.
+//!
+//! The keymap is dealt into **sections**: everything that works everywhere,
+//! grouped as the binding table groups it, and then one section per pane for
+//! the keys that only mean something there. A key that acts in two panes is
+//! listed under both: the reader is looking for "what can I press *here*",
+//! and a row that says so twice costs less than one they have to find.
+//!
+//! The sections flow into as many columns as the popup is wide, top to
+//! bottom then left to right, each column as wide as its own rows need. A
+//! keymap taller than the popup scrolls. Nothing here is packed by hand.
+
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Modifier;
@@ -13,14 +27,32 @@ use ratatui::widgets::Paragraph;
 use super::BORDER_ROWS;
 use super::text::clip_spans;
 use crate::app::App;
+use crate::app::Context;
 use crate::app::Group;
 use crate::app::Leader;
 use crate::app::keymap::RuntimeBinding;
 
+mod flow;
+
+use flow::flow;
+
 const HELP_GAP: usize = 2;
 
-enum HelpRow {
-    Heading(&'static str),
+/// What the last row of a scrolled keymap says.
+const MORE: &str = "… j/k for more";
+
+/// The panes a binding can be scoped to, in the order the keymap lists them.
+const PANES: &[Context] = &[
+    Context::Files,
+    Context::Commits,
+    Context::Comments,
+    Context::Flags,
+    Context::Diff,
+    Context::Stack,
+];
+
+pub(super) enum HelpRow {
+    Heading(String),
     Key {
         chord: String,
         what: String,
@@ -28,88 +60,113 @@ enum HelpRow {
     },
 }
 
-fn row_chord(row: &HelpRow) -> Option<&str> {
-    match row {
-        HelpRow::Key { chord, .. } => Some(chord),
-        HelpRow::Heading(_) => None,
-    }
-}
-
-fn rt_chord(binding: &RuntimeBinding, app: &App) -> String {
+/// The key sequence that runs `binding`, as the reviewer would type it: the
+/// leader's *runtime* key, then the binding's own.
+fn chord(binding: &RuntimeBinding, app: &App) -> String {
     match binding.leader {
-        Some(Leader::Mode) => format!("⎵ {}", binding.keys_label),
-        Some(leader) => {
-            let key = app.keymap().leader_key(leader);
-            let label = if key == ' ' {
-                "Space".to_owned()
-            } else {
-                key.to_string()
-            };
-            format!("{} {}", label, binding.keys_label)
-        }
+        Some(leader) => format!("{} {}", leader_label(app, leader), binding.keys_label),
         None => binding.keys_label.clone(),
     }
 }
 
-struct Layer {
-    keys: &'static str,
-    what: &'static str,
+fn leader_label(app: &App, leader: Leader) -> String {
+    let key = app.keymap().leader_key(leader);
+    if key == ' ' {
+        "Space".to_owned()
+    } else {
+        key.to_string()
+    }
 }
 
-const LAYERS: &[Layer] = &[
-    Layer {
-        keys: "↑↓",
-        what: "move",
-    },
-    Layer {
-        keys: "←→",
-        what: "out / in",
-    },
-    Layer {
-        keys: "Tab",
-        what: "next mode",
-    },
-    Layer {
-        keys: "Space",
-        what: "actions here …",
-    },
-    Layer {
-        keys: "m",
-        what: "mode …",
-    },
-    Layer {
-        keys: "g",
-        what: "goto …",
-    },
-    Layer {
-        keys: "c",
-        what: "comment …",
-    },
-    Layer {
-        keys: "v",
-        what: "view …",
-    },
-    Layer {
-        keys: "? ?",
-        what: "all keys",
-    },
-];
+fn pane_title(context: Context) -> &'static str {
+    match context {
+        Context::Files => "Files list",
+        Context::Commits => "Commits list",
+        Context::Comments => "Comments list",
+        Context::Flags => "Flags list",
+        Context::Diff => "Diff",
+        Context::Stack => "Comment stack",
+        Context::Writing | Context::Confirming | Context::Finding => "",
+    }
+}
+
+fn key_row(binding: &RuntimeBinding, app: &App) -> HelpRow {
+    HelpRow::Key {
+        chord: chord(binding, app),
+        what: binding.what.to_owned(),
+        enabled: app.rt_binding_enabled(binding),
+    }
+}
+
+/// Every row of the keymap in reading order: the global keys under their
+/// group headings, then each pane's own keys under the pane's heading.
+fn help_rows(app: &App) -> Vec<HelpRow> {
+    let bindings = app.keymap().bindings();
+    let mut rows = Vec::new();
+    for group in Group::ALL {
+        let global: Vec<&RuntimeBinding> = bindings
+            .iter()
+            .filter(|binding| binding.group == *group && binding.contexts.is_empty())
+            .collect();
+        if global.is_empty() {
+            continue;
+        }
+        rows.push(HelpRow::Heading(group.heading().to_owned()));
+        rows.extend(global.into_iter().map(|binding| key_row(binding, app)));
+    }
+    for pane in PANES {
+        let scoped: Vec<&RuntimeBinding> = Group::ALL
+            .iter()
+            .flat_map(|group| {
+                bindings.iter().filter(move |binding| {
+                    binding.group == *group && binding.contexts.contains(pane)
+                })
+            })
+            .collect();
+        if scoped.is_empty() {
+            continue;
+        }
+        rows.push(HelpRow::Heading(pane_title(*pane).to_owned()));
+        rows.extend(scoped.into_iter().map(|binding| key_row(binding, app)));
+    }
+    rows
+}
+
+/// The tip's rows: the leaders, with the keys they open on now, and the keys
+/// that mean something only where the cursor is.
+fn tip_rows(app: &App) -> Vec<(String, String)> {
+    let context = app.context();
+    let mut rows: Vec<(String, String)> = Leader::ALL
+        .iter()
+        .map(|leader| (leader_label(app, *leader), format!("{} …", leader.title())))
+        .collect();
+    rows.extend(
+        app.keymap()
+            .bindings()
+            .iter()
+            .filter(|binding| binding.leader.is_none() && binding.contexts.contains(&context))
+            .map(|binding| (binding.keys_label.clone(), binding.what.to_owned())),
+    );
+    rows.push(("? ?".to_owned(), "all keys".to_owned()));
+    rows
+}
 
 #[must_use]
 pub fn tip_size(app: &App) -> (u16, u16) {
-    let keys = LAYERS
+    let rows = tip_rows(app);
+    let keys = rows
         .iter()
-        .map(|l| l.keys.chars().count())
+        .map(|(k, _)| k.chars().count())
         .max()
         .unwrap_or(0);
-    let what = LAYERS
+    let what = rows
         .iter()
-        .map(|l| l.what.chars().count())
+        .map(|(_, w)| w.chars().count())
         .max()
         .unwrap_or(0);
     let inner = (keys + HELP_GAP + what).max(tip_title(app).chars().count());
     (
-        u16::try_from(LAYERS.len())
+        u16::try_from(rows.len())
             .unwrap_or(u16::MAX)
             .saturating_add(BORDER_ROWS),
         u16::try_from(inner)
@@ -123,24 +180,25 @@ fn tip_title(app: &App) -> String {
 }
 
 pub(super) fn draw_tip(frame: &mut Frame, app: &App, area: Rect) {
-    let keys = LAYERS
+    let rows = tip_rows(app);
+    let keys = rows
         .iter()
-        .map(|l| l.keys.chars().count())
+        .map(|(k, _)| k.chars().count())
         .max()
         .unwrap_or(0);
     let width = usize::from(area.width.saturating_sub(BORDER_ROWS)).saturating_sub(1);
-    let lines: Vec<Line<'static>> = LAYERS
+    let lines: Vec<Line<'static>> = rows
         .iter()
-        .map(|layer| {
+        .map(|(key, what)| {
             clip_spans(
                 vec![
                     Span::raw(" "),
                     Span::styled(
-                        format!("{:<keys$}", layer.keys),
+                        format!("{key:<keys$}"),
                         Style::default().add_modifier(Modifier::BOLD),
                     ),
                     Span::raw(" ".repeat(HELP_GAP)),
-                    Span::raw(layer.what),
+                    Span::raw(what.clone()),
                 ],
                 width,
             )
@@ -173,43 +231,43 @@ pub(super) fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 fn help_text(app: &App, width: usize, height: usize) -> Text<'static> {
-    let blocks = help_blocks(app);
-    let shown = || blocks.iter().flatten().filter_map(row_chord);
-    let keys = shown().map(|c| c.chars().count()).max().unwrap_or(0);
-    let what = blocks
-        .iter()
-        .flatten()
-        .filter_map(|row| match row {
-            HelpRow::Key { what, .. } => Some(what.chars().count()),
-            _ => None,
-        })
-        .max()
-        .unwrap_or(0);
-    let column = keys + HELP_GAP + what;
-    let columns = ((width + HELP_GAP) / (column + HELP_GAP)).max(1);
-
-    let packed = (1..=height)
-        .find_map(|rows| pack(&blocks, rows).filter(|packing| packing.len() <= columns));
-    let packed = packed.unwrap_or_else(|| scrolled(&blocks, height, app.help_scroll()));
-
-    let rows = packed.iter().map(Vec::len).max().unwrap_or(0);
-    let lines = (0..rows)
+    let all = help_rows(app);
+    if height == 0 || width == 0 {
+        return Text::default();
+    }
+    // A keymap that does not fit gives its last row to the scroll hint
+    // rather than drawing a row and then writing over it.
+    let mut flowed = flow(&all, height, width, HELP_GAP, app.help_scroll());
+    if flowed.truncated && height > 1 {
+        flowed = flow(&all, height - 1, width, HELP_GAP, app.help_scroll());
+    }
+    let lines = (0..height)
         .map(|row| {
-            let mut spans = Vec::with_capacity(packed.len() * 3);
-            for (index, cells) in packed.iter().enumerate() {
+            let mut spans = Vec::with_capacity(flowed.columns.len() * 3);
+            for (index, column) in flowed.columns.iter().enumerate() {
                 if index > 0 {
                     spans.push(Span::raw(" ".repeat(HELP_GAP)));
                 }
-                spans.extend(help_cell(cells.get(row), keys, what));
+                spans.extend(help_cell(
+                    column.rows.get(row).copied().flatten(),
+                    column.keys,
+                    column.width(HELP_GAP),
+                ));
             }
             clip_spans(spans, width)
         })
         .collect::<Vec<_>>();
-    Text::from(lines)
+    let mut text = Text::from(lines);
+    if flowed.truncated
+        && let Some(last) = text.lines.last_mut()
+    {
+        *last = Line::styled(MORE, Style::default().add_modifier(Modifier::DIM));
+    }
+    text
 }
 
-fn help_cell(row: Option<&&HelpRow>, keys_w: usize, what_w: usize) -> Vec<Span<'static>> {
-    let column = keys_w + HELP_GAP + what_w;
+fn help_cell(row: Option<&HelpRow>, keys_w: usize, column: usize) -> Vec<Span<'static>> {
+    let what_w = column.saturating_sub(keys_w + HELP_GAP);
     match row {
         None => vec![Span::raw(" ".repeat(column))],
         Some(HelpRow::Heading(heading)) => vec![Span::styled(
@@ -237,56 +295,4 @@ fn help_cell(row: Option<&&HelpRow>, keys_w: usize, what_w: usize) -> Vec<Span<'
             ]
         }
     }
-}
-
-fn help_blocks(app: &App) -> Vec<Vec<HelpRow>> {
-    Group::ALL
-        .iter()
-        .map(|group| {
-            let mut rows = vec![HelpRow::Heading(group.heading())];
-            rows.extend(
-                app.keymap()
-                    .bindings()
-                    .iter()
-                    .filter(|binding| {
-                        binding.group == *group && binding.leader != Some(Leader::Context)
-                    })
-                    .map(|binding| HelpRow::Key {
-                        chord: rt_chord(binding, app),
-                        what: binding.what.to_owned(),
-                        enabled: app.rt_binding_enabled(binding),
-                    }),
-            );
-            rows
-        })
-        .filter(|rows| rows.len() > 1)
-        .collect()
-}
-
-fn pack(blocks: &[Vec<HelpRow>], rows: usize) -> Option<Vec<Vec<&HelpRow>>> {
-    if rows == 0 {
-        return None;
-    }
-    let mut columns: Vec<Vec<&HelpRow>> = vec![Vec::new()];
-    for block in blocks {
-        if block.len() > rows {
-            return None;
-        }
-        let last = columns.last_mut().expect("there is always one column");
-        if last.len() + block.len() > rows {
-            columns.push(Vec::new());
-        }
-        columns
-            .last_mut()
-            .expect("there is always one column")
-            .extend(block.iter());
-    }
-    Some(columns)
-}
-
-fn scrolled(blocks: &[Vec<HelpRow>], height: usize, scroll: usize) -> Vec<Vec<&HelpRow>> {
-    let flat: Vec<&HelpRow> = blocks.iter().flatten().collect();
-    let start = scroll.min(flat.len().saturating_sub(height));
-    let end = start.saturating_add(height).min(flat.len());
-    vec![flat[start..end].to_vec()]
 }

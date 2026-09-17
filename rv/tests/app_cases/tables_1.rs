@@ -77,7 +77,8 @@ use crate::support::*;
 // is its only live child there, so the menu is skipped and the box opens, the
 // bar naming the choice. `g` and `v` have several children or none live under
 // the cursor, so they open their submenu and stay in Browse.
-#[case::comment_collapses_to_write(KeyCode::Char('c'), Action::Continue, Mode::Comment, Focus::Diff, (0, 0), Some("c → write"))]
+#[case::comment_leader_opens_its_menu(KeyCode::Char('c'), Action::Continue, Mode::Browse, Focus::Diff, (0, 0), None)]
+#[case::shift_c_writes(KeyCode::Char('C'), Action::Continue, Mode::Comment, Focus::Diff, (0, 0), None)]
 #[case::goto_leader(KeyCode::Char('g'), Action::Continue, Mode::Browse, Focus::Diff, (0, 0), None)]
 #[case::view_leader(KeyCode::Char('v'), Action::Continue, Mode::Browse, Focus::Diff, (0, 0), None)]
 // The dropped vim letters are inert now.
@@ -162,10 +163,9 @@ fn browse_keybindings(
     );
     assert!(!app.tree_view(), "{key:?} reshaped the file list");
     assert_eq!(app.sort(), Sort::Natural, "{key:?} reordered the file list");
-    // `g` and `v` open a submenu and wait; `c` smart-collapses straight to the
-    // write here, so it leaves no menu pending. Every other key clears back to
-    // browsing.
-    let opens_menu = matches!(key, KeyCode::Char('g' | 'v'));
+    // A leader opens its submenu and waits — always, since the direct action
+    // keys moved to the capitals. Every other key clears back to browsing.
+    let opens_menu = matches!(key, KeyCode::Char('g' | 'v' | 'c'));
     assert_eq!(
         app.pending_leader().is_some(),
         opens_menu,

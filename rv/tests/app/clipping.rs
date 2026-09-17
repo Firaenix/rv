@@ -81,7 +81,7 @@ fn a_line_that_fits_is_not_marked() {
 fn the_comment_buffer_shows_the_tail_while_typing_past_the_width() {
     let workspace = Fixture::new();
     let mut app = workspace.app();
-    app.on_key(KeyCode::Char('c')).expect("begin a comment");
+    app.on_key(KeyCode::Char('C')).expect("begin a comment");
     type_text(&mut app, "HEAD");
     type_text(&mut app, &"x".repeat(200));
     type_text(&mut app, "TAIL");
@@ -109,7 +109,7 @@ fn the_comment_buffer_shows_the_tail_while_typing_past_the_width() {
 fn a_short_comment_is_shown_from_its_beginning() {
     let workspace = Fixture::new();
     let mut app = workspace.app();
-    app.on_key(KeyCode::Char('c')).expect("begin a comment");
+    app.on_key(KeyCode::Char('C')).expect("begin a comment");
     type_text(&mut app, "needs a doc");
 
     let text = buffer_text(&frame_at(&app, 40, 24));

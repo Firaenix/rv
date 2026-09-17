@@ -309,21 +309,15 @@ fn d_from_the_file_list_deletes_nothing() {
     );
 }
 
-/// On a line with nothing on it, the comment leader has only one thing it can
-/// do — write — so `c` skips its menu and opens the box rather than offering a
-/// delete there is nothing to answer. The menu never presents `d` with no
-/// comment to remove, so there is no "delete nothing" refusal to escape.
+/// `D` on a line with nothing on it refuses with a sentence and arms no
+/// question: there is no "delete nothing" confirmation to escape from.
 #[test]
-fn c_on_an_empty_line_writes_rather_than_offering_delete() {
+fn shift_d_on_an_empty_line_refuses_rather_than_asking() {
     let workspace = Fixture::new();
     let mut app = workspace.app();
 
-    app.on_key(KeyCode::Char('c')).expect("comment leader");
+    app.on_key(KeyCode::Char('D')).expect("delete");
 
-    assert_eq!(
-        app.mode(),
-        Mode::Comment,
-        "c on an empty line should smart-collapse to the write"
-    );
+    assert_eq!(app.mode(), Mode::Browse, "D armed a question about nothing");
     assert!(app.pending_leader().is_none(), "no menu should be waiting");
 }

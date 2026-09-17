@@ -71,7 +71,7 @@ fn still_usable(workspace: &Fixture, app: &mut rv::app::App) {
     );
     assert_eq!(app.line_index(), 1, "the cursor stopped moving");
 
-    app.on_key(KeyCode::Char('c')).expect("c");
+    app.on_key(KeyCode::Char('C')).expect("C");
     for character in "after the editor".chars() {
         app.on_key(KeyCode::Char(character)).expect("type");
     }

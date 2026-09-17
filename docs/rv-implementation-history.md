@@ -1016,3 +1016,47 @@ under it is open. The column is *absent*, not blank, in a review with no
 open flags: the narrow-sidebar tests already ruled that every row must not
 pay for what a few rows say. The spec's "no fourth tab yet" ruling lasted
 one afternoon of dogfood, which is what dogfood is for.
+
+## 2026-09-16 — uppercase acts, and a keymap nobody packs by hand
+
+Two ergonomic complaints from the second day of dogfooding the flags, both
+traced to the same mechanism: a leader with exactly one live child used to
+run it without opening its menu. That is how a bare `c` had written a
+comment since the leaders arrived — and it is also why `Space` in the new
+Flags tab, where delete was the one live verb, opened a delete question in
+place of a menu, and why `F`/`A` could not live under `c` at all.
+
+**The collapse is gone, and every key that mutates the review is a
+capital.** `C` comment, `D` delete, `R` resolve, `A` acknowledge, `F` flag,
+`X` tick, `E` edit. A lowercase letter now only ever moves, toggles a view,
+or opens a menu, so nothing pressed by accident writes to `.review/`, and a
+shifted letter is a deliberate chord for an act that deserves one. The
+lowercase leaders keep their menus (`c c` is still a way to write) for the
+reviewer who prefers to be shown the verbs. `N` is the one exception — a
+convention older than the rule, and it mutates nothing. This is a breaking
+change to the default keymap; `keybindings.toml` restores any of the old
+spellings.
+
+**The `? ?` popup is generated.** It used to be dealt from the binding table
+by a packer that required every description under nine characters and the
+groups in an order that happened to fill three eighteen-row columns at
+80x24 — a constraint a memory note existed to warn about, and one every new
+binding had to be squeezed through. It is now drawn from the *runtime*
+keymap (the table plus whatever `keybindings.toml` rebound, added or
+unbound, leaders included), dealt into as many columns as the screen is
+wide, each column as wide as its own rows need, with headings never
+stranded at a column's foot. The rows are the global keys under their group
+headings and then one section per pane for the keys that mean something
+only there — a key that acts in two panes is listed under both, which is
+what a reader asking "what can I press *here*" wants. What does not fit
+scrolls, a column at a time, behind a `… j/k for more` hint. The popup
+takes the whole screen above the bar rather than nine tenths of it: the
+argument for a frame of diff round the edge was made for a keymap a third
+this size. The `?` tip is generated the same way — the leaders with their
+current keys, then the keys special to the pane the cursor is in.
+
+`popup::the_popup_lists_the_keymap_as_the_config_left_it` pins the point: a
+rebound key, a moved leader and a pane-scoped addition all appear as the
+config left them. The fits-at-80x24 test became two — fits without
+scrolling at 100x30, every binding reachable by scrolling at 80x24 — since
+the popup is no longer held to a hand-tuned size.

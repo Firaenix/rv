@@ -53,7 +53,7 @@ pub(crate) enum Command {
     /// Mark a comment resolved: it was addressed.
     ///
     /// Records who settled it. The default is `agent`, because this command is
-    /// the agent's path — a human resolves in the TUI with `r`, which records
+    /// the agent's path — a human resolves in the TUI with `R`, which records
     /// `user`. Either state re-applied is the undo: resolving a resolved
     /// comment reopens it.
     Resolve {

@@ -371,10 +371,12 @@ fn there_is_no_popup_while_the_help_is_closed() {
     assert_eq!(l.toast, None, "and no toast while nothing is alerting");
 }
 
-/// The popup is centred and leaves the panes visible around it, so the
-/// reviewer can still see what the keys they are reading about would act on.
+/// The popup takes every row above the bar: the keymap is dealt from the
+/// runtime keymap and not packed by hand, so it gets the whole screen rather
+/// than a frame of panes round its edge, and the bar underneath still names
+/// where the cursor is.
 #[test]
-fn the_popup_is_centred_inside_the_area() {
+fn the_popup_takes_the_screen_above_the_bar() {
     let area = Rect::new(0, 0, 100, 24);
     let l = layout(
         area,
@@ -386,17 +388,9 @@ fn the_popup_is_centred_inside_the_area() {
         },
     );
     let popup = l.popup.expect("a rect when it is open");
-    assert!(
-        popup.width >= 20 && popup.height >= 6,
-        "{popup:?} is too small to read"
-    );
-    assert!(popup.right() <= area.right() && popup.bottom() <= area.bottom());
-    assert_eq!(
-        popup.x - area.x,
-        area.right() - popup.right(),
-        "the same margin on both sides"
-    );
-    assert_eq!(popup.y - area.y, area.bottom() - popup.bottom());
+    assert_eq!((popup.x, popup.y, popup.width), (0, 0, 100));
+    assert_eq!(popup.bottom(), l.bar.y, "the popup stops at the bar");
+    assert_eq!(l.bar.bottom(), area.bottom(), "the bar keeps its row");
 }
 
 /// A toast is drawn over the panes but is never a click target: it takes no

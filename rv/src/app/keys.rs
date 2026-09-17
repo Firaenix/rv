@@ -19,7 +19,6 @@ use super::bindings::FilesCommand;
 use super::bindings::LayoutCommand;
 use super::bindings::Leader;
 use super::bindings::PaneCommand;
-use super::keymap::RuntimeBinding;
 
 /// How many percentage points one press of `<` or `>` moves the divider.
 ///
@@ -219,32 +218,15 @@ impl App {
             return Ok(Action::Continue);
         }
 
+        // A leader always opens its menu. It used to run a lone live child
+        // straight away, which is how a bare `c` once wrote a comment — and
+        // how `Space` once landed on a delete. The direct action keys are
+        // uppercase now, so a lowercase letter never acts on the review.
         if let Some(leader) = Leader::ALL
             .iter()
             .copied()
             .find(|leader| key == KeyCode::Char(self.keymap.leader_key(*leader)))
         {
-            let live: Vec<&RuntimeBinding> = self
-                .keymap
-                .bindings()
-                .iter()
-                .filter(|binding| {
-                    binding.leader == Some(leader)
-                        && rt_shown_in(binding, context)
-                        && binding.command.targets_cursor()
-                        && self.rt_binding_enabled(binding)
-                })
-                .collect();
-            // A leader with one live child runs it without waiting — that
-            // is how a bare `c` writes a comment. Never onto a delete: a
-            // key pressed to *open a menu* must not land on the one thing in
-            // it that asks a question, or the next key answers it blind.
-            if let [only] = live[..]
-                && only.command != Command::Comment(CommentCommand::Delete)
-            {
-                self.status = format!("{} → {}", leader.label(), only.what);
-                return self.run_command(only.command);
-            }
             self.pending_leader = Some(leader);
             return Ok(Action::Continue);
         }
@@ -381,8 +363,4 @@ impl App {
         }
         Ok(Action::Continue)
     }
-}
-
-fn rt_shown_in(binding: &RuntimeBinding, context: super::Context) -> bool {
-    binding.contexts.is_empty() || binding.contexts.contains(&context)
 }

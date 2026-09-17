@@ -161,10 +161,7 @@ fn a_hunk_jump_moves_the_row_cursor_a_comment_is_anchored_to() {
     app.on_key(KeyCode::Down).expect("next hunk");
     let landed = cursor_line(&app);
 
-    app.on_key(KeyCode::Char('c')).expect("comment leader");
-    if app.pending_leader().is_some() {
-        app.on_key(KeyCode::Char('c')).expect("write");
-    }
+    app.on_key(KeyCode::Char('C')).expect("write");
     for character in "on the hunk".chars() {
         app.on_key(KeyCode::Char(character)).expect("type");
     }

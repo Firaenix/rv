@@ -109,7 +109,7 @@ Run `rv` from the **workspace root** — the directory holding `.jj/`. See
 | `rv comment <file> --line <n> [--side left] -m <text>` | Adds a comment exactly as the TUI would — anchor and id handled. `-m -` reads the body from stdin. The reviewer agent's way in |
 | `rv comments [--json] [--state open]` | Lists the comments — id, state, body, reply, anchor and excerpt. The agent's read channel |
 | `rv reply <id> -m <text>` | Stores an answer on the comment (`-m -` for stdin). A second reply replaces the first; state is untouched |
-| `rv resolve <id>` / `rv abandon <id>` | Settles a comment, recording who (`--by agent` is the default; the TUI's `r`/`a` record `user`). Re-applying reopens it |
+| `rv resolve <id>` / `rv abandon <id>` | Settles a comment, recording who (`--by agent` is the default; the TUI's `R` and `c a` record `user`). Re-applying reopens it |
 | `rv diff [<file>] --json` | The changes in rv's own side-aware coordinates — the numbers `rv comment --line` accepts |
 | `rv render [--out <path>]` | Prints the review as markdown, a view nothing reads back; `--out` writes it to a file |
 | `rv status` | Prints the range, its changes, its changed files and its comment counts |
@@ -291,14 +291,19 @@ answered.
 
 **Browsing**
 
-Movement is the **arrows** (and the mouse) — there are no `hjkl` aliases. The
-rest of the keymap is layered under leaders, each opening a small menu of what
-the next key does. `Space` is the **contextual** menu — it shows whichever
-actions suit the mode you are in; `m` jumps to a **mode**; `g` **goes**
-somewhere; `c` acts on the **comment** under the cursor; and `v` is the full,
-stable list of **view** toggles. When only one thing makes sense — `c` on a line
-with no comment yet — rv skips the menu and does it, naming the choice in the
-status bar. `?` shows the leaders; `?` again unrolls the whole map.
+Movement is the **arrows** (and the mouse); `h`/`l` step a column cursor
+along the selected line. **Uppercase acts, lowercase moves**: every key that
+writes to the review or leaves the reviewer is a shifted letter — `C` comment,
+`D` delete, `R` resolve, `A` acknowledge a flag, `F` flag, `X` tick reviewed,
+`E` edit — so a mutation is always a deliberate chord and a lowercase letter
+is always safe to press. The lowercase letters are leaders, each opening a
+small menu of what the next key does: `Space` is the **contextual** menu — it
+shows whichever actions suit the mode you are in; `m` jumps to a **mode**;
+`g` **goes** somewhere; `c` is the **comment** menu (the same verbs as the
+capitals, for the reviewer who prefers a menu); and `v` is the full, stable
+list of **view** toggles. `?` shows the leaders and what is special where you
+are; `?` again unrolls the whole map, drawn from the keymap as your config
+left it.
 
 | Key | Action |
 | --- | --- |
@@ -326,7 +331,10 @@ status bar. `?` shows the leaders; `?` again unrolls the whole map.
 | `?` | What the keys do **here**: a contextual tip in the corner above the bar. `?` again unrolls the whole keymap; `Esc` or `q` closes either |
 | `q` | Quit |
 | `Ctrl+C` | Quit from anywhere, including out of a half-typed comment |
-| `x` | Tick the file off as **reviewed** — again to untick. From the file list it ticks the range's diff of the file, from a row under a change it ticks *that change's* diff of it, and on a change row it ticks every file the change touched. Ticking folds the file's comments and flags away; the tick shows as `✓` on the row and in the diff's title, `≈` once the file has changed under it |
+| `C` | Comment on the highlighted line: type, `Enter` saves, `Esc` discards. **Every key that writes to the review is a shifted letter** — `C D R A F X E` — so a mutation is always a deliberate chord, and a lowercase letter only ever moves, toggles a view, or opens a menu |
+| `D` | Delete the comment or flag under the cursor, after a `y`/`n` confirmation |
+| `R` | Resolve the comment under the cursor — again to reopen |
+| `X` | Tick the file off as **reviewed** — again to untick. From the file list it ticks the range's diff of the file, from a row under a change it ticks *that change's* diff of it, and on a change row it ticks every file the change touched. Ticking folds the file's comments and flags away; the tick shows as `✓` on the row and in the diff's title, `≈` once the file has changed under it |
 | `F` | (Diff) Flag the highlighted line: type why it deserves a look, `Enter` saves. A flag is attention, not feedback — it never blocks `rv status --check` |
 | `A` | (Diff) Acknowledge the line's flags — again to reopen them |
 | `/` | Find text in the diff: type, `Enter` jumps to the first match after the cursor, `Esc` cancels. Case-blind unless the query has a capital; every match is underlined |
@@ -358,9 +366,9 @@ status bar. `?` shows the leaders; `?` again unrolls the whole map.
 | `g` `F` | The previous flag |
 | `g` `d` | Go to the definition of the word under the column cursor — the next one on from here where the review defines it more than once |
 | `g` `r` | Go to the next reference to the word under the column cursor, across every file in scope, wrapping |
-| `c` `c` | Comment on the highlighted line |
-| `c` `d` | Delete a comment, after a `y`/`n` confirmation |
-| `c` `r` | Resolve a comment — press it again to reopen |
+| `c` `c` | Comment on the highlighted line (the menu's spelling of `C`) |
+| `c` `d` | Delete a comment, after a `y`/`n` confirmation (`D`) |
+| `c` `r` | Resolve a comment — press it again to reopen (`R`) |
 | `c` `a` | Abandon a comment, dropping it without fixing it — again to reopen |
 | `v` `f` | Toggle full-file context. Default on: the pane shows the whole file with the changed lines highlighted. Off restores the difftastic-only view of just the changes |
 | `v` `g` | Group the diff: each hunk's removed lines before its added ones, the way a unified diff prints — instead of difftastic's interleaving of the two sides |

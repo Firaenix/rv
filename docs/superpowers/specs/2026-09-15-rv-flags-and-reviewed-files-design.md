@@ -277,12 +277,14 @@ asking which scope, since the view you're looking at already answers that.
 
 Implemented as specified, with these rulings made while building it:
 
-- **§5 keymap** — `F` flags the line and `A` acknowledges, as direct keys on
-  the diff rather than `c f` / `a`: a leader with one live cursor child
-  collapses onto it, which is how a plain `c` writes a comment, and a second
-  child under `c` would have cost every comment a keystroke. The flag walk
-  is `g f` / `g F`, under the goto leader beside the hunk and symbol walks,
-  rather than `]f` / `[f`. `x` ticks a file.
+- **§5 keymap** — `F` flags the line and `A` acknowledges, as direct keys.
+  They shipped that way because a leader with one live child used to collapse
+  onto it (how a plain `c` wrote a comment), and a second child under `c`
+  would have cost every comment a keystroke; the day after, that collapse
+  was removed altogether and *every* mutating key became a capital — `C D R
+  A F X E` — so the flag keys turned out to be the rule rather than the
+  exception. The flag walk is `g f` / `g F`, under the goto leader beside
+  the hunk and symbol walks, rather than `]f` / `[f`. `X` ticks a file.
 - **§5 sidebar** — the Flags tab shipped the same day, after the first
   dogfood found the walk alone gave no way to *find* a flag: `m F` / `Tab`
   reach it, it lists flags under their file headings exactly as the Comments

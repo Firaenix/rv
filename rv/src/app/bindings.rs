@@ -40,16 +40,14 @@ pub enum Group {
 
 impl Group {
     /// Every group, in the order the popup lists them.
-    /// Ordered so that the `?` popup's greedy column packing fills four
-    /// 18-row columns at 80x24 — `popup::the_whole_keymap_fits_at_80x24`
-    /// holds it to that.
+    /// Every group, in the order the popup lists them.
     pub const ALL: &'static [Group] = &[
         Group::Move,
-        Group::Review,
         Group::Scroll,
-        Group::Edit,
         Group::Focus,
         Group::Comment,
+        Group::Review,
+        Group::Edit,
         Group::View,
         Group::Quit,
     ];
@@ -61,7 +59,7 @@ impl Group {
             Group::Move => "Move",
             Group::Scroll => "Jump & scroll",
             Group::Focus => "Panes",
-            Group::Comment => "Comments",
+            Group::Comment => "Comment",
             Group::Edit => "Edit",
             Group::View => "View",
             Group::Review => "Review",
@@ -265,34 +263,4 @@ pub(super) enum AppCommand {
     Refresh,
     OpenEditor,
     ToggleChangeDetails,
-}
-
-impl Command {
-    /// Whether the command acts on what the cursor is on, rather than being
-    /// *ambient* (a view or session change). Only cursor-targeting children
-    /// count when a leader decides it can skip its submenu for one live child.
-    pub(super) fn targets_cursor(self) -> bool {
-        match self {
-            Command::Cursor(_) | Command::Comment(_) => true,
-            Command::Diff(command) => matches!(
-                command,
-                DiffCommand::NextHunk
-                    | DiffCommand::PrevHunk
-                    | DiffCommand::NextSymbol
-                    | DiffCommand::PrevSymbol
-                    | DiffCommand::FindSymbol
-                    | DiffCommand::NextFlag
-                    | DiffCommand::PrevFlag
-                    | DiffCommand::Search
-                    | DiffCommand::NextMatch
-                    | DiffCommand::PrevMatch
-                    | DiffCommand::Definition
-                    | DiffCommand::References
-            ),
-            Command::Pane(command) => matches!(command, PaneCommand::Open),
-            Command::App(command) => matches!(command, AppCommand::OpenEditor),
-            Command::Files(command) => matches!(command, FilesCommand::ToggleReviewed),
-            Command::Layout(_) => false,
-        }
-    }
 }

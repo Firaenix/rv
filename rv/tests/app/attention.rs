@@ -15,7 +15,7 @@ fn x_ticks_the_file_folds_its_comments_and_shows_in_the_title_and_the_list() {
     write_comment(&mut app, "look at this");
     assert!(app.collapsed().is_empty(), "a fresh comment starts open");
 
-    app.on_key(KeyCode::Char('x')).expect("tick");
+    app.on_key(KeyCode::Char('X')).expect("tick");
 
     let ticks = workspace.store().reviewed().expect("read the ticks");
     assert_eq!(ticks.len(), 1);
@@ -42,7 +42,7 @@ fn x_ticks_the_file_folds_its_comments_and_shows_in_the_title_and_the_list() {
         "no tick on the file's row:\n{sidebar}"
     );
 
-    app.on_key(KeyCode::Char('x')).expect("untick");
+    app.on_key(KeyCode::Char('X')).expect("untick");
     assert!(
         workspace.store().reviewed().expect("read").is_empty(),
         "a second x did not clear the tick"
@@ -67,7 +67,7 @@ fn x_under_a_change_ticks_the_changes_own_diff_and_the_change_row_rolls_up() {
         .expect("the change with files");
     let change_id = app.changes()[change].change_id.clone();
 
-    app.on_key(KeyCode::Char('x')).expect("tick");
+    app.on_key(KeyCode::Char('X')).expect("tick");
     let ticks = workspace.store().reviewed().expect("read the ticks");
     assert_eq!(ticks.len(), 1);
     assert_eq!(
@@ -86,7 +86,7 @@ fn x_under_a_change_ticks_the_changes_own_diff_and_the_change_row_rolls_up() {
     );
 
     app.on_key(KeyCode::Down).expect("onto the second file");
-    app.on_key(KeyCode::Char('x')).expect("tick");
+    app.on_key(KeyCode::Char('X')).expect("tick");
     assert_eq!(workspace.store().reviewed().expect("read").len(), 2);
     assert_eq!(
         app.change_reviewed(change),
@@ -107,7 +107,7 @@ fn a_tick_survives_reopening_and_seeds_the_fold() {
     let workspace = Fixture::new();
     let mut app = workspace.app();
     write_comment(&mut app, "folded on return");
-    app.on_key(KeyCode::Char('x')).expect("tick");
+    app.on_key(KeyCode::Char('X')).expect("tick");
 
     let reopened = workspace.app();
     assert_eq!(
@@ -122,7 +122,7 @@ fn a_tick_survives_reopening_and_seeds_the_fold() {
 fn a_tick_goes_stale_when_the_file_changes_under_it() {
     let workspace = Fixture::new();
     let mut app = workspace.app();
-    app.on_key(KeyCode::Char('x')).expect("tick");
+    app.on_key(KeyCode::Char('X')).expect("tick");
 
     workspace.write("a.rs", "fn a() {\n    let x = 2;\n}\n");
     workspace.jj(&["status"]);

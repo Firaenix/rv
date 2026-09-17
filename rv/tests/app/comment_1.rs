@@ -234,7 +234,7 @@ fn escape_abandons() {
     let workspace = Fixture::new();
     let mut app = workspace.app();
 
-    app.on_key(KeyCode::Char('c')).expect("enter comment mode");
+    app.on_key(KeyCode::Char('C')).expect("enter comment mode");
     app.on_key(KeyCode::Char('x')).expect("type");
     assert_eq!(app.mode(), Mode::Comment);
     assert_eq!(app.buffer(), "x");

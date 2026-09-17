@@ -1,7 +1,13 @@
-//! The review-progress and code-navigation keys added in 1.8: ticking files
-//! off, flags, plain-text search, and the column cursor's definition and
-//! reference jumps. Split from [`super::table`] for the 400-line rule and
+//! The direct action keys, and the review-progress and code-navigation keys
+//! added in 1.8. Split from [`super::table`] for the 400-line rule and
 //! concatenated back into `BINDINGS` there.
+//!
+//! **Uppercase acts, lowercase moves.** Every key that writes to `.review/`
+//! or leaves the reviewer is a shifted letter — `C D R A F X E` — so a
+//! mutation is always a deliberate chord, and a lowercase letter is always
+//! safe to press: it moves, toggles a view, or opens a menu. `N` is the one
+//! documented exception, a convention older than the rule, and it mutates
+//! nothing.
 
 use crossterm::event::KeyCode;
 
@@ -16,7 +22,34 @@ use super::Group;
 use super::Leader;
 use super::PaneCommand;
 
-pub(super) const REVIEW: [Binding; 13] = [
+pub(super) const REVIEW: [Binding; 16] = [
+    Binding {
+        keys: "C",
+        group: Group::Comment,
+        leader: None,
+        contexts: &[],
+        what: "comment",
+        codes: &[KeyCode::Char('C')],
+        command: Command::Comment(CommentCommand::Write),
+    },
+    Binding {
+        keys: "D",
+        group: Group::Comment,
+        leader: None,
+        contexts: &[],
+        what: "delete",
+        codes: &[KeyCode::Char('D')],
+        command: Command::Comment(CommentCommand::Delete),
+    },
+    Binding {
+        keys: "R",
+        group: Group::Comment,
+        leader: None,
+        contexts: &[],
+        what: "resolve",
+        codes: &[KeyCode::Char('R')],
+        command: Command::Comment(CommentCommand::Resolve),
+    },
     Binding {
         keys: "F",
         group: Group::Focus,
@@ -27,17 +60,14 @@ pub(super) const REVIEW: [Binding; 13] = [
         command: Command::Pane(PaneCommand::GotoFlags),
     },
     Binding {
-        keys: "x",
+        keys: "X",
         group: Group::Review,
         leader: None,
         contexts: &[],
         what: "reviewed",
-        codes: &[KeyCode::Char('x')],
+        codes: &[KeyCode::Char('X')],
         command: Command::Files(FilesCommand::ToggleReviewed),
     },
-    // Direct rather than under `c`: a lone live child collapses its leader,
-    // and `c` with only "write" live is how a plain `c` writes a comment —
-    // a second child there would cost every comment a keystroke.
     Binding {
         keys: "F",
         group: Group::Review,

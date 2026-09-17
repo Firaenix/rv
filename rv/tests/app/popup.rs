@@ -12,32 +12,36 @@ use rv::layout::Chrome;
 use rv::layout::HelpChrome;
 use rv::layout::Split;
 use rv::layout::layout;
+use rv::session;
 
 use crate::support::*;
 
-/// The cell holding the key of the popup row that describes `what`.
+/// The cell holding the key of the popup row reading `keys`, a gap, `what`.
 ///
-/// Found by the description rather than by the key, because a single-character
-/// key is a substring of half the screen: the row is located by the sentence
-/// only it carries, and the key is then the last occurrence of `keys` in the
-/// columns to its left.
+/// Both halves are matched together, because a description recurs — `delete`
+/// is under `D`, `c d` and `Space d` — and a single-character key is a
+/// substring of half the screen: only the pair names one cell.
 fn cell_of_binding(buffer: &Buffer, keys: &str, what: &str) -> (u16, u16) {
     let rows = rows_of(buffer);
-    let (y, row) = rows
-        .iter()
-        .enumerate()
-        .find(|(_, row)| row.contains(what))
-        .unwrap_or_else(|| panic!("{what:?} is not on screen:\n{}", buffer_text(buffer)));
-    let at = row.find(what).expect("the row holds it");
-    let before = &row[..at];
-    let start = before
-        .rfind(keys)
-        .unwrap_or_else(|| panic!("{keys:?} is not left of {what:?} on row {y}: {row:?}"));
-    let column = before[..start].chars().count();
-    (
-        u16::try_from(column).expect("a small column"),
-        u16::try_from(y).expect("a small row"),
-    )
+    for (y, row) in rows.iter().enumerate() {
+        let mut from = 0;
+        while let Some(at) = row[from..].find(what).map(|at| at + from) {
+            let before = row[..at].trim_end();
+            if before.ends_with(keys)
+                && row[..at].len() - before.len() >= 2
+                && before[..before.len() - keys.len()].ends_with(' ')
+                    | before[..before.len() - keys.len()].ends_with('│')
+            {
+                let column = before[..before.len() - keys.len()].chars().count();
+                return (
+                    u16::try_from(column).expect("a small column"),
+                    u16::try_from(y).expect("a small row"),
+                );
+            }
+            from = at + what.len();
+        }
+    }
+    panic!("no row reads `{keys}  {what}`:\n{}", buffer_text(buffer));
 }
 
 /// Whether the cell at `at` is drawn dim — how the popup says a key does
@@ -152,8 +156,8 @@ fn q_closes_the_help_rather_than_quitting() {
 /// While the manual is up every other key is inert — including the one that
 /// destroys written work.
 #[rstest]
-#[case(KeyCode::Char('c'))]
-#[case(KeyCode::Char('d'))]
+#[case(KeyCode::Char('C'))]
+#[case(KeyCode::Char('D'))]
 #[case(KeyCode::Char('j'))]
 #[case(KeyCode::Enter)]
 #[case(KeyCode::Tab)]
@@ -231,28 +235,28 @@ fn every_binding_the_handler_dispatches_appears_in_the_popup() {
     }
 }
 
-/// 80x24 is what a reviewer over ssh actually has, and a keymap you must scroll
-/// to read is a keymap you will not read. This is what forces the column
-/// layout: sixteen bindings and their headings need twenty-one rows in one
-/// list, and the popup has fourteen.
+/// The keymap is dealt into columns and nothing is packed by hand, so the
+/// popup is not held to any one terminal size — but it must fit a normal
+/// one without scrolling, and every row must be reachable at 80x24, the size
+/// a reviewer over ssh actually has.
 #[test]
-fn the_whole_keymap_fits_at_80x24_without_scrolling() {
+fn the_whole_keymap_fits_at_100x30_without_scrolling() {
     let workspace = Fixture::new();
     let mut app = workspace.app();
     app.on_key(KeyCode::Char('?')).expect("?");
     app.on_key(KeyCode::Char('?'))
         .expect("? again, for the whole keymap");
-    let frame = buffer_text(&frame_at(&app, 80, 24));
+    let frame = buffer_text(&frame_at(&app, 100, 30));
 
     for binding in BINDINGS {
         assert!(
             frame.contains(binding.keys),
-            "{} is off screen at 80x24:\n{frame}",
+            "{} is off screen at 100x30:\n{frame}",
             binding.keys
         );
         assert!(
             frame.contains(binding.what),
-            "{}'s description is off screen at 80x24:\n{frame}",
+            "{}'s description is off screen at 100x30:\n{frame}",
             binding.keys
         );
     }
@@ -262,7 +266,88 @@ fn the_whole_keymap_fits_at_80x24_without_scrolling() {
     );
 }
 
-/// `d` means nothing in the Files tab. A reviewer learning the tool should see
+/// At 80x24 the keymap takes the whole screen and may still need one
+/// scroll; every binding is on one of the screens `j` reaches, and the hint
+/// says so until the last of them.
+#[test]
+fn every_binding_is_reachable_by_scrolling_at_80x24() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    app.on_key(KeyCode::Char('?')).expect("?");
+    app.on_key(KeyCode::Char('?'))
+        .expect("? again, for the whole keymap");
+
+    let mut seen = String::new();
+    for _ in 0..20 {
+        let frame = buffer_text(&frame_at(&app, 80, 24));
+        seen.push_str(&frame);
+        if !frame.contains("more") {
+            break;
+        }
+        app.on_key(KeyCode::Char('j')).expect("scroll");
+    }
+    for binding in BINDINGS {
+        assert!(
+            seen.contains(binding.keys) && seen.contains(binding.what),
+            "{} ({}) is on no screen at 80x24:\n{seen}",
+            binding.keys,
+            binding.what
+        );
+    }
+}
+
+/// The popup is drawn from the *runtime* keymap: a key the config rebinds,
+/// adds in one pane, or moves onto another leader is listed as it now is,
+/// and a leader the config moved is spelled with its new key — nothing in
+/// the popup is a hand-maintained copy of the table.
+#[test]
+fn the_popup_lists_the_keymap_as_the_config_left_it() {
+    let workspace = Fixture::new();
+    let review = session::build(workspace.root(), None, None).expect("build the review");
+    let config = rv::config::parse(
+        "[leaders]\ngoto = \"G\"\n[keys]\ncomment_write = \"w\"\n[keys.files]\nfiles_cycle_sort = \"O\"\n",
+    )
+    .expect("parse the config");
+    let mut app = rv::app::App::open_with_config(
+        review,
+        rv::app::DiffEngine::Structural,
+        &config,
+        &rv::config::Settings::default(),
+    )
+    .expect("open the reviewer");
+    app.finish_loading();
+    app.on_key(KeyCode::Char('?')).expect("?");
+    app.on_key(KeyCode::Char('?'))
+        .expect("? again, for the whole keymap");
+    let frame = frame_at(&app, 120, 40);
+    let text = buffer_text(&frame);
+
+    // The rebound key replaces the shipped one.
+    cell_of_binding(&frame, "w", "comment");
+    assert!(
+        !text.contains("C        comment"),
+        "the old key survived:\n{text}"
+    );
+    // The moved leader is spelled with its new key on every child.
+    cell_of_binding(&frame, "G n", "next sym");
+    assert!(
+        !text.contains("g n"),
+        "the old leader key survived:\n{text}"
+    );
+    // A pane-scoped addition is listed under that pane.
+    let rows = rows_of(&frame);
+    let files_heading = rows
+        .iter()
+        .position(|row| row.contains("Files list"))
+        .expect("the files section");
+    let (_, y) = cell_of_binding(&frame, "O", "order");
+    assert!(
+        usize::from(y) > files_heading,
+        "the scoped bind is not under the files heading:\n{text}"
+    );
+}
+
+/// `D` means nothing in the Files tab. A reviewer learning the tool should see
 /// that the key exists and why it is inert here, not wonder whether they
 /// misread the manual.
 ///
@@ -285,8 +370,8 @@ fn a_binding_that_does_nothing_here_is_dimmed_rather_than_hidden() {
         buffer_text(&frame)
     );
     assert!(
-        is_dim(&frame, cell_of_binding(&frame, "d", "delete")),
-        "`d` is not shown as inactive in the file list:\n{}",
+        is_dim(&frame, cell_of_binding(&frame, "D", "delete")),
+        "`D` is not shown as inactive in the file list:\n{}",
         buffer_text(&frame)
     );
     assert!(
@@ -309,8 +394,8 @@ fn the_same_binding_is_live_where_it_acts_on_something() {
 
     let frame = frame_at(&app, 100, 30);
     assert!(
-        !is_dim(&frame, cell_of_binding(&frame, "d", "delete")),
-        "`d` is dimmed on a line that has a comment to delete:\n{}",
+        !is_dim(&frame, cell_of_binding(&frame, "D", "delete")),
+        "`D` is dimmed on a line that has a comment to delete:\n{}",
         buffer_text(&frame)
     );
 }

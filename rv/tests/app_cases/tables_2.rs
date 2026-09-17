@@ -301,13 +301,18 @@ fn comment_keybindings(
     Action::Quit,
     Mode::Browse
 )]
-#[case::plain_c_comments(
-    KeyCode::Char('c'),
-    KeyModifiers::NONE,
+#[case::plain_shift_c_comments(
+    KeyCode::Char('C'),
+    KeyModifiers::SHIFT,
     Action::Continue,
     Mode::Comment
 )]
-#[case::alt_c_comments(KeyCode::Char('c'), KeyModifiers::ALT, Action::Continue, Mode::Comment)]
+#[case::alt_shift_c_comments(
+    KeyCode::Char('C'),
+    KeyModifiers::ALT.union(KeyModifiers::SHIFT),
+    Action::Continue,
+    Mode::Comment
+)]
 #[case::ctrl_q_is_still_q(KeyCode::Char('q'), KeyModifiers::CONTROL, Action::Quit, Mode::Browse)]
 #[case::ctrl_x_is_still_inert(
     KeyCode::Char('x'),
