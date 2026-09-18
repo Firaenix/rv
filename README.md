@@ -29,8 +29,9 @@ becomes a pull request, or instead of ever becoming one.
   three-tier re-anchoring cascade before a comment is ever marked outdated
 - **A review per branch** — `rv feature-a` and `rv feature-b` are
   independent sessions; jump between them and each is where you left it
-- **Auto-refresh** — the reviewer watches jj's operation log and follows
-  commits, rebases and checkouts as they happen
+- **Auto-refresh** — the reviewer watches jj's operation log and the files
+  under review, and follows commits, rebases, checkouts and plain edits as
+  they happen — comments moving with the code they are about
 - **An agent loop with no glue code** — JSON out, replies and resolutions
   in, one exit code to poll
 - **Configurable** — remap any key in `keybindings.toml`, set your session
@@ -271,7 +272,7 @@ sidebar_hidden = true  # open with the sidebar put away
 split = 40             # sidebar share of the width, in percent
 ascii = true           # ASCII status-bar separators (RV_ASCII as a setting)
 engine = "fallback"    # auto | fallback — --no-difft as a default
-auto_refresh = false   # stop refreshing when the repo moves (on by default)
+auto_refresh = false   # stop refreshing when the repo or a reviewed file moves (on by default)
 ```
 
 ### Several reviews at once
@@ -283,11 +284,12 @@ either finds it exactly where it was left. A bare `rv` is the one ambient
 `working-copy` review that follows `@` wherever you take it. `rv reviews`
 lists everything stored, with each review's range and comment counts.
 
-While the TUI is open, rv watches jj's operation log (one file-system read
-every two seconds) and refreshes itself when the repository moves — an
-agent's commit landing, a rebase, an edit snapshotted by any jj command —
-without ever interrupting a comment being typed or a confirmation being
-answered.
+While the TUI is open, rv watches jj's operation log **and the working copy of
+the files under review** (a handful of stat calls every two seconds) and
+refreshes itself when either moves — an agent's commit landing, a rebase, a
+file saved in an editor — and again the moment the terminal regains focus, so
+what you come back to is what is there now. It never interrupts a comment being
+typed or a confirmation being answered.
 
 **Browsing**
 
@@ -432,6 +434,17 @@ part of the diff pane: `↓` and `↑` move the cursor by **row**, so they walk
 longer than the pane is tall is therefore read the way any other content is, by
 scrolling. While the cursor is inside a box, the line the box belongs to stays
 the selected one — so `c` there comments on the code the box is about.
+
+A box sticks to the **code** it is about, not to a line number. When the file
+changes under a comment — lines added above it, the commented line itself
+rewritten — the box is drawn under the line as it now stands, `Enter` in the
+Comments tab jumps there, and the browser names the new line. The heading says
+how sure that placement is: nothing, when the line is exactly where it was;
+`· moved` in grey when the same text was found elsewhere; `· weak anchor` in
+yellow when the line's own text has changed and the box was placed by the lines
+around it, or — when even those are gone — left at its old number. The stored
+comment keeps the line it was written at; the placement is worked out afresh
+every time the review opens or refreshes.
 
 `Enter` steps the cursor *into* the stack under the selected line, where `j` and
 `k` move between the boxes rather than between the lines; `Esc` or `←` steps

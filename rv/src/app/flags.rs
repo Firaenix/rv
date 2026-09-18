@@ -228,13 +228,15 @@ impl App {
     }
 
     pub(super) fn reload_flags(&mut self) -> Result<()> {
-        self.flags = session::flags::in_range(
+        let mut flags = session::flags::in_range(
             &self.review,
             self.review
                 .store
                 .flags()
                 .context("could not re-read the saved flags")?,
         );
+        crate::stale::place_flags(&self.review, &mut flags);
+        self.flags = flags;
         Ok(())
     }
 }

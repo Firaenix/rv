@@ -10,3 +10,6 @@ cc 15277b4a0ba1a55dddd2f7a192bab041e3552f687a1a5a00d8f0aab695be34b8 # shrinks to
 cc 19a97e9b796bfc010b5dc47cb872fef26a375a5c41b2ddc93e20cde50a29324c # shrinks to raw = (["\t\u{a0}\t", "\t\u{a0}\t", "\t\u{a0}\t", "\t\u{a0}\t", "\t\u{a0}\t", "\t\u{a0}\t"], ["\t\u{a0}\t", "\t\u{a0}\t"], 4120202606, false)
 cc 72da57a7281e9d3c8f2e04cbe99f4a4728ff01dfe3b7c12879988c9e22037a1d # shrinks to raw = (["\u{a0}", "\u{a0}", "\u{a0}", "\u{a0}"], ["\u{a0}"], 295866231, true)
 cc 07af68ab433f80fe93348eb1e970cdd54bea940bdf5b0e817590ccba71970bfc # shrinks to raw = (["", "", "", "", "", ""], [""], 2716659947, false)
+cc 7514378cabe91e3befabe5af1bc2987c134f4e48ecac4380048ab24682f6fd57 # shrinks to raw = (["(\t\u{3000}\t →😀", "(\t\u{3000}\t →😀", "\u{301} 0\u{2028}\u{b}", "😀(\u{a0}a😀\u{3000}é}a"], ["\u{301} 0\u{2028}\u{b}", "\u{301} 0\u{2028}\u{b}"], 4, true)
+cc 35af99a7142313e5e1103461ded85834c9c3b6623289bb14ffaddcf1e5e50a4e # shrinks to raw = ([")\u{b}(\u{2028}\u{b}=", ""], ["}", ")\u{b}(\u{2028}\u{b}=", ""], 2, true)
+cc f476c0b0b27a479d28135f6908ce7fa0984c95f8d1813492cd079fc34ba67792 # shrinks to lines = ["", "", "", "b", ""], blank_seed = 2, pad = "", after = ["", "", "a", "", "b", ""], left = false

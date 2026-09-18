@@ -108,18 +108,77 @@ fn snapshot_captures_context() {
 /// A blank line that moves to a different line number cannot be told apart
 /// by hash from any *other* blank line in the file — every all-whitespace
 /// line normalizes to `""` — so the `Moved` scan excludes blank candidates
-/// entirely. A moved blank-line anchor resolves `Outdated` rather than
-/// guessing which blank line it moved to.
+/// entirely. Its *neighbours* have identity, though: the blank line between
+/// `a` and `b` is still the blank line between `a` and `b`, one line down.
 #[test]
-fn blank_line_anchor_moved_falls_back_weakly() {
+fn blank_line_anchor_moved_is_placed_by_its_neighbours() {
     let text = "a\n\nb\n";
     let anchor = create("f.txt", Side::Left, 2, text);
 
     let edited = format!("x\n{text}");
     let (line, confidence) = resolve(&anchor, &edited);
 
-    // Never `Moved` — a blank line has no identity to follow — but its
-    // number still exists, so the raw-number tier catches it.
+    // Never `Moved` — a blank line has no content to have found — but placed
+    // where `a` and `b` now stand around it, and weakly, as every placement
+    // that did not match the line's own content is.
+    assert_eq!(line, Some(3));
+    assert_eq!(confidence, Confidence::Weak);
+}
+
+/// The anchored line was edited in place and the file grew above it: no hash
+/// matches, but the stored neighbours still stand around one line, and that
+/// is where the anchor goes — not to line 2, which is now a comment.
+#[test]
+fn an_edited_line_is_placed_by_its_neighbours() {
+    let text = "fn a() {\n    let x = 1;\n}\n";
+    let anchor = create("a.rs", Side::Right, 2, text);
+
+    let edited = "// one\n// two\n// three\nfn a() {\n    let x = 2;\n}\n";
+    let (line, confidence) = resolve(&anchor, edited);
+
+    assert_eq!(line, Some(5));
+    assert_eq!(confidence, Confidence::Weak);
+}
+
+/// A line inserted *inside* the stored window misaligns half the neighbours;
+/// the other half still agree, and that is enough.
+#[test]
+fn neighbours_survive_an_insertion_inside_the_window() {
+    let text = "a\nb\nc\nd\ne\nf\ng\nh\ni\nj\nk\n";
+    let anchor = create("f.txt", Side::Right, 6, text); // `f`
+
+    let edited = "a\nb\nNEW\nc\nd\ne\nF\ng\nh\ni\nj\nk\n";
+    let (line, confidence) = resolve(&anchor, edited);
+
+    assert_eq!(line, Some(7), "F is the seventh line now");
+    assert_eq!(confidence, Confidence::Weak);
+}
+
+/// One shared neighbour is a coincidence, not a placement: the raw number
+/// stays the fallback when the window does not reach its quorum.
+#[test]
+fn a_single_matching_neighbour_is_not_believed() {
+    let text = "a\nb\nc\n";
+    let anchor = create("f.txt", Side::Right, 2, text);
+
+    let edited = "x\ny\nz\nw\na\nQ\nv\n";
+    let (line, confidence) = resolve(&anchor, edited);
+
+    assert_eq!(line, Some(2), "one neighbour (`a`) placed the anchor at 6");
+    assert_eq!(confidence, Confidence::Weak);
+}
+
+/// Where the neighbours fit equally well in two places, the one nearer the
+/// original line wins, as it does for duplicated content.
+#[test]
+fn neighbours_prefer_the_nearer_of_two_fits() {
+    let text = "a\nb\nc\n";
+    let anchor = create("f.txt", Side::Right, 2, text);
+
+    // `a ? c` twice: around line 2 and around line 6.
+    let edited = "a\nX\nc\n-\na\nY\nc\n";
+    let (line, confidence) = resolve(&anchor, edited);
+
     assert_eq!(line, Some(2));
     assert_eq!(confidence, Confidence::Weak);
 }

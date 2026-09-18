@@ -306,6 +306,37 @@ impl Resolution {
             .collect()
     }
 
+    /// Whether `landed` is a place the anchor's *neighbours* vouch for: the
+    /// lines within five of the original, laid over the lines at the same
+    /// offsets from `landed`, agree on at least two non-blank lines, with one
+    /// of them above and one below wherever the original had non-blank
+    /// neighbours on that side. A necessary condition for the context tier,
+    /// stated from the texts rather than from the anchor's stored snapshot,
+    /// so that it is an oracle and not a second copy of the resolver.
+    fn neighbours_vouch_for(&self, before_lines: &[String], landed: u32) -> bool {
+        let line = self.line as i64;
+        let landed = landed as i64;
+        let at = |lines: &[String], number: i64| -> Option<String> {
+            (number >= 1 && number as usize <= lines.len())
+                .then(|| ref_normalize(&lines[number as usize - 1]))
+                .filter(|text| !text.is_empty())
+        };
+        let mut above = (0usize, false);
+        let mut below = (0usize, false);
+        for delta in 1..=5i64 {
+            for (sign, side) in [(-1, &mut above), (1, &mut below)] {
+                if let Some(was) = at(before_lines, line + sign * delta) {
+                    side.1 = true;
+                    if at(&self.after_lines, landed + sign * delta).as_deref() == Some(was.as_str())
+                    {
+                        side.0 += 1;
+                    }
+                }
+            }
+        }
+        above.0 + below.0 >= 2 && (!above.1 || above.0 > 0) && (!below.1 || below.0 > 0)
+    }
+
     /// Whether the line still sitting at the anchor's original number carries
     /// the anchored content (blank or not).
     fn same_line_matches(&self) -> bool {
@@ -598,10 +629,12 @@ proptest! {
     /// returns a line, that line exists in the new text; for `Exact` and
     /// `Moved` it actually carries the anchored content (checked with
     /// [`ref_normalize`], not by re-asking the hash); `Weak` is the honest
-    /// opposite — the stored number with content that does *not* match, taken
-    /// only when no line anywhere carries the content.
+    /// opposite — content that does *not* match, taken only when no line
+    /// anywhere carries the content, and either at the stored number or at a
+    /// place the line's neighbours vouch for.
     #[test]
     fn resolve_never_invents_a_line(raw in scenario()) {
+        let before_lines = text_of(&raw.0).1;
         let outcome = resolve_scenario(raw);
         match outcome.resolved {
             None => prop_assert_eq!(outcome.confidence, Confidence::Outdated),
@@ -609,8 +642,17 @@ proptest! {
                 prop_assert!(landed >= 1 && (landed as usize) <= outcome.after_lines.len());
                 let landed_content = ref_normalize(&outcome.after_lines[landed as usize - 1]);
                 if outcome.confidence == Confidence::Weak {
-                    prop_assert_eq!(landed, outcome.line);
-                    prop_assert_ne!(outcome.target.as_deref(), Some(landed_content.as_str()));
+                    prop_assert!(
+                        landed == outcome.line || outcome.neighbours_vouch_for(&before_lines, landed),
+                        "weak at {} (stored {}) with no neighbour to vouch for it", landed, outcome.line
+                    );
+                    // A blank anchored line placed by its neighbours lands on a
+                    // blank line: the same content, but blank lines have no
+                    // identity, so the design still refuses to call that `Moved`.
+                    prop_assert!(
+                        outcome.target.as_deref() != Some(landed_content.as_str())
+                            || landed_content.is_empty()
+                    );
                     prop_assert!(outcome.candidates().is_empty());
                     return Ok(());
                 }
@@ -737,6 +779,7 @@ proptest! {
     /// anywhere.
     #[test]
     fn resolve_is_outdated_only_when_nothing_matches(raw in scenario()) {
+        let before_lines = text_of(&raw.0).1;
         let outcome = resolve_scenario(raw);
         let nothing_matches = outcome.candidates().is_empty() && !outcome.same_line_matches();
         // ...and, since the weak tier, only when there is no line at the
@@ -744,15 +787,26 @@ proptest! {
         let no_fallback = (outcome.line as usize) > outcome.after_lines.len()
             || outcome.line == 0
             || outcome.target.is_none();
-        prop_assert_eq!(outcome.resolved.is_none(), nothing_matches && no_fallback);
+        match outcome.resolved {
+            None => prop_assert!(nothing_matches && no_fallback),
+            // Placed with nothing matching and no number to fall back on: the
+            // neighbours did it, and they had better be able to say so.
+            Some(landed) if nothing_matches && no_fallback => {
+                prop_assert_eq!(outcome.confidence, Confidence::Weak);
+                prop_assert!(outcome.neighbours_vouch_for(&before_lines, landed));
+            }
+            Some(_) => {}
+        }
     }
 
     /// A blank line has no identity: every blank or whitespace-only line
     /// normalizes to `""`, so "the blank line moved to line 9" would be a
     /// fabrication. A blank anchor therefore never resolves `Moved` — it stays
-    /// put (`Exact`) while the line at its number is still blank, and fails
-    /// safe to `(None, Outdated)` the moment it is not. This is a deliberate
-    /// design decision, not an accident of the current cascade.
+    /// put (`Exact`) while the line at its number is still blank; otherwise it
+    /// is placed only where its *neighbours* vouch for a place, or at its
+    /// number while that exists, and fails safe to `(None, Outdated)` when
+    /// neither holds. This is a deliberate design decision, not an accident
+    /// of the current cascade.
     #[test]
     fn blank_line_anchor_never_resolves_moved(
         lines in prop::collection::vec(blankish_line(), 1..7),
@@ -765,7 +819,7 @@ proptest! {
         let index = blank_seed % before.len();
         before[index] = pad;
         let line = index as u32 + 1;
-        let (before_text, _) = text_of(&before);
+        let (before_text, before_lines) = text_of(&before);
         let (after_text, after_lines) = text_of(&after);
 
         let anchor = create("f.txt", side_of(left), line, &before_text);
@@ -778,12 +832,29 @@ proptest! {
             line_exists && ref_normalize(&after_lines[line as usize - 1]).is_empty();
         if still_blank {
             prop_assert_eq!((resolved, confidence), (Some(line), Confidence::Exact));
-        } else if line_exists {
-            // Not blank any more: never `Moved` to some other blank line, but
-            // the number itself still exists, and the weak tier keeps it.
-            prop_assert_eq!((resolved, confidence), (Some(line), Confidence::Weak));
-        } else {
-            prop_assert_eq!((resolved, confidence), (None, Confidence::Outdated));
+            return Ok(());
+        }
+        let outcome = Resolution {
+            line,
+            after_lines: after_lines.clone(),
+            target: Some(String::new()),
+            resolved,
+            confidence,
+        };
+        match resolved {
+            // Never `Moved` to some other blank line: placed only where the
+            // lines around it still stand, or at the number while it exists.
+            Some(landed) => {
+                prop_assert_eq!(confidence, Confidence::Weak);
+                prop_assert!(
+                    (landed == line && line_exists) || outcome.neighbours_vouch_for(&before_lines, landed),
+                    "a blank anchor was placed at {} with nothing to vouch for it", landed
+                );
+            }
+            None => {
+                prop_assert_eq!(confidence, Confidence::Outdated);
+                prop_assert!(!line_exists);
+            }
         }
     }
 
@@ -908,7 +979,13 @@ proptest! {
         let anchor = create("f.txt", side_of(left), line, &before_text);
         let mut stale = anchor.clone();
         stale.context = junk.clone();
-        prop_assert_eq!(resolve(&stale, &after_text), resolve(&anchor, &after_text));
+        // The snapshot is consulted at the weak tier and nowhere above it: an
+        // anchor whose content is found — `Exact`, `Moved` — or lost past
+        // recovery resolves the same with junk in its context.
+        let honest = resolve(&anchor, &after_text);
+        if honest.1 != Confidence::Weak {
+            prop_assert_eq!(resolve(&stale, &after_text), honest);
+        }
 
         // Two spellings of one line: `marked` is what `create` stores in
         // `context`, `reshaped` has the same tokens re-spaced and re-indented, so

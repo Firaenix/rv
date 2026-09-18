@@ -1164,3 +1164,47 @@ a 20k-line lockfile with a query lit and asserts a frame builds a fixed
 few plans and the two heights build the *same* number. It fails at eleven
 plans with the old overlay put back and passes at two — on any machine,
 since it never reads a clock.
+
+## 2026-09-18 — following the working copy, and comments that follow the code
+
+**The watch sees edits.** Auto-refresh probed jj's operation heads, which
+move on every jj command — and on nothing else. An agent editing a file, or
+the reviewer saving one in an editor, moved no op head until something
+snapshotted, and the thing that snapshots is the refresh the watch was
+waiting to trigger. `Watch` now also fingerprints the working copy of the
+files under review (mtime and size, plus their directories' mtimes so a file
+added beside one counts) on the same two-second tick, and the terminal
+regaining focus asks it to look at once, rate limit or not — the reviewer has
+most likely just done the thing that moved the repository. The watch is
+rebuilt with each refresh so it follows the new snapshot's file list rather
+than being carried across. `autorefresh.rs` drives it clock-free: an edit on
+disk, a tick inside the interval that must not fire, one past it that must,
+a focus that refreshes only when something moved, a half-typed comment that
+is never yanked away.
+
+**Comments stick to code.** `stale::survey` has resolved every anchor since
+2026-08-19 and knew a commented line had moved to 5; the pane matched boxes
+to lines by the *stored* number and drew the box at 2 with a `· moved` tag
+on it. After an agent's edit every comment floated over unrelated code, which
+is what the report called "weak anchors everywhere". The survey now moves the
+in-memory anchor to the line the cascade found — derived like `outdated`,
+never stored — so placement, `Enter`, the browser's `:N` and the status
+messages all agree, and flags go through the same pass (`place_flags`).
+
+**The resolver asks the neighbours.** Its third tier was the raw line
+number: an anchored line whose own text changed fell straight from "content
+not found" to "line 2 of this file", which after three lines were inserted
+above it is a comment line the remark has nothing to do with. Between the
+content scan and the raw number there is now a context tier: the stored
+±5-line snapshot is slid over the new text and the placement where most of
+the neighbours still stand — at least two, at least half, and one on each
+side of the target that has any — nearest the original line, is where the
+edited line now is. Still `Weak`, because what is there is not what was
+commented on; but placed. The both-sides rule came out of the property
+suite: with the anchored line deleted outright, the lines below it move up
+one and align perfectly with the line *above*, and only the silence above
+says that is not where it went. Three properties were restated for the new
+contract — `Weak` lands at the stored number *or* where a reference oracle
+says the neighbours vouch; the snapshot is consulted at the weak tier and
+nowhere above it; a blank anchor is never `Moved` but may be placed by its
+neighbours — and the suite holds at three thousand cases.

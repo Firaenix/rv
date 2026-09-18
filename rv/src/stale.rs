@@ -10,6 +10,15 @@
 //! was called by nothing, so every comment read as `open` however far the code
 //! had moved under it — including comments about files that no longer exist.
 //!
+//! # A placed anchor is placed
+//!
+//! The same pass moves each in-memory anchor's `line` to where the cascade
+//! found its code — so the box is drawn under the line it is about, `Enter`
+//! jumps to it and the browser names it. Derived like `outdated` and never
+//! stored: the file keeps the line the comment was written at, which is what
+//! a later resolution starts from. Before this, the resolver knew a line had
+//! moved to 5 and the pane drew the box at 2 with a `· moved` tag on it.
+//!
 //! # Only an unsettled comment goes stale
 //!
 //! A resolved comment whose code has since changed is still resolved: it was
@@ -23,10 +32,12 @@ use std::collections::HashMap;
 use rv_core::anchor;
 use rv_core::diff;
 use rv_core::diff::FileDiff;
+use rv_core::model::Anchor;
 use rv_core::model::Confidence;
 use rv_core::model::Side;
 use rv_core::store::Comment;
 use rv_core::store::CommentState;
+use rv_core::store::Flag;
 
 use crate::session::Review;
 
@@ -86,8 +97,22 @@ pub fn survey(review: &Review, comments: &mut [Comment]) -> HashMap<String, Drif
                 located: now.is_some_and(|now| now.is_some()),
             },
         );
+        if let Some(line) = line {
+            comment.anchor.line = line;
+        }
     }
     drifts
+}
+
+/// Moves each flag's in-memory anchor to where its line now stands, the way
+/// [`survey`] does for a comment. A flag has no state to go stale, so one
+/// whose line cannot be placed at all keeps the number it was written at.
+pub fn place_flags(review: &Review, flags: &mut [Flag]) {
+    for flag in flags {
+        if let (Some(line), _) = resolve_anchor(review, &flag.anchor) {
+            flag.anchor.line = line;
+        }
+    }
 }
 
 /// The stored excerpt diffed against `now`, or against nothing where the anchor
@@ -150,13 +175,18 @@ pub fn resolution(review: &Review, comment: &Comment) -> (Option<u32>, Confidenc
     ) {
         return (Some(comment.anchor.line), Confidence::Exact);
     }
-    let commit = commit_of(review, comment.anchor.side);
-    let Some(text) = read(review, commit, &comment.anchor.file, comment.anchor.side) else {
+    resolve_anchor(review, &comment.anchor)
+}
+
+/// Where `anchor` lands in the code as it now stands, and how confidently.
+fn resolve_anchor(review: &Review, anchor: &Anchor) -> (Option<u32>, Confidence) {
+    let commit = commit_of(review, anchor.side);
+    let Some(text) = read(review, commit, &anchor.file, anchor.side) else {
         // No blob at all — the file is gone from that side. That is the most
         // outdated a comment can be.
         return (None, Confidence::Outdated);
     };
-    anchor::resolve(&comment.anchor, &text)
+    anchor::resolve(anchor, &text)
 }
 
 /// Which revision counts as "there now" for a comment on `side`: a comment on a
