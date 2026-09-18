@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.0](https://github.com/Firaenix/rv/compare/v2.1.3...v2.2.0) - 2026-09-18
+
+### Fixed
+
+- *(anchor)* comments and flags stick to the code they are about
+
 ## [1.8.0](https://github.com/Firaenix/rv/compare/v1.7.2...v1.8.0) - 2026-09-15
 
 ### Added
