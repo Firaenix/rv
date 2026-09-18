@@ -18,7 +18,9 @@
 use anyhow::Context as _;
 use anyhow::Result;
 use crossterm::event;
+use crossterm::event::DisableFocusChange;
 use crossterm::event::DisableMouseCapture;
+use crossterm::event::EnableFocusChange;
 use crossterm::event::EnableMouseCapture;
 use crossterm::event::Event;
 use crossterm::event::KeyEventKind;
@@ -129,8 +131,15 @@ impl App {
                 // keystroke from typing two characters there.
                 Event::Key(key) if key.kind == KeyEventKind::Press => self.on_key_event(key)?,
                 Event::Mouse(mouse) => self.on_mouse(mouse)?,
+                // Coming back to the window: the reviewer has most likely
+                // just done the thing that moved the repository, so the
+                // watch looks now rather than at its next tick.
+                Event::FocusGained => {
+                    self.on_focus_gained();
+                    Action::Continue
+                }
                 // A resize repaints on the next pass, and everything else — a
-                // focus change, a paste — is not something this reviewer binds.
+                // focus loss, a paste — is not something this reviewer binds.
                 _ => Action::Continue,
             };
             match action {
@@ -144,25 +153,43 @@ impl App {
     /// One auto-refresh look: rate-limited by the watch, and only from browse
     /// with nothing modal up — a confirmation or a half-typed comment must
     /// never be yanked out from under the reviewer.
-    fn auto_refresh(&mut self, now: Instant) {
-        if self.mode != Mode::Browse
-            || self.help != HelpStage::Closed
-            || self.pending_leader.is_some()
-            || self.dragging
-        {
+    pub fn auto_refresh(&mut self, now: Instant) {
+        if !self.may_auto_refresh() {
             return;
         }
         let root = self.review.store.root().to_owned();
-        if !self.watch.moved(&root, now) {
+        if self.watch.moved(&root, now) {
+            self.refresh_quietly(&root);
+        }
+    }
+
+    /// The terminal regained focus: the watch looks at once, and the review
+    /// follows whatever moved while the reviewer was away.
+    pub fn on_focus_gained(&mut self) {
+        if !self.may_auto_refresh() {
             return;
         }
+        let root = self.review.store.root().to_owned();
+        if self.watch.look(&root) {
+            self.refresh_quietly(&root);
+        }
+    }
+
+    fn may_auto_refresh(&self) -> bool {
+        self.mode == Mode::Browse
+            && self.help == HelpStage::Closed
+            && self.pending_leader.is_none()
+            && !self.dragging
+    }
+
+    fn refresh_quietly(&mut self, root: &std::path::Path) {
         if let Err(error) = self.refresh() {
             // An auto path must degrade to a sentence, not end the review.
             self.raise(format!("auto-refresh failed: {error:#}"));
         }
         // The refresh's own snapshot moved the op head; without settling, it
         // would schedule the next refresh forever.
-        self.watch.settle(&root);
+        self.watch.settle(root);
     }
 
     /// The idle deadline, shortened so the watch still gets its look.
@@ -210,17 +237,18 @@ impl App {
     }
 }
 
-/// Turns mouse reporting on for the run.
+/// Turns mouse reporting and focus reporting on for the run.
 fn capture_mouse() -> Result<()> {
-    execute!(std::io::stdout(), EnableMouseCapture).context("could not enable mouse reporting")
+    execute!(std::io::stdout(), EnableMouseCapture, EnableFocusChange)
+        .context("could not enable mouse reporting")
 }
 
-/// Turns it off again, on the way out of any exit path.
+/// Turns them off again, on the way out of any exit path.
 ///
 /// Errors are dropped on purpose: this runs while the terminal is being handed
 /// back, including from the panic hook, and there is nowhere left to report to.
 fn release_mouse() {
-    let _ = execute!(std::io::stdout(), DisableMouseCapture);
+    let _ = execute!(std::io::stdout(), DisableMouseCapture, DisableFocusChange);
 }
 
 /// Makes a panic restore the terminal before it prints, and records the

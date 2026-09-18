@@ -102,7 +102,12 @@ impl App {
         let (stats, unreadable) = Self::measure(&review);
         let mut keymap = Keymap::from_config(config)?;
         let keymap_warnings = keymap.take_warnings();
-        let watch = super::watch::Watch::new(auto_refresh, review.store.root());
+        let watched = review
+            .files
+            .iter()
+            .map(|file| std::path::PathBuf::from(&file.path))
+            .collect();
+        let watch = super::watch::Watch::new(auto_refresh, review.store.root(), watched);
         let mut app = Self {
             review,
             diffs,

@@ -77,8 +77,10 @@ impl App {
             self.view,
             self.watch.enabled(),
         )?;
+        // The keymap comes across; the watch does not — the fresh one was
+        // built over the new snapshot's files, which is what it should be
+        // watching from here on.
         std::mem::swap(&mut fresh.keymap, &mut self.keymap);
-        std::mem::swap(&mut fresh.watch, &mut self.watch);
         fresh.sidebar_tab = self.sidebar_tab;
         // The pane stays the pane: a refresh used to hand the focus to the diff
         // from wherever it was, taking the commits list's tooltip with it. A
