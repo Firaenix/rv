@@ -40,7 +40,7 @@ impl App {
     /// inconvenience — which is the argument for the parameter, and a stronger one
     /// than the process-wide-and-impolite reasoning that used to stand here.
     pub fn open(review: Review, engine: super::DiffEngine) -> Result<Self> {
-        Self::build(review, engine, &Config::default(), &Settings::default())
+        Self::open_with_config(review, engine, &Config::default(), &Settings::default())
     }
 
     pub fn open_with_config(
@@ -49,14 +49,25 @@ impl App {
         config: &Config,
         settings: &Settings,
     ) -> Result<Self> {
-        Self::build(review, engine, config, settings)
+        Self::build(
+            review,
+            engine,
+            config,
+            View::from_settings(settings),
+            settings.auto_refresh.unwrap_or(true),
+        )
     }
 
+    /// The one constructor. `view` is the reviewer's whole display state,
+    /// handed in rather than read from a settings file here so that a refresh
+    /// can build a fresh app that *starts* with the preferences it has — there
+    /// is no list of them to copy afterwards, and nothing to leave off it.
     pub(super) fn build(
         review: Review,
         engine: super::DiffEngine,
         config: &Config,
-        settings: &Settings,
+        view: View,
+        auto_refresh: bool,
     ) -> Result<Self> {
         let diffs = vec![None; review.files.len()];
         let blobs = vec![None; review.files.len()];
@@ -91,14 +102,13 @@ impl App {
         let (stats, unreadable) = Self::measure(&review);
         let mut keymap = Keymap::from_config(config)?;
         let keymap_warnings = keymap.take_warnings();
-        let watch =
-            super::watch::Watch::new(settings.auto_refresh.unwrap_or(true), review.store.root());
+        let watch = super::watch::Watch::new(auto_refresh, review.store.root());
         let mut app = Self {
             review,
             diffs,
             blobs,
             merges,
-            view: View::from_settings(settings),
+            view,
             merger: super::merges::Merger::default(),
             comments,
             flags: Vec::new(),

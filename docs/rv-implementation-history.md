@@ -1112,3 +1112,27 @@ assignment. A dozen fields left `App`; `self.tint` became
 refreshes, and compares the lot. Written before the fix, it failed on
 exactly the four the report named — which is also how it caught that the
 first attempt at the fix had not landed on disk.
+
+### The same lesson, taken further
+
+The `View` fix above still left two lists. `refresh` copied `self.view`
+after building a fresh app from default settings — one assignment, but a
+step a future refactor could drop — and the test that guarded it named
+every getter by hand, which is the very list-that-rots the fix was for.
+
+**A fresh app is now born with the reviewer's view**: `App::build` takes a
+`View` rather than a `Settings`, `open_with_config` derives one from the
+file, and `refresh` passes its own. There is no copy step to forget.
+
+**The test walks the keymap.** `refresh_view::every_v_toggle_survives_a_refresh`
+reads the runtime `v` leader's children, presses each in the commits list
+and in the diff, and compares the painted screen — glyphs and styles, bar
+excepted — before and after `v r`. A toggle that changes nothing visible in
+either place fails the test outright rather than passing vacuously, and a
+toggle added to the table tomorrow is checked the day it lands. It found
+two more things a refresh threw away: the **focus** (a refresh from the
+commits list handed the keys to the diff, tooltip gone) and the **sidebar
+cursor** (re-seated on row 0, the newest change, rather than the heading
+or file it was on). Both are kept now — the cursor by naming the row it
+was on, a change by id, a file by path under its change, so a re-sort or
+a rebase finds it again.

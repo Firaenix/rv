@@ -36,6 +36,9 @@ use std::process::Command;
 use anyhow::Result;
 
 use super::App;
+use super::Focus;
+use super::SidebarTab;
+use crate::tree::NodeKind;
 
 /// The jj subcommand that snapshots the working copy with the least side
 /// effect. `status --quiet` is a query; jj snapshots as its first act.
@@ -62,21 +65,29 @@ impl App {
         }
         let review = crate::session::build(&root, from.as_deref(), to.as_deref())?;
         let selected = self.selected_file().map(|file| file.path.clone());
+        let place = self.sidebar_place();
 
-        // The display preferences are carried from `self` below, so the
-        // settings file has nothing to add on a refresh.
+        // Born with the reviewer's view: every display toggle is in `View`, so
+        // there is no list of preferences to carry across and nothing to be
+        // left off it — which is how `v #` and `v c` were once lost here.
         let mut fresh = Self::build(
             review,
             self.engine,
             &crate::config::Config::default(),
-            &crate::config::Settings::default(),
+            self.view,
+            self.watch.enabled(),
         )?;
         std::mem::swap(&mut fresh.keymap, &mut self.keymap);
         std::mem::swap(&mut fresh.watch, &mut self.watch);
-        // Every display preference at once — not a list of fields, which is
-        // how `v #` and `v c` came to be lost on refresh.
-        fresh.view = self.view;
         fresh.sidebar_tab = self.sidebar_tab;
+        // The pane stays the pane: a refresh used to hand the focus to the diff
+        // from wherever it was, taking the commits list's tooltip with it. A
+        // stack or a flag may not exist in the new snapshot, so those two step
+        // back to the diff they hang off.
+        fresh.focus = match self.focus {
+            Focus::Stack | Focus::Flag => Focus::Diff,
+            other => other,
+        };
         // Cloned, not taken: `select_file` below can fail, and an error path
         // that had already emptied the old app's fold state would leave the
         // reviewer in the un-refreshed review with their folds gone.
@@ -91,6 +102,14 @@ impl App {
             fresh.select_file(index)?;
         }
         fresh.resettle_sidebar();
+        // The sidebar cursor goes back to the *row it was on* — a change
+        // heading, a directory, a file under a change — where that row still
+        // exists; `resettle_sidebar` knows only the selected file, and in the
+        // commits list can only clamp, which put a fresh app's cursor on row
+        // 0, the newest change, whatever the reviewer was reading.
+        if let Some(row) = place.and_then(|place| fresh.row_of_place(&place)) {
+            fresh.sidebar_row = row;
+        }
         // A commits-tab refresh must show a commits-tab diff: the file was
         // re-selected in the bookmark's terms above, and leaving it there would
         // put the branch's diff under a change row — the screen/state
@@ -111,6 +130,43 @@ impl App {
         );
         *self = fresh;
         Ok(())
+    }
+
+    /// What the sidebar cursor is on, as a name that survives the list being
+    /// rebuilt: a change by its id, a directory by its key, a file by its path
+    /// under the change heading above it. A row number would not — a refresh
+    /// re-sorts, and a rebased stack lists its files in a new order.
+    fn sidebar_place(&self) -> Option<String> {
+        self.place_of_row(self.sidebar_row)
+    }
+
+    fn place_of_row(&self, row: usize) -> Option<String> {
+        let nodes = self.nodes();
+        let node = nodes.get(row)?;
+        Some(match &node.kind {
+            NodeKind::Commit { change_id, .. } => format!("change {change_id}"),
+            NodeKind::Dir { key, .. } => format!("dir {key}"),
+            NodeKind::Up => "up".to_owned(),
+            NodeKind::File { index } => {
+                let path = match self.sidebar_tab {
+                    SidebarTab::Commits => self.commit_path(*index)?.to_owned(),
+                    _ => self.review.files.get(*index)?.path.clone(),
+                };
+                let under = nodes[..row]
+                    .iter()
+                    .rev()
+                    .find_map(|node| match &node.kind {
+                        NodeKind::Commit { change_id, .. } => Some(change_id.as_str()),
+                        _ => None,
+                    })
+                    .unwrap_or_default();
+                format!("file {under} {path}")
+            }
+        })
+    }
+
+    fn row_of_place(&self, place: &str) -> Option<usize> {
+        (0..self.nodes().len()).find(|row| self.place_of_row(*row).as_deref() == Some(place))
     }
 }
 

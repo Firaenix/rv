@@ -109,7 +109,7 @@ impl App {
     /// `None` where no row does. In the commits tab the first match wins,
     /// which — the stack being listed newest first — is the newest change
     /// that touched the file.
-    fn row_of_selected_file(&self) -> Option<usize> {
+    pub(super) fn row_of_selected_file(&self) -> Option<usize> {
         let selected = self.selected_file()?.path.clone();
         self.nodes().iter().position(|node| {
             let tree::NodeKind::File { index } = node.kind else {

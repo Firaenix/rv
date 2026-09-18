@@ -44,6 +44,7 @@ mod mouse_2;
 mod panes;
 mod popup;
 mod popup_tips;
+mod refresh_view;
 mod resize;
 mod settle;
 mod stack;
