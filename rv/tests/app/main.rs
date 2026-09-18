@@ -39,6 +39,7 @@ mod fullcontext;
 mod hscroll;
 mod hunks;
 mod keymap;
+mod large;
 mod mouse_1;
 mod mouse_2;
 mod panes;

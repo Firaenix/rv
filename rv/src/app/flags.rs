@@ -55,6 +55,9 @@ impl App {
     }
 
     pub(super) fn flags_anchored_at(&self, line: &DiffLine) -> Vec<&Flag> {
+        if self.flags.is_empty() {
+            return Vec::new();
+        }
         let Some(target) = self.anchor_target(line) else {
             return Vec::new();
         };

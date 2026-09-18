@@ -8,6 +8,7 @@
 use std::ops::Range;
 
 use anyhow::Result;
+use rv_core::diff::DiffLine;
 
 use super::App;
 use super::Focus;
@@ -39,9 +40,13 @@ fn words(text: &str) -> Vec<Range<usize>> {
 impl App {
     /// The column cursor, clamped to the selected line.
     pub fn column(&self) -> usize {
-        let length = self
-            .selected_line()
-            .map_or(0, |line| line.text.chars().count());
+        self.selected_line().map_or(0, |line| self.column_in(&line))
+    }
+
+    /// The column cursor clamped to `line` — the selected line, handed in by
+    /// a caller that already has it, so the plan is not rebuilt to find it.
+    pub fn column_in(&self, line: &DiffLine) -> usize {
+        let length = line.text.chars().count();
         self.column.min(length.saturating_sub(1))
     }
 
@@ -52,7 +57,12 @@ impl App {
     /// The word the column cursor is in, or the next one along the line.
     pub fn word_range(&self) -> Option<Range<usize>> {
         let line = self.selected_line()?;
-        let column = self.column();
+        self.word_range_in(&line)
+    }
+
+    /// The same, on a `line` the caller already holds.
+    pub fn word_range_in(&self, line: &DiffLine) -> Option<Range<usize>> {
+        let column = self.column_in(line);
         words(&line.text)
             .into_iter()
             .find(|range| range.end > column)

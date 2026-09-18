@@ -89,6 +89,11 @@ impl App {
     /// [`App::comments_for_line`] does first — for [`App::plan`], which already
     /// holds the line stream and would otherwise rebuild it once per row.
     pub(super) fn comments_anchored_at(&self, line: &DiffLine) -> Vec<&Comment> {
+        // Asked once per line of the plan, so a review with no comments must
+        // not pay to resolve an anchor for each of a lockfile's 20k lines.
+        if self.comments.is_empty() {
+            return Vec::new();
+        }
         let Some(target) = self.anchor_target(line) else {
             return Vec::new();
         };

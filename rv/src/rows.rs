@@ -14,6 +14,7 @@
 //! every frame — which is what lets the drawing code stay a pure function of
 //! the app's state.
 
+use std::cell::Cell;
 use std::collections::HashSet;
 
 use rv_core::diff::DiffLine;
@@ -151,6 +152,22 @@ impl Row<'_> {
     }
 }
 
+/// How many plans this thread has built.
+///
+/// A plan is one row per line of the file, so building one is the one
+/// per-frame cost that grows with the file. It must be built a fixed few
+/// times a frame and never once per row: a pane that rebuilt it per row
+/// turned a 23k-line lockfile into a quarter-second frame (issue #27). The
+/// count is what lets a test pin that without a stopwatch — per thread, so
+/// tests running beside each other do not count each other's frames.
+pub fn plans_built() -> usize {
+    PLANS_BUILT.with(Cell::get)
+}
+
+thread_local! {
+    static PLANS_BUILT: Cell<usize> = const { Cell::new(0) };
+}
+
 /// Every row of a file's diff, in the order they are drawn.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Plan<'a> {
@@ -187,6 +204,7 @@ pub fn plan<'a>(
     collapsed: &HashSet<String>,
     width: usize,
 ) -> Plan<'a> {
+    PLANS_BUILT.with(|count| count.set(count.get() + 1));
     let mut rows = Vec::with_capacity(lines.len());
     for (index, line) in lines.iter().enumerate() {
         rows.push(Row::Diff {

@@ -203,10 +203,11 @@ fn body<'a>(
     let note = suppressed_note(app, height);
     let (plan, rows) = visible(app, pane);
 
-    // Asked once and handed down the row loop: it is derived from the row
-    // cursor over this very plan, and a forty-row pane would otherwise rebuild
-    // the plan forty times to paint one frame.
-    let selected = app.line_index();
+    // Read off this very plan and handed down the row loop: it is what
+    // `App::line_index` answers, without a second plan of the file to answer
+    // it — and a forty-row pane must not rebuild the plan forty times to
+    // paint one frame.
+    let selected = plan.line_of_row(app.cursor_row()).unwrap_or(0);
     let mut lines: Vec<Line> = Vec::with_capacity(rows.len() + usize::from(note));
     if note {
         lines.push(Line::styled(
@@ -245,7 +246,7 @@ fn draw_row(
                 width,
                 app.diff_hscroll(),
             ),
-            &emphasis::marks(app, *index, line),
+            &emphasis::marks(app, *index, line, selected),
             app.diff_hscroll(),
         ),
         Row::BoxTop { comment, .. } => comment_box::box_top(app, comment, width),

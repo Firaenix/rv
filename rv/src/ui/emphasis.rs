@@ -45,7 +45,13 @@ fn cursor_style() -> Style {
 /// What to lay over diff line `index`: every query match, and — on the
 /// selected line while the diff pane has the focus — the word under the
 /// column cursor.
-pub(super) fn marks(app: &App, index: usize, line: &DiffLine) -> Vec<Mark> {
+///
+/// `selected` is the line the row cursor is on, handed down from
+/// [`super::diff::body`] rather than asked here: asking costs a plan of the
+/// whole file, and this runs once per row on screen. Asking per row made a
+/// frame cost rows × lines — a quarter of a second on a 23k-line lockfile,
+/// which is what the reviewer read as a freeze (issue #27).
+pub(super) fn marks(app: &App, index: usize, line: &DiffLine, selected: usize) -> Vec<Mark> {
     let mut marks: Vec<Mark> = app
         .matches_in(&line.text)
         .into_iter()
@@ -54,9 +60,9 @@ pub(super) fn marks(app: &App, index: usize, line: &DiffLine) -> Vec<Mark> {
             style: match_style(),
         })
         .collect();
-    if index == app.line_index()
+    if index == selected
         && app.focus() == Focus::Diff
-        && let Some(chars) = app.word_range()
+        && let Some(chars) = app.word_range_in(line)
     {
         marks.push(Mark {
             chars,

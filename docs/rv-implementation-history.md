@@ -1136,3 +1136,31 @@ cursor** (re-seated on row 0, the newest change, rather than the heading
 or file it was on). Both are kept now — the cursor by naming the row it
 was on, a change by id, a file by path under its change, so a re-sort or
 a rebase finds it again.
+
+## 2026-09-18 — issue #27: the frame that cost rows × lines
+
+Opening a `Cargo.lock` froze the reviewer. Every candidate the report named
+— highlighting, difftastic, the merge — runs off the UI thread and was
+innocent; a sample of a 23k-line frame put nine tenths of it under
+`emphasis::marks`, the overlay that underlines search hits and greys the
+column cursor's word. It asked `app.line_index()` — "is this the selected
+line?" — **once per row on screen**, and answering that builds the plan:
+one row per line of the file. A forty-row pane built the plan forty times
+a frame; `ui::diff::body` even carried a comment explaining why *it* asks
+once and hands the answer down, and the overlay added beside it did not
+take the hint.
+
+The selected line is handed to `marks` now, and the column cursor's word
+is read off the row's own line (`word_range_in`) rather than off a fresh
+plan. Two smaller cuts beside it: the plan reads the selected line off
+itself instead of building a second plan to ask, and a review with no
+comments and no flags no longer resolves an anchor for every line to find
+the notes it has none of. Debug frames on the 23k-line file went 225ms →
+6ms; the release binary's keystroke-to-repaint 115ms → 5ms.
+
+**The test counts plans, not milliseconds.** `rows::plans_built` is a
+per-thread tally; `large.rs` renders a 12-row pane and a 200-row pane over
+a 20k-line lockfile with a query lit and asserts a frame builds a fixed
+few plans and the two heights build the *same* number. It fails at eleven
+plans with the old overlay put back and passes at two — on any machine,
+since it never reads a clock.
