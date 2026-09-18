@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.3](https://github.com/Firaenix/rv/compare/v2.1.2...v2.1.3) - 2026-09-18
+
+### Fixed
+
+- *(tui)* a large file no longer freezes the reviewer — the frame cost rows × lines
+
 ## [2.1.2](https://github.com/Firaenix/rv/compare/v2.1.1...v2.1.2) - 2026-09-18
 
 ### Fixed
