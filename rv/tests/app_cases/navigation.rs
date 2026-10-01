@@ -7,10 +7,11 @@ use std::cell::RefCell;
 
 use crate::support::*;
 
-/// Movement is the arrows alone — the vim letters `h`/`j`/`k`/`l` were dropped,
-/// and pressing one must do nothing rather than quietly move the cursor. The
-/// arrows still move: `↓`/`↑` walk the focused pane and `←`/`→` change which
-/// pane has the focus.
+/// Row movement is the arrows alone — the vim letters `h`/`j`/`k`/`l` were
+/// dropped as row and pane movement, and pressing one must not quietly move the
+/// cursor or the focus (`h`/`l` walk the *column* within the selected line, which
+/// is neither). The arrows still move: `↓`/`↑` walk the focused pane, and `←`
+/// leaves it once the column cursor has nowhere left to go.
 #[test]
 fn the_vim_letters_are_inert_and_the_arrows_move() {
     let fixture = shared_multi();
@@ -25,7 +26,7 @@ fn the_vim_letters_are_inert_and_the_arrows_move() {
     press(app, KeyCode::Up);
     assert_eq!(app.line_index(), start, "↑ did not move it back");
 
-    // None of the dropped letters move the cursor or change the focus.
+    // None of the letters move the row cursor, the file or the focus.
     for letter in ['h', 'j', 'k', 'l'] {
         let before = (app.focus(), app.file_index(), app.line_index());
         press(app, KeyCode::Char(letter));
@@ -42,7 +43,13 @@ fn the_vim_letters_are_inert_and_the_arrows_move() {
         );
     }
 
-    // `←` takes the focus to the sidebar; `→` brings it back to the diff.
+    // `←` walks the column back along the line first — `l` above left it on the
+    // second word — and takes the focus to the sidebar from its start; `→`
+    // brings it back to the diff.
+    while app.column() > 0 {
+        press(app, KeyCode::Left);
+    }
+    assert_eq!(app.focus(), Focus::Diff, "← left the pane mid-line");
     press(app, KeyCode::Left);
     assert_eq!(app.focus(), Focus::Sidebar, "← did not move the focus");
     press(app, KeyCode::Right);

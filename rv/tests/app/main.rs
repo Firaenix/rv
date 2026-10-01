@@ -26,6 +26,7 @@ mod browser_2;
 mod browser_3;
 mod clipping;
 mod collapse;
+mod column_cursor;
 mod comment_1;
 mod comment_2;
 mod commits;

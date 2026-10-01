@@ -22,7 +22,7 @@ use super::Group;
 use super::Leader;
 use super::PaneCommand;
 
-pub(super) const REVIEW: [Binding; 16] = [
+pub(super) const REVIEW: [Binding; 17] = [
     Binding {
         keys: "C",
         group: Group::Comment,
@@ -112,6 +112,17 @@ pub(super) const REVIEW: [Binding; 16] = [
         what: "find text",
         codes: &[KeyCode::Char('/')],
         command: Command::Diff(DiffCommand::Search),
+    },
+    // Direct on the diff only: elsewhere there is no line for a column cursor
+    // to sit in, so there is no word to search for either.
+    Binding {
+        keys: "*",
+        group: Group::Scroll,
+        leader: None,
+        contexts: &[Context::Diff],
+        what: "find word",
+        codes: &[KeyCode::Char('*')],
+        command: Command::Diff(DiffCommand::SearchWord),
     },
     Binding {
         keys: "n",

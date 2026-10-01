@@ -133,6 +133,22 @@ pub fn diff_row_at(app: &App, pane: Rect, row: usize) -> Option<usize> {
     (index < rows.end).then_some(index)
 }
 
+/// Which character of a diff line is under screen column `column`, for a pane
+/// drawn at `pane`.
+///
+/// The gutter does not scroll and holds no line text, so a click on it — or
+/// anywhere left of the pane — answers the first character on screen rather than
+/// nothing: a click is a choice, and the nearest character is the one meant.
+#[must_use]
+pub fn diff_column_at(app: &App, pane: Rect, column: u16) -> usize {
+    let hscroll = app.diff_hscroll();
+    // One column for the border, the gutter, and — when the row is scrolled —
+    // the clipped marker drawn in place of the text cut off to the left.
+    let indent = 1 + GUTTER + usize::from(hscroll > 0);
+    let into = usize::from(column.saturating_sub(pane.x)).saturating_sub(indent);
+    hscroll.saturating_add(into)
+}
+
 /// The first row on screen after `delta` rows of wheel, clamped to the plan.
 #[must_use]
 pub fn diff_scrolled(app: &App, pane: Rect, delta: isize) -> usize {

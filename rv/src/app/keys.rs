@@ -317,6 +317,7 @@ impl App {
             DiffCommand::NextFlag => self.jump_flag(true)?,
             DiffCommand::PrevFlag => self.jump_flag(false)?,
             DiffCommand::Search => self.begin_search(),
+            DiffCommand::SearchWord => self.search_word_under_cursor()?,
             DiffCommand::NextMatch => self.jump_match(true)?,
             DiffCommand::PrevMatch => self.jump_match(false)?,
             DiffCommand::Definition => self.goto_definition()?,

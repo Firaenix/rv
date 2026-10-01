@@ -1208,3 +1208,48 @@ contract — `Weak` lands at the stored number *or* where a reference oracle
 says the neighbours vouch; the snapshot is consulted at the weak tier and
 nowhere above it; a blank anchor is never `Moved` but may be placed by its
 neighbours — and the suite holds at three thousand cases.
+
+
+## 2026-09-18 — issues #31 and #32: completions, and a cursor you can point at
+
+**The CLI had no completions.** Nothing described `rv`'s subcommands to a
+shell, so every invocation started with `rv --help`. `rv completions <shell>`
+now writes the script on stdout, generated from the same clap command tree the
+binary parses with — the one arrangement under which a script cannot describe a
+CLI that no longer exists. It resolves no range and reads no repository, so it
+answers outside a workspace, which is where a shell's install step runs. The
+nix package installs bash, zsh and fish beside the binary, before `wrapProgram`
+moves the real executable aside; a `cargo install` installs nothing, so the
+README spells the three redirects out instead.
+
+**The column cursor could not be pointed at.** It had existed since `g d` and
+`g r` needed to know which symbol on a line they were about, but the only way
+to move it was `h`/`l` by word. Three gaps, one cause — the cursor was reachable
+by keys that walk, never by saying where it should be:
+
+- A click resolved a *row*. `ui::diff_column_at` now answers the character under
+  the pointer, accounting for the gutter (which does not scroll) and the clipped
+  marker a sideways-scrolled row draws in place of the text cut off to its left;
+  a click left of the text answers the first character on screen rather than
+  nothing, because a click is a choice and the nearest character is the one
+  meant.
+- Clicks were dropped in every mode but `Browse`, so a pointer went dead the
+  moment a search was being typed. The real hazard is narrower than the guard
+  was: only the modes *writing* against the cursor's line — a half-typed comment
+  or flag, a delete confirmation — can be re-aimed by a click, and those still
+  answer no gesture. Searching and picking a symbol write nothing, so they take a
+  click exactly as browsing does.
+- `←`/`→` were pane movement everywhere. In the diff they now step the column one
+  character, and `←` leaves for the sidebar only once the line has run out —
+  which keeps the escape hatch without spending a second pair of keys on it.
+- `*` takes the word under the column cursor as the search query and jumps to its
+  next occurrence. It is the query a reviewer was otherwise retyping off their
+  own screen.
+
+**`Tab` was two jobs under one key.** From the diff it both moved the focus to
+the sidebar *and* forced the tab to `Files`, so a trip to the diff and back was
+a trip to a different list. It is now a plain focus toggle out of the diff,
+keeping whatever tab the sidebar was left on, and mode rotation stays scoped to
+the sidebar where it belongs. The help text says so, and the popup's
+fits-at-100x30 property paid for the shorter labels (`col/out`, `sidebar/mode`)
+that made room for the new `*` row.

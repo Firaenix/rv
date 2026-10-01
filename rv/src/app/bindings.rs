@@ -230,6 +230,8 @@ pub(super) enum DiffCommand {
     NextFlag,
     PrevFlag,
     Search,
+    /// Search for the word the column cursor is on.
+    SearchWord,
     NextMatch,
     PrevMatch,
     Definition,

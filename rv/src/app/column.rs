@@ -80,6 +80,29 @@ impl App {
         )
     }
 
+    /// `←`/`→` inside the diff: one character along the selected line.
+    ///
+    /// Answers whether it moved, so `←` on the first character can mean "leave
+    /// the pane" instead — the column cursor and the pane cursor share one key
+    /// without either stealing it.
+    pub(super) fn step_column(&mut self, forward: bool) -> bool {
+        let Some(line) = self.selected_line() else {
+            return false;
+        };
+        let column = self.column_in(&line);
+        let last = line.text.chars().count().saturating_sub(1);
+        let target = if forward {
+            column.saturating_add(1).min(last)
+        } else {
+            column.saturating_sub(1)
+        };
+        if target == column {
+            return false;
+        }
+        self.set_column(target);
+        true
+    }
+
     /// `h`/`l`: to the start of the previous or next word — relative to the
     /// word the cursor reads as being on, not the raw column: a cursor before
     /// the first word already *shows* that word, so a step right must reach

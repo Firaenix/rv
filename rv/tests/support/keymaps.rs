@@ -50,6 +50,7 @@ pub const BROWSE_KEYS: &[&str] = &[
     "`N`",
     "`h`",
     "`l`",
+    "`*`",
     // Space — contextual actions (files/commits lists, the diff, and comments)
     "`Space` `t`",
     "`Space` `o`",

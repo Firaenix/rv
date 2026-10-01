@@ -139,7 +139,7 @@ impl App {
             DiffCommand::NextFlag | DiffCommand::PrevFlag => self.has_flags(),
             DiffCommand::Search => self.selected_diff().is_some(),
             DiffCommand::NextMatch | DiffCommand::PrevMatch => self.has_query(),
-            DiffCommand::Definition | DiffCommand::References => {
+            DiffCommand::Definition | DiffCommand::References | DiffCommand::SearchWord => {
                 self.focus == Focus::Diff && self.word_under_cursor().is_some()
             }
         }

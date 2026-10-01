@@ -303,8 +303,9 @@ typed or a confirmation being answered.
 
 **Browsing**
 
-Movement is the **arrows** (and the mouse); `h`/`l` step a column cursor
-along the selected line. **Uppercase acts, lowercase moves**: every key that
+Movement is the **arrows** (and the mouse); in the diff `←`/`→` step a column
+cursor along the selected line a character at a time and `h`/`l` step it a word
+at a time, and clicking a character places it there. **Uppercase acts, lowercase moves**: every key that
 writes to the review or leaves the reviewer is a shifted letter — `C` comment,
 `D` delete, `R` resolve, `A` acknowledge a flag, `F` flag, `X` tick reviewed,
 `E` edit — so a mutation is always a deliberate chord and a lowercase letter
@@ -321,8 +322,8 @@ left it.
 | --- | --- |
 | `↓` | Next row, file or comment — whichever the focused pane is listing |
 | `↑` | The previous one |
-| `←` | Out / up a level: the diff hands the focus back to the sidebar, a comment stack back to the diff, and in the file or commits list it climbs one level of the tree you drilled into |
-| `→` | Into / open: in the file or commits list it drills into the directory or change under the cursor, opens the file under it (moving the focus to the diff), and in the Comments tab jumps to the comment's code |
+| `←` | One character left along the diff line — and, on its first character, out / up a level: the diff hands the focus back to the sidebar, a comment stack back to the diff, and in the file or commits list it climbs one level of the tree you drilled into |
+| `→` | One character right along the diff line; elsewhere into / open: in the file or commits list it drills into the directory or change under the cursor, opens the file under it (moving the focus to the diff), and in the Comments tab jumps to the comment's code |
 | `PgDn` | Move the cursor a screenful forward in the focused pane |
 | `PgUp` | A screenful back |
 | `Home` | Jump the cursor to the first row of the focused pane |
@@ -332,7 +333,7 @@ left it.
 | `]` | Next file, from whichever pane the cursor is in |
 | `[` | Previous file, likewise |
 | `Enter` | To the diff for the highlighted item: opens the file under the sidebar cursor (moving the focus to the diff), steps into the selected diff line's comment stack — or onto the flag the cursor is resting on — or from the Comments tab jumps to the comment's code. It no longer fires on a directory or change row — `→` drills into those |
-| `Tab` | To the next mode, looping: Files → Commits → Comments → Flags → Diff. A file row under a change shows *that change's* diff of it |
+| `Tab` | From the diff, to the sidebar on whatever tab it was left on; from the sidebar, to the next mode, looping: Files → Commits → Comments → Flags → Diff. A file row under a change shows *that change's* diff of it |
 | `s` | Fold a comment box away, or a directory in the file list — again to unfold |
 | `f` | On the diff: toggle full-file context (also `v` `f` from anywhere) |
 | `i` | In the **Commits** list: put the change details away, or bring them back (also `v` `i` from anywhere) |
@@ -353,7 +354,8 @@ left it.
 | `n` | The next match of the last `/` query, wrapping round the file |
 | `N` | The previous one |
 | `h` | (Diff) Move the column cursor to the previous word of the highlighted line |
-| `l` | (Diff) The next word — the word under the cursor is what `g` `d` and `g` `r` look up |
+| `l` | (Diff) The next word — the word under the cursor is what `*`, `g` `d` and `g` `r` look up |
+| `*` | (Diff) Search for the word under the column cursor and jump to its next occurrence — `/` without retyping what is already on screen |
 | `Space` `t` | (Files/Commits) Switch the list between a flat list and a tree |
 | `Space` `o` | (Files/Commits) Cycle the list's order: by path, additions, deletions |
 | `Space` `#` | (Files/Commits) Show or hide the `+n -n` counts |

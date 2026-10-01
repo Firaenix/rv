@@ -66,6 +66,17 @@ impl App {
         self.jump_match_from(forward, false)
     }
 
+    /// `*`: search for the word the column cursor is on, and go to its next
+    /// occurrence — the query a reviewer would otherwise retype from the screen.
+    pub(super) fn search_word_under_cursor(&mut self) -> Result<()> {
+        let Some(word) = self.word_under_cursor() else {
+            self.status = "no word under the cursor".to_owned();
+            return Ok(());
+        };
+        self.query = word;
+        self.jump_match_from(true, false)
+    }
+
     /// To the next match after the column cursor — or, `here` set, at it —
     /// wrapping round the file.
     fn jump_match_from(&mut self, forward: bool, here: bool) -> Result<()> {

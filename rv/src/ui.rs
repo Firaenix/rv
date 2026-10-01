@@ -70,6 +70,7 @@ mod whichkey;
 
 pub use code::capture_colour;
 pub use code::line_background;
+pub use diff::diff_column_at;
 pub use diff::diff_row_at;
 pub use diff::diff_scrolled;
 pub use diff::title;

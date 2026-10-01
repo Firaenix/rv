@@ -48,9 +48,11 @@ impl App {
     /// deletion is unrecoverable, and a mis-click is the accident it guards
     /// against.
     ///
-    /// Anything modal answers no gesture: the `?` popup takes only the wheel,
-    /// and a half-typed comment takes nothing, because a click that moved the
-    /// selection under it would save that comment against a line nobody chose.
+    /// The `?` popup takes only the wheel, and the modes that are *writing* — a
+    /// half-typed comment or flag, a delete confirmation — take nothing at all,
+    /// because moving the selection under one would aim it at a line nobody
+    /// chose. Searching and picking a symbol write nothing, so a click there
+    /// places the cursor exactly as it does while browsing.
     ///
     /// It returns an [`Action`] for symmetry with [`App::on_key`] and always
     /// returns [`Action::Continue`]: no gesture ends a review.
@@ -63,7 +65,7 @@ impl App {
             }
             return Ok(Action::Continue);
         }
-        if self.mode != Mode::Browse {
+        if !self.takes_gestures() {
             return Ok(Action::Continue);
         }
 
@@ -89,6 +91,15 @@ impl App {
         Ok(Action::Continue)
     }
 
+    /// Whether gestures are answered at all: every mode but the ones composing
+    /// text against the cursor's line, which a click would silently re-aim.
+    fn takes_gestures(&self) -> bool {
+        !matches!(
+            self.mode,
+            Mode::Comment | Mode::Flag | Mode::ConfirmDelete { .. }
+        )
+    }
+
     /// Records the rectangles the last frame was painted with. Called by
     /// [`crate::ui::draw`] and nowhere else.
     pub fn note_layout(&self, painted: Layout) {
@@ -112,7 +123,7 @@ impl App {
             Some(Target::Chevron) => self.toggle_sidebar(),
             Some(Target::Divider) => self.dragging = true,
             Some(Target::SidebarRow(row)) => self.click_sidebar(painted, row)?,
-            Some(Target::DiffRow(row)) => self.click_diff(painted, row),
+            Some(Target::DiffRow(row)) => self.click_diff(painted, row, column),
             // The bar reports state and the popup is dismissed by key; neither
             // answers a click. `None` is the pointer outside everything drawn.
             Some(Target::Bar | Target::Popup) | None => {}
@@ -165,13 +176,13 @@ impl App {
         Ok(())
     }
 
-    /// A click in the diff pane: the row under the pointer becomes the cursor,
-    /// a box row takes the focus into that comment's stack, and a flag row
-    /// onto that flag.
+    /// A click in the diff pane: the row under the pointer becomes the cursor
+    /// and the character under it the column, a box row takes the focus into
+    /// that comment's stack, and a flag row onto that flag.
     ///
     /// Which comment or flag is read off the plan *before* the cursor moves,
     /// because the click was resolved against that plan.
-    fn click_diff(&mut self, painted: &Layout, row: usize) {
+    fn click_diff(&mut self, painted: &Layout, row: usize, column: u16) {
         let Some(index) = ui::diff_row_at(self, painted.diff, row) else {
             return;
         };
@@ -182,6 +193,7 @@ impl App {
             .map(|comment| comment.id.clone());
         let flag = clicked.and_then(Row::flag).map(|flag| flag.id.clone());
         self.set_cursor_row(index);
+        self.set_column(ui::diff_column_at(self, painted.diff, column));
         self.focus = Focus::Diff;
         // `set_cursor_row` has just put the stack cursor back at the top, so
         // this is the whole of the stack's state and cannot be stale.

@@ -28,8 +28,8 @@ pub const BINDINGS: &[Binding] = &concat();
 
 /// Concatenates the two halves of the table at compile time. Sizes are spelled
 /// out because stable Rust cannot add const generics in an array length.
-const fn concat() -> [Binding; 72] {
-    let mut out = [HEAD[0]; 72];
+const fn concat() -> [Binding; 73] {
+    let mut out = [HEAD[0]; 73];
     let mut n = 0;
     let mut i = 0;
     while i < HEAD.len() {
@@ -106,7 +106,7 @@ const HEAD: [Binding; 35] = [
         group: Group::Focus,
         leader: None,
         contexts: ANY,
-        what: "out / up",
+        what: "col/out",
         codes: &[KeyCode::Left],
         command: Command::Pane(PaneCommand::FocusLeft),
     },
@@ -115,7 +115,7 @@ const HEAD: [Binding; 35] = [
         group: Group::Focus,
         leader: None,
         contexts: ANY,
-        what: "into/open",
+        what: "col/open",
         codes: &[KeyCode::Right],
         command: Command::Pane(PaneCommand::FocusRight),
     },
@@ -187,7 +187,7 @@ const HEAD: [Binding; 35] = [
         group: Group::Focus,
         leader: None,
         contexts: ANY,
-        what: "next mode",
+        what: "sidebar/mode",
         codes: &[KeyCode::Tab],
         command: Command::Pane(PaneCommand::CycleTab),
     },
