@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.3.0](https://github.com/Firaenix/rv/compare/v2.2.0...v2.3.0) - 2026-10-01
+
+### Added
+
+- *(tui)* a column cursor you can place — click, arrows, * and a plain Tab
+- *(cli)* rv completions <shell>, installed by the nix package
+
 ## [2.2.0](https://github.com/Firaenix/rv/compare/v2.1.3...v2.2.0) - 2026-09-18
 
 ### Added
