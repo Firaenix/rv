@@ -11,13 +11,15 @@
       let
         pkgs = nixpkgs.legacyPackages.${system};
         # release-plz owns the version and writes it to one place; reading it back
-        # is what keeps the store path from saying 1.0.0 forever.
-        cargo = builtins.fromTOML (builtins.readFile ./Cargo.toml);
+        # is what keeps the store path from saying 1.0.0 forever. Not named
+        # `cargo`: the dev shell below lists `cargo` under `with pkgs`, and a
+        # `let` binding of that name shadows the package.
+        manifest = builtins.fromTOML (builtins.readFile ./Cargo.toml);
       in
       {
         packages.default = pkgs.rustPlatform.buildRustPackage {
           pname = "rv";
-          version = cargo.workspace.package.version;
+          version = manifest.workspace.package.version;
           src = pkgs.lib.cleanSource ./.;
           cargoLock.lockFile = ./Cargo.lock;
 
