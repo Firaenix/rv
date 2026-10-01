@@ -30,6 +30,7 @@ mod cli;
 
 use anyhow::Context as _;
 use anyhow::Result;
+use clap::CommandFactory as _;
 use clap::Parser;
 use cli::Command;
 use rv::app::App;
@@ -233,6 +234,12 @@ fn run() -> Result<ExitCode> {
         }
         Some(Command::Reviewed { json }) => {
             commands::attention::reviewed(&read()?, json)?;
+            Ok(ExitCode::SUCCESS)
+        }
+        // Resolves no range and reads no repository: completions are about the
+        // command line itself, so they work outside a workspace.
+        Some(Command::Completions { shell }) => {
+            clap_complete::generate(shell, &mut Cli::command(), "rv", &mut std::io::stdout());
             Ok(ExitCode::SUCCESS)
         }
         Some(Command::Status { json, check }) => {

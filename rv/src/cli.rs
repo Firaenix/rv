@@ -3,6 +3,7 @@
 use std::path::PathBuf;
 
 use clap::Subcommand;
+use clap_complete::Shell;
 use rv_core::store::CommentState;
 
 use crate::commands::ByArg;
@@ -178,6 +179,16 @@ pub(crate) enum Command {
         /// Emit JSON instead of text.
         #[arg(long)]
         json: bool,
+    },
+    /// Print a shell's completion script for `rv` on stdout.
+    ///
+    /// A nix or Homebrew install already carries these; this is the hook for
+    /// `cargo install`, where nothing installs files beside the binary:
+    /// `rv completions zsh > "${fpath[1]}/_rv"`.
+    Completions {
+        /// The shell to generate for.
+        #[arg(value_name = "SHELL")]
+        shell: Shell,
     },
 }
 

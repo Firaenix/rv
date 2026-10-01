@@ -28,6 +28,9 @@ anyhow.workspace = true
 # Comment ids are a short blake3 digest of the location and body they cover.
 blake3.workspace = true
 clap.workspace = true
+# `rv completions <shell>`: the scripts are generated from the same clap
+# command tree the binary parses with, so they cannot describe a stale CLI.
+clap_complete.workspace = true
 # The terminal stack. Unused until the TUI lands; declared here so the crate's
 # dependency set does not churn when it does.
 crossterm = "0.29"

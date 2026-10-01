@@ -121,6 +121,7 @@ Run `rv` from the **workspace root** — the directory holding `.jj/`. See
 | `rv ack <id>` / `rv unflag <id>` | Marks a flag looked at, or removes it |
 | `rv review <file> [--change <id>]` / `rv unreview …` | Ticks a file off as reviewed — the range's diff of it, or one change's — or clears the tick |
 | `rv reviewed [--json]` | Lists the ticked files, and which have changed since |
+| `rv completions <shell>` | Prints the completion script for `bash`, `zsh`, `fish`, `elvish` or `powershell` on stdout. The nix and Homebrew packages install it for you |
 | `rv --repo <path> …` | Reviews the workspace at `<path>` instead of the current directory |
 | `rv --no-difft …` | Diffs with the in-process engine instead of difftastic: line-based rather than structural, with context lines. What a reviewer with no `difft` on `PATH` sees |
 
@@ -133,7 +134,16 @@ nix develop          # a shell with cargo, jj, difftastic and the rust toolchain
 ```
 
 The packaged binary carries its own difftastic, so structural diffs work even
-where `difft` is not installed.
+where `difft` is not installed, and its shell completions are installed beside
+it — nothing to source.
+
+A `cargo install` carries neither, so completions are a command there:
+
+```sh
+rv completions zsh > "${fpath[1]}/_rv"
+rv completions bash > /etc/bash_completion.d/rv
+rv completions fish > ~/.config/fish/completions/rv.fish
+```
 
 `--to` overrides the positional target when both are given. That is also the
 escape hatch for the one name collision: a bookmark literally called `render` or

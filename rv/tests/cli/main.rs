@@ -8,6 +8,7 @@ mod support;
 
 mod attention;
 mod comments;
+mod completions;
 mod output;
 mod session;
 mod status;
