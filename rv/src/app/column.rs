@@ -11,14 +11,13 @@ use anyhow::Result;
 use rv_core::diff::DiffLine;
 
 use super::App;
-use super::Focus;
 
 fn is_word(character: char) -> bool {
     character.is_alphanumeric() || character == '_'
 }
 
 /// The words of `text`, as character ranges.
-fn words(text: &str) -> Vec<Range<usize>> {
+pub(super) fn words(text: &str) -> Vec<Range<usize>> {
     let mut ranges = Vec::new();
     let mut start = None;
     for (at, character) in text.chars().enumerate() {
@@ -156,76 +155,7 @@ impl App {
         Ok(())
     }
 
-    /// `g r`: to the next place the word under the cursor appears, across
-    /// every file in scope, wrapping.
-    pub(super) fn goto_reference(&mut self) -> Result<()> {
-        let Some(word) = self.word_under_cursor() else {
-            self.status = "no word under the cursor".to_owned();
-            return Ok(());
-        };
-        let references = self.references_of(&word);
-        if references.is_empty() {
-            self.status = format!("no other reference to {word}");
-            return Ok(());
-        }
-        let here = (self.file_index, self.selected_line_number());
-        let position = references
-            .iter()
-            .position(|&(file, line)| (file, line) > here)
-            .unwrap_or(0);
-        let (file, line) = references[position];
-        self.select_file(file)?;
-        let found = self
-            .displayed_lines()
-            .iter()
-            .position(|shown| shown.right == Some(line) || shown.left == Some(line));
-        match found {
-            Some(index) => {
-                let row = self.plan().row_of_line(index).unwrap_or(0);
-                self.set_cursor_row(row);
-            }
-            None => self.set_cursor_row(0),
-        }
-        self.focus = Focus::Diff;
-        self.set_column_to(&word);
-        self.status = format!(
-            "{word}: reference {} of {} — {}:{line}",
-            position + 1,
-            references.len(),
-            self.review.files[file].path
-        );
-        Ok(())
-    }
-
-    /// Every whole-word occurrence of `word` in the scope's files, by file
-    /// then line — read from the blobs, so a reference in a line this change
-    /// did not touch still counts.
-    fn references_of(&self, word: &str) -> Vec<(usize, u32)> {
-        let scope = self.scope();
-        let mut found = Vec::new();
-        for file in self.scoped_files(&scope) {
-            let index = file.file;
-            let Some(blob) = self.read_indexable(file).blob else {
-                continue;
-            };
-            let text = String::from_utf8_lossy(&blob);
-            for (number, line) in text.lines().enumerate() {
-                let hit = words(line).into_iter().any(|range| {
-                    line.chars()
-                        .skip(range.start)
-                        .take(range.len())
-                        .eq(word.chars())
-                });
-                if hit {
-                    found.push((index, u32::try_from(number + 1).unwrap_or(u32::MAX)));
-                }
-            }
-        }
-        found.sort_unstable();
-        found
-    }
-
-    fn selected_line_number(&self) -> u32 {
+    pub(super) fn selected_line_number(&self) -> u32 {
         self.selected_line()
             .and_then(|line| line.right.or(line.left))
             .unwrap_or(0)
@@ -233,7 +163,7 @@ impl App {
 
     /// Puts the column on `word` in the line just landed on, so a chain of
     /// jumps keeps pointing at the same symbol.
-    fn set_column_to(&mut self, word: &str) {
+    pub(super) fn set_column_to(&mut self, word: &str) {
         let Some(line) = self.selected_line() else {
             return;
         };

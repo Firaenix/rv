@@ -86,6 +86,7 @@ impl App {
             Mode::Comment | Mode::Flag => self.on_key_comment(key),
             Mode::ConfirmDelete { .. } => self.on_key_confirm_delete(key),
             Mode::Pick => self.on_key_pick(key),
+            Mode::References => self.on_key_references(key),
             Mode::Search => self.on_key_search(key),
         }
     }
@@ -321,7 +322,7 @@ impl App {
             DiffCommand::NextMatch => self.jump_match(true)?,
             DiffCommand::PrevMatch => self.jump_match(false)?,
             DiffCommand::Definition => self.goto_definition()?,
-            DiffCommand::References => self.goto_reference()?,
+            DiffCommand::References => self.begin_references()?,
         }
         Ok(())
     }

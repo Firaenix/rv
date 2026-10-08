@@ -1253,3 +1253,34 @@ keeping whatever tab the sidebar was left on, and mode rotation stays scoped to
 the sidebar where it belongs. The help text says so, and the popup's
 fits-at-100x30 property paid for the shorter labels (`col/out`, `sidebar/mode`)
 that made room for the new `*` row.
+
+
+## 2026-10-08 — Tab stops at the sidebar, and references become a list
+
+**`Tab` had a two-stop ring at the end of it.** The rotation ran files,
+commits, comments, flags, then *the diff* — and `Tab` from the diff goes back
+to the sidebar on the tab it left, which was flags. So holding the key sat
+between FLAGS and DIFF forever, and the four lists it was meant to walk were
+unreachable past the first lap. The diff is no longer a stop: from the sidebar
+`Tab` walks the four lists and wraps, and from the diff it is still the plain
+focus toggle. Reaching the diff is `Enter`, `→` on a file, or `m d`, each of
+which names it, so nothing was lost by taking it off a key that means "next
+list".
+
+**`g r` answered the wrong question.** It walked the references one keystroke
+at a time, which answers "show me the next one"; a reviewer asking about a
+symbol is deciding *which* occurrence matters, and could only find that out by
+visiting all of them and remembering. It opens a list now, in the panel the
+symbol picker already uses: one row per occurrence with its file, its line
+number and the line itself, so the list can be read without jumping to any of
+it. `↑`/`↓` choose and wrap, `Home`/`End` reach the ends, `Enter` lands and
+puts the column cursor back on the word, `Esc` leaves the review exactly where
+it was.
+
+The cursor opens on the first reference past the one being read, which is
+where the old walk would have gone, so the muscle memory of `g r`+`Enter` is
+the behaviour that was there before. `Mode::References` is a list with a cursor
+rather than a query, so it answers the arrows instead of the keyboard, and the
+list is cleared on close: it is a question about one word, not state the review
+carries. `references_of` moved out of `column.rs` into `references.rs` and now
+carries each line's text for the rows to show.

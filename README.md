@@ -333,7 +333,7 @@ left it.
 | `]` | Next file, from whichever pane the cursor is in |
 | `[` | Previous file, likewise |
 | `Enter` | To the diff for the highlighted item: opens the file under the sidebar cursor (moving the focus to the diff), steps into the selected diff line's comment stack — or onto the flag the cursor is resting on — or from the Comments tab jumps to the comment's code. It no longer fires on a directory or change row — `→` drills into those |
-| `Tab` | From the diff, to the sidebar on whatever tab it was left on; from the sidebar, to the next mode, looping: Files → Commits → Comments → Flags → Diff. A file row under a change shows *that change's* diff of it |
+| `Tab` | From the diff, to the sidebar on whatever tab it was left on; from the sidebar, round the four lists: Files → Commits → Comments → Flags → Files. The diff is not a stop on that walk — `Enter`, `→` on a file or `m` `d` go there — so holding `Tab` cannot strand you between the flag browser and the diff. A file row under a change shows *that change's* diff of it |
 | `s` | Fold a comment box away, or a directory in the file list — again to unfold |
 | `f` | On the diff: toggle full-file context (also `v` `f` from anywhere) |
 | `i` | In the **Commits** list: put the change details away, or bring them back (also `v` `i` from anywhere) |
@@ -379,7 +379,7 @@ left it.
 | `g` `f` | Next flag in the review, wrapping round |
 | `g` `F` | The previous flag |
 | `g` `d` | Go to the definition of the word under the column cursor — the next one on from here where the review defines it more than once |
-| `g` `r` | Go to the next reference to the word under the column cursor, across every file in scope, wrapping |
+| `g` `r` | List every reference to the word under the column cursor, across every file in scope: each row is a file, a line number and the line itself. `↑`/`↓` choose (wrapping), `Home`/`End` jump to either end, `Enter` goes there, `Esc` leaves the review where it was. The cursor opens on the first reference past the one you are reading |
 | `c` `c` | Comment on the highlighted line (the menu's spelling of `C`) |
 | `c` `d` | Delete a comment, after a `y`/`n` confirmation (`D`) |
 | `c` `r` | Resolve a comment — press it again to reopen (`R`) |

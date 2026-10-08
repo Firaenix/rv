@@ -207,7 +207,7 @@ fn chrome(app: &App, toast: bool) -> Chrome {
             // type in, so it takes the same single row browsing does.
             // The picker is a query in the status line and a list above it.
             Mode::Browse | Mode::ConfirmDelete { .. } | Mode::Search => 1,
-            Mode::Pick => PICKER_ROWS,
+            Mode::Pick | Mode::References => PICKER_ROWS,
             Mode::Comment | Mode::Flag => COMMENT_ROWS,
         },
         help: if !app.help_open() {

@@ -61,13 +61,18 @@ impl App {
     }
 
     /// `Tab`: from the diff a plain focus toggle — the sidebar, on whatever tab
-    /// it was left on — and from the sidebar the mode rotation: the files list,
-    /// the commits list, the comment browser, the flag browser, then back to the
-    /// diff. A comment stack counts as the diff it lives in.
+    /// it was left on — and from the sidebar a walk round the four lists: files,
+    /// commits, comments, flags, files again. A comment stack counts as the diff
+    /// it lives in.
     ///
-    /// Rotation is scoped to the sidebar on purpose. `Tab` used to force `Files`
-    /// on the way in, which discarded the tab the reviewer had chosen: a trip to
-    /// the diff and back was a trip to a different list.
+    /// The diff is not a stop on that walk. It used to be, and the ring that
+    /// made was unusable: `Tab` off the flag browser landed on the diff, `Tab`
+    /// there came back to the flag browser, and holding the key sat between
+    /// those two forever. Rotation is scoped to the sidebar for the same reason
+    /// it no longer forces `Files` on the way in: `Tab` is how you cross the
+    /// panes and how you walk the lists, and neither job should undo the other.
+    /// Reaching the diff is `Enter`, `→` on a file, or `m d`, each of which
+    /// names it.
     pub(super) fn cycle_mode(&mut self) -> Result<()> {
         let on_diff = matches!(self.focus, Focus::Diff | Focus::Stack | Focus::Flag);
         match (on_diff, self.sidebar_tab) {
@@ -75,10 +80,7 @@ impl App {
             (false, SidebarTab::Files) => self.goto_mode(SidebarTab::Commits),
             (false, SidebarTab::Commits) => self.goto_mode(SidebarTab::Comments),
             (false, SidebarTab::Comments) => self.goto_mode(SidebarTab::Flags),
-            (false, SidebarTab::Flags) => {
-                self.focus = Focus::Diff;
-                Ok(())
-            }
+            (false, SidebarTab::Flags) => self.goto_mode(SidebarTab::Files),
         }
     }
 

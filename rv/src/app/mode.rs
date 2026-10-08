@@ -15,6 +15,9 @@ pub enum Mode {
     Flag,
     /// Typing a `/` query into that buffer.
     Search,
+    /// Choosing from the references to one word: a list with a cursor on it,
+    /// not a query, so it answers the arrows rather than the keyboard.
+    References,
     /// Every key answers this — `y` deletes, anything else cancels — so it cannot
     /// become a state the reviewer is stuck in.
     ConfirmDelete {

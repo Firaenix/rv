@@ -176,7 +176,7 @@ pub(super) const REVIEW: [Binding; 17] = [
         group: Group::Scroll,
         leader: Some(Leader::Goto),
         contexts: &[],
-        what: "go to ref",
+        what: "list refs",
         codes: &[KeyCode::Char('r')],
         command: Command::Diff(DiffCommand::References),
     },

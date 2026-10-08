@@ -163,7 +163,7 @@ impl App {
         match &self.mode {
             Mode::Comment | Mode::Flag => Context::Writing,
             Mode::ConfirmDelete { .. } => Context::Confirming,
-            Mode::Pick | Mode::Search => Context::Finding,
+            Mode::Pick | Mode::Search | Mode::References => Context::Finding,
             Mode::Browse => match self.focus {
                 Focus::Diff => Context::Diff,
                 Focus::Stack => Context::Stack,

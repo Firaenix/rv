@@ -124,6 +124,50 @@ pub(super) fn draw_bar(frame: &mut Frame, app: &App, area: Rect, now: Instant) {
                 area,
             )
         }
+        // The references to one word, with a cursor on them. The window follows
+        // the cursor rather than the list's top, so a choice far down a long
+        // list is still on screen when it is made.
+        Mode::References => {
+            let width = usize::from(area.width.saturating_sub(BORDER_ROWS));
+            let rows = usize::from(area.height.saturating_sub(BORDER_ROWS));
+            let references = app.references();
+            let at = app.reference_index();
+            let first = at.saturating_sub(rows.saturating_sub(1));
+            let lines: Vec<Line> = references
+                .iter()
+                .enumerate()
+                .skip(first)
+                .take(rows)
+                .map(|(rank, reference)| {
+                    let text = format!(
+                        "{} {}:{}  {}",
+                        if rank == at { "▸" } else { " " },
+                        app.files()[reference.file].path,
+                        reference.line,
+                        reference.text
+                    );
+                    let style = if rank == at {
+                        Style::default().add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().add_modifier(Modifier::DIM)
+                    };
+                    Line::styled(clip(&text, width), style)
+                })
+                .collect();
+            frame.render_widget(
+                Paragraph::new(lines).block(
+                    Block::bordered()
+                        .border_type(BorderType::Rounded)
+                        .title(format!(
+                            "References to {} ({} of {})",
+                            app.reference_word(),
+                            at + 1,
+                            references.len()
+                        )),
+                ),
+                area,
+            )
+        }
     }
 }
 

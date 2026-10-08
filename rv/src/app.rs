@@ -51,6 +51,7 @@ mod navigate;
 mod paging;
 mod paint;
 mod query;
+mod references;
 mod refresh;
 mod regroup;
 pub mod reviewed;
@@ -69,6 +70,7 @@ mod zoom;
 pub use alerts::Alert;
 pub use changes::ChangeInfo;
 pub use errorlog::subscriber as error_log_subscriber;
+pub use references::Reference;
 pub use sidebar::BrowserRow;
 pub use sidebar::Suppression;
 
@@ -150,6 +152,14 @@ pub struct App {
     query: String,
     /// The column cursor — see [`column`].
     column: usize,
+    /// The references `g r` is showing, and which row of them the cursor is on.
+    /// Cleared when the list closes: it is a question about one word, not state
+    /// the review carries.
+    references: Vec<references::Reference>,
+    reference_index: usize,
+    /// The word that list is about, kept past the close so the jump can put the
+    /// column cursor back on it.
+    reference_word: String,
     /// The files ticked off as reviewed, each with whether its diff has
     /// changed since — surveyed when read, since the check costs blob reads.
     reviewed: Vec<(ReviewedFile, reviewed::Freshness)>,

@@ -187,7 +187,7 @@ const HEAD: [Binding; 35] = [
         group: Group::Focus,
         leader: None,
         contexts: ANY,
-        what: "sidebar/mode",
+        what: "sidebar/list",
         codes: &[KeyCode::Tab],
         command: Command::Pane(PaneCommand::CycleTab),
     },

@@ -330,8 +330,11 @@ fn slash_finds_text_and_n_walks_the_matches() {
     assert!(app.status().contains("match 2 of 2"), "{}", app.status());
 }
 
+/// `g r` opens the references as a list to choose from. The cursor starts on
+/// the one the old walk would have jumped to, the arrows move it, and `Enter`
+/// is what lands.
 #[test]
-fn l_walks_the_column_cursor_by_word_and_g_r_visits_each_reference() {
+fn l_walks_the_column_cursor_by_word_and_g_r_lists_every_reference() {
     let workspace = Fixture::new();
     let mut app = workspace.app();
     // Line 2 of a.rs is `let x = 1;`: words let, x, 1.
@@ -342,18 +345,67 @@ fn l_walks_the_column_cursor_by_word_and_g_r_visits_each_reference() {
     app.on_key(KeyCode::Char('h')).expect("prev word");
     assert_eq!(app.word_under_cursor().as_deref(), Some("let"));
 
-    // `let` appears on a.rs:2, b.rs:2 and b.rs:3; g r walks them in order.
+    // `let` appears on a.rs:2, b.rs:2 and b.rs:3.
     app.on_key(KeyCode::Char('g')).expect("goto");
-    app.on_key(KeyCode::Char('r')).expect("reference");
-    assert_eq!(app.file_index(), 1);
-    assert_eq!(app.selected_line().expect("a line").right, Some(2));
-    assert_eq!(app.word_under_cursor().as_deref(), Some("let"));
-    app.on_key(KeyCode::Char('g')).expect("goto");
-    app.on_key(KeyCode::Char('r')).expect("reference");
-    assert_eq!(app.selected_line().expect("a line").right, Some(3));
-    app.on_key(KeyCode::Char('g')).expect("goto");
-    app.on_key(KeyCode::Char('r')).expect("wraps");
+    app.on_key(KeyCode::Char('r')).expect("references");
+    assert_eq!(app.mode(), Mode::References);
+    assert_eq!(app.reference_word(), "let");
+    let listed: Vec<(usize, u32)> = app
+        .references()
+        .iter()
+        .map(|reference| (reference.file, reference.line))
+        .collect();
+    assert_eq!(
+        listed,
+        [(0, 2), (1, 2), (1, 3)],
+        "every reference is listed"
+    );
+    assert!(
+        app.references()[0].text.contains("let x = 1;"),
+        "a row carries its line, so the list can be read without jumping"
+    );
+    assert_eq!(
+        app.reference_index(),
+        1,
+        "the cursor opens on the next reference, where the walk used to land"
+    );
+
+    // Nothing has moved until Enter: the list is a question, not a jump.
     assert_eq!(app.file_index(), 0);
+
+    app.on_key(KeyCode::Down).expect("down the list");
+    assert_eq!(app.reference_index(), 2);
+    app.on_key(KeyCode::Down).expect("wrapping round the end");
+    assert_eq!(app.reference_index(), 0);
+    app.on_key(KeyCode::Up).expect("back round the start");
+    assert_eq!(app.reference_index(), 2);
+
+    app.on_key(KeyCode::Enter).expect("jump");
+    assert_eq!(app.mode(), Mode::Browse);
+    assert_eq!(app.file_index(), 1, "Enter took the chosen reference");
+    assert_eq!(app.selected_line().expect("a line").right, Some(3));
+    assert_eq!(app.word_under_cursor().as_deref(), Some("let"));
+}
+
+/// Esc leaves the review where it was: a list opened by accident costs nothing.
+#[test]
+fn esc_closes_the_reference_list_without_moving() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    app.on_key(KeyCode::Down).expect("onto line 2");
+    let before = (app.file_index(), app.line_index());
+
+    app.on_key(KeyCode::Char('g')).expect("goto");
+    app.on_key(KeyCode::Char('r')).expect("references");
+    app.on_key(KeyCode::Down).expect("move the list cursor");
+    app.on_key(KeyCode::Esc).expect("cancel");
+
+    assert_eq!(app.mode(), Mode::Browse);
+    assert!(
+        app.references().is_empty(),
+        "the list is not state to carry"
+    );
+    assert_eq!((app.file_index(), app.line_index()), before);
 }
 
 #[test]
