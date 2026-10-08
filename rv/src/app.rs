@@ -157,6 +157,9 @@ pub struct App {
     /// the review carries.
     references: Vec<references::Reference>,
     reference_index: usize,
+    /// Whether that list came from the grammar or from a text scan, so the
+    /// panel can say which question it answered.
+    references_syntactic: bool,
     /// The word that list is about, kept past the close so the jump can put the
     /// column cursor back on it.
     reference_word: String,

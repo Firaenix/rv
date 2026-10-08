@@ -1284,3 +1284,21 @@ rather than a query, so it answers the arrows instead of the keyboard, and the
 list is cleared on close: it is a question about one word, not state the review
 carries. `references_of` moved out of `column.rs` into `references.rs` and now
 carries each line's text for the rows to show.
+
+
+**References come from the grammar now.** `g r` scanned the blobs for the word
+as text, which is how a name in a comment, a string, or an unrelated language
+ended up in a jump list labelled "references". `tree-sitter-tags` already
+reports uses as well as definitions and the extractor was throwing them away at
+`if !tag.is_definition`; it keeps both from the one parse (`symbols::tags`), the
+index holds them beside the definitions, and the list is what the grammar found,
+each row carrying the kind the grammar gave it. The word under the cursor is
+resolved through the use at that column too, so `self.write()` follows `write`
+rather than `self`.
+
+A file no grammar claims still answers, with the text scan and a panel that
+says **Lines naming** instead of **References to**: a reviewer reading a shell
+script wants to know where else a name appears, and an empty list would read as
+"nowhere" rather than as "rv cannot parse this". What this is not is name
+resolution — two methods called `write` on different types are still two
+answers to one question, because tags is an index, not a type checker.

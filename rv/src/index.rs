@@ -116,6 +116,20 @@ pub fn indexed_side(kind: ChangeKind) -> Side {
     })
 }
 
+/// One place a name is used, and where that is.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Use {
+    pub reference: rv_core::symbols::Reference,
+    pub file: usize,
+    pub path: String,
+}
+
+/// How many columns a name covers, for deciding whether the cursor is inside
+/// it. Characters, not bytes: the column cursor counts characters too.
+fn name_width(name: &str) -> u32 {
+    u32::try_from(name.chars().count()).unwrap_or(u32::MAX)
+}
+
 /// One place a reviewer can jump to: a symbol, and enough about where it lives
 /// to get there and to say so afterwards.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -141,6 +155,10 @@ pub struct Entry {
 pub struct Index {
     /// In the caller's file order, and in line order within a file.
     entries: Vec<Entry>,
+    /// Every syntactic use the same parse found, in the same order. Kept beside
+    /// the definitions rather than rebuilt on demand: `g r` asks about one name
+    /// at a time and re-parsing the scope per question would be felt.
+    uses: Vec<Use>,
     /// Where each in-scope file sits in the caller's order, which is what
     /// gives a `(file, line)` cursor a position in the walk.
     ///
@@ -164,24 +182,87 @@ impl Index {
     #[must_use]
     pub fn of(scope: &[Scoped<'_>]) -> Self {
         let mut entries = Vec::new();
+        let mut uses = Vec::new();
         let mut ranks = HashMap::with_capacity(scope.len());
         for (rank, scoped) in scope.iter().enumerate() {
             ranks.entry(scoped.file).or_insert(rank);
             let Some(blob) = scoped.blob() else {
                 continue;
             };
-            entries.extend(
-                symbols::of(blob, scoped.path)
-                    .into_iter()
-                    .map(|symbol| Entry {
-                        symbol,
-                        file: scoped.file,
-                        path: scoped.path.to_owned(),
-                        change_id: scoped.change_id.map(str::to_owned),
-                    }),
-            );
+            // One parse for both halves: asking the grammar twice per file
+            // would double the cost of opening a review.
+            let tags = symbols::tags(blob, scoped.path);
+            entries.extend(tags.definitions.into_iter().map(|symbol| Entry {
+                symbol,
+                file: scoped.file,
+                path: scoped.path.to_owned(),
+                change_id: scoped.change_id.map(str::to_owned),
+            }));
+            uses.extend(tags.references.into_iter().map(|reference| Use {
+                reference,
+                file: scoped.file,
+                path: scoped.path.to_owned(),
+            }));
         }
-        Self { entries, ranks }
+        Self {
+            entries,
+            uses,
+            ranks,
+        }
+    }
+
+    /// Every syntactic use of `name` in scope, in walk order.
+    ///
+    /// The grammar decided what a use is, so a word in a comment, in a string
+    /// literal, or in a file rv has no grammar for is not in here however
+    /// often it is spelled the same.
+    #[must_use]
+    pub fn uses_named(&self, name: &str) -> Vec<&Use> {
+        self.uses
+            .iter()
+            .filter(|use_| use_.reference.name == name)
+            .collect()
+    }
+
+    /// The use at `column` of `line`, if the grammar found one there.
+    ///
+    /// Columns are compared loosely on purpose: tree-sitter counts them in
+    /// bytes and rv's column cursor counts characters, so the two agree on
+    /// every ASCII line and can drift by a few on a line with wider
+    /// characters before the name. A use whose name merely *covers* the column
+    /// is the right answer either way, and the nearest one on the line is a
+    /// better answer than none.
+    #[must_use]
+    pub fn use_at(&self, file: usize, line: u32, column: u32) -> Option<&Use> {
+        let on_line = || {
+            self.uses
+                .iter()
+                .filter(move |use_| use_.file == file && use_.reference.line == line)
+        };
+        on_line()
+            .find(|use_| {
+                let start = use_.reference.column;
+                (start..start + name_width(&use_.reference.name)).contains(&column)
+            })
+            .or_else(|| {
+                let mut nearest: Option<(u32, &Use)> = None;
+                for use_ in on_line() {
+                    let distance = use_.reference.column.abs_diff(column);
+                    if nearest.is_none_or(|(best, _)| distance < best) {
+                        nearest = Some((distance, use_));
+                    }
+                }
+                nearest.map(|(_, use_)| use_)
+            })
+    }
+
+    /// Every definition of `name` in scope.
+    #[must_use]
+    pub fn definitions_named(&self, name: &str) -> Vec<&Entry> {
+        self.entries
+            .iter()
+            .filter(|entry| entry.symbol.name == name)
+            .collect()
     }
 
     /// Every symbol in scope, in walk order.

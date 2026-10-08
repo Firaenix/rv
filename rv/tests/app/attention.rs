@@ -425,3 +425,76 @@ fn g_d_jumps_to_the_definition_of_the_word_under_the_cursor() {
     assert_eq!(app.file_index(), 0, "g d did not go to a.rs");
     assert_eq!(app.selected_line().expect("a line").right, Some(1));
 }
+
+/// The list is what the grammar found, not what the text says. A name in a
+/// comment is not a use of it, which is the difference between moving around
+/// the code and jumping between lookalike words.
+#[test]
+fn the_reference_list_skips_a_name_a_comment_merely_mentions() {
+    let workspace = Fixture::new();
+    workspace.write(
+        "c.rs",
+        "// a() is the one to look at
+fn c() {
+    a();
+}
+",
+    );
+    workspace.jj(&["status"]);
+    let mut app = workspace.app();
+    app.on_key(KeyCode::Char(']')).expect("b.rs");
+    app.on_key(KeyCode::Char(']')).expect("c.rs");
+    // Line 3 is `    a();`.
+    app.on_key(KeyCode::Down).expect("line 2");
+    app.on_key(KeyCode::Down).expect("line 3");
+    assert_eq!(app.word_under_cursor().as_deref(), Some("a"));
+
+    app.on_key(KeyCode::Char('g')).expect("goto");
+    app.on_key(KeyCode::Char('r')).expect("references");
+
+    assert!(
+        app.references_are_syntactic(),
+        "a Rust file has a grammar, so the list is the grammar's"
+    );
+    let lines: Vec<(usize, u32)> = app
+        .references()
+        .iter()
+        .map(|reference| (reference.file, reference.line))
+        .collect();
+    assert!(
+        lines.contains(&(2, 3)),
+        "the call site is a reference: {lines:?}"
+    );
+    assert!(
+        !lines.contains(&(2, 1)),
+        "the comment is not a use of the name: {lines:?}"
+    );
+}
+
+/// A file no grammar claims still answers, and the panel says it is matching
+/// text rather than pretending the name is nowhere.
+#[test]
+fn a_file_with_no_grammar_falls_back_to_naming_lines() {
+    let workspace = Fixture::new();
+    workspace.write(
+        "run.sh",
+        "setup
+setup
+",
+    );
+    workspace.jj(&["status"]);
+    let mut app = workspace.app();
+    for _ in 0..3 {
+        app.on_key(KeyCode::Char(']')).expect("next file");
+    }
+    assert_eq!(app.word_under_cursor().as_deref(), Some("setup"));
+
+    app.on_key(KeyCode::Char('g')).expect("goto");
+    app.on_key(KeyCode::Char('r')).expect("references");
+
+    assert!(
+        !app.references_are_syntactic(),
+        "bash has no tags query in rv, so this is a text match"
+    );
+    assert_eq!(app.references().len(), 2, "both lines name it");
+}

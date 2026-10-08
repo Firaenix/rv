@@ -67,6 +67,34 @@ impl App {
             .find(|range| range.end > column)
     }
 
+    /// The symbol a jump should follow: the name of the use the cursor sits in,
+    /// as the grammar sees it, and the bare word only where the grammar has
+    /// nothing to say about this file.
+    ///
+    /// The difference shows on `self.foo.bar()` and on a word in a comment: the
+    /// first resolves to the name the parse found at that column, and the
+    /// second to nothing at all rather than to every line that spells it.
+    #[must_use]
+    pub fn symbol_under_cursor(&mut self) -> Option<String> {
+        let word = self.word_under_cursor()?;
+        let line = self.selected_line_number();
+        // The word's own column, not the cursor's: the cursor reads as being on
+        // the next word along when it sits in the whitespace before it, and the
+        // grammar records where the name is.
+        let column = self
+            .word_range()
+            .map_or(0, |range| u32::try_from(range.start).unwrap_or(u32::MAX));
+        let file = self.file_index;
+        // The use the grammar put there wins over the characters under the
+        // cursor: on `self.write()` the name to follow is `write`. Where the
+        // grammar found nothing, the word stands, which is what keeps a file no
+        // grammar claims navigable.
+        self.index()
+            .use_at(file, line, column)
+            .map(|use_| use_.reference.name.clone())
+            .or(Some(word))
+    }
+
     pub fn word_under_cursor(&self) -> Option<String> {
         let line = self.selected_line()?;
         let range = self.word_range()?;
@@ -130,16 +158,15 @@ impl App {
     /// `g d`: to the definition of the word under the cursor — the next one
     /// on from here when the review defines it more than once.
     pub(super) fn goto_definition(&mut self) -> Result<()> {
-        let Some(word) = self.word_under_cursor() else {
-            self.status = "no word under the cursor".to_owned();
+        let Some(word) = self.symbol_under_cursor() else {
+            self.status = "no symbol under the cursor".to_owned();
             return Ok(());
         };
         let here = (self.file_index, self.selected_line_number());
         let entries: Vec<crate::index::Entry> = self
             .index()
-            .entries()
-            .iter()
-            .filter(|entry| entry.symbol.name == word)
+            .definitions_named(&word)
+            .into_iter()
             .cloned()
             .collect();
         if entries.is_empty() {

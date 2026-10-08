@@ -110,6 +110,31 @@ pub struct Symbol {
     pub line: u32,
 }
 
+/// One place a name is *used*: a call, a type mention, an import. The grammar
+/// decides what counts, which is the point — a word in a comment, in a string,
+/// or in a language rv has no grammar for is not a reference, however many
+/// times it is spelled the same.
+///
+/// `column` is the character offset of the name on its line, so a caller can
+/// tell which of two uses on one line the cursor is in.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct Reference {
+    pub name: String,
+    /// What the grammar called the use: a `function` reference is a call, a
+    /// `type` reference a type mention. Mapped onto the same vocabulary the
+    /// definitions use, so a row can be read the same way.
+    pub kind: SymbolKind,
+    pub line: u32,
+    pub column: u32,
+}
+
+/// The definitions and the references a file holds, from one parse.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct Tags {
+    pub definitions: Vec<Symbol>,
+    pub references: Vec<Reference>,
+}
+
 /// Every definition in `source`, in line order, using whichever grammar
 /// `path`'s name selects.
 ///
@@ -125,16 +150,26 @@ pub struct Symbol {
 /// safely if this is a function.
 #[must_use]
 pub fn of(source: &[u8], path: &str) -> Vec<Symbol> {
+    tags(source, path).definitions
+}
+
+/// Both halves of what the grammar found, from a single parse.
+///
+/// Definitions and references come out of one `tags.scm` pass, so asking for
+/// them separately would parse every file twice. Same guarantees as [`of`]: it
+/// never fails, and the answer depends on `(source, path)` alone.
+#[must_use]
+pub fn tags(source: &[u8], path: &str) -> Tags {
     let Some(language) = highlight::language_of(path) else {
-        return Vec::new();
+        return Tags::default();
     };
     let Some(config) = configuration(language) else {
-        return Vec::new();
+        return Tags::default();
     };
 
     let mut context = TagsContext::new();
     let Ok((tags, _)) = context.generate_tags(config, source, None) else {
-        return Vec::new();
+        return Tags::default();
     };
 
     // Sorted by where the *name* starts, which is line order and, within a
@@ -142,14 +177,12 @@ pub fn of(source: &[u8], path: &str) -> Vec<Symbol> {
     // reordering queue, so the iterator's own order is close to this but not
     // guaranteed to be it, and a caller stepping with `n` needs the guarantee.
     let mut found: Vec<(usize, usize, Symbol)> = Vec::new();
+    let mut references: Vec<Reference> = Vec::new();
     for tag in tags {
         // A mid-stream error means the parse was cancelled or a query
         // predicate blew up; keep what has been collected rather than
         // throwing away a nearly complete file's symbols.
         let Ok(tag) = tag else { break };
-        if !tag.is_definition {
-            continue;
-        }
         let Some(bytes) = source.get(tag.name_range.clone()) else {
             continue;
         };
@@ -167,6 +200,18 @@ pub fn of(source: &[u8], path: &str) -> Vec<Symbol> {
             continue;
         };
         let kind = kind_of(config.syntax_type_name(tag.syntax_type_id));
+        if !tag.is_definition {
+            let Ok(column) = u32::try_from(tag.span.start.column) else {
+                continue;
+            };
+            references.push(Reference {
+                name,
+                kind,
+                line,
+                column,
+            });
+            continue;
+        }
         found.push((
             tag.name_range.start,
             tag.name_range.end,
@@ -175,7 +220,11 @@ pub fn of(source: &[u8], path: &str) -> Vec<Symbol> {
     }
 
     found.sort_by_key(|(start, end, _)| (*start, *end));
-    found.into_iter().map(|(_, _, symbol)| symbol).collect()
+    references.sort_by_key(|reference| (reference.line, reference.column));
+    Tags {
+        definitions: found.into_iter().map(|(_, _, symbol)| symbol).collect(),
+        references,
+    }
 }
 
 /// The [`SymbolKind`] for a tags syntax type — the word after `definition.` in

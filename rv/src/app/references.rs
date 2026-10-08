@@ -15,13 +15,16 @@ use super::App;
 use super::Focus;
 use super::Mode;
 
-/// One occurrence: where it is, and the line it is on, so the list can be read
-/// without jumping to every row in it.
+/// One occurrence: where it is, the line it is on so the list can be read
+/// without jumping to every row in it, and what the grammar called it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Reference {
     pub file: usize,
     pub line: u32,
     pub text: String,
+    /// What the grammar says this use is, a call or a type mention, or `None`
+    /// where the list fell back to matching the name as text.
+    pub kind: Option<rv_core::symbols::SymbolKind>,
 }
 
 impl App {
@@ -29,15 +32,16 @@ impl App {
     /// one under the review cursor, which is the one the old walk would have
     /// taken.
     pub(super) fn begin_references(&mut self) -> Result<()> {
-        let Some(word) = self.word_under_cursor() else {
-            self.status = "no word under the cursor".to_owned();
+        let Some(word) = self.symbol_under_cursor() else {
+            self.status = "no symbol under the cursor".to_owned();
             return Ok(());
         };
-        let references = self.references_of(&word);
+        let (references, syntactic) = self.references_to(&word);
         if references.is_empty() {
             self.status = format!("no reference to {word} in this review");
             return Ok(());
         }
+        self.references_syntactic = syntactic;
         let here = (self.file_index, self.selected_line_number());
         self.reference_index = references
             .iter()
@@ -132,10 +136,69 @@ impl App {
         Ok(())
     }
 
+    /// Whether the list came from the grammar, which is the difference between
+    /// "every use of this symbol" and "every line that spells this word".
+    #[must_use]
+    pub fn references_are_syntactic(&self) -> bool {
+        self.references_syntactic
+    }
+
+    /// The uses of `name`, and whether the grammar found them.
+    ///
+    /// The index answers first, and those are real uses: a word in a comment,
+    /// in a string, or in a language with no grammar is not one. Only when the
+    /// grammar found nothing at all does the text scan answer, because a
+    /// reviewer reading a shell script still wants to know where else a name
+    /// appears, and an empty list would read as "nowhere" rather than as "rv
+    /// cannot parse this".
+    fn references_to(&mut self, name: &str) -> (Vec<Reference>, bool) {
+        let places: Vec<(usize, u32, rv_core::symbols::SymbolKind)> = self
+            .index()
+            .uses_named(name)
+            .into_iter()
+            .map(|use_| (use_.file, use_.reference.line, use_.reference.kind))
+            .collect();
+        let mut found: Vec<Reference> = places
+            .into_iter()
+            .map(|(file, line, kind)| Reference {
+                file,
+                line,
+                text: self.source_line(file, line),
+                kind: Some(kind),
+            })
+            .collect();
+        if !found.is_empty() {
+            found.sort_by_key(|reference| (reference.file, reference.line));
+            found.dedup_by_key(|reference| (reference.file, reference.line));
+            return (found, true);
+        }
+        (self.lines_naming(name), false)
+    }
+
+    /// The text of one line of a file's indexed blob, for a list row to show.
+    fn source_line(&self, file: usize, line: u32) -> String {
+        let scope = self.scope();
+        let Some(scoped) = self
+            .scoped_files(&scope)
+            .into_iter()
+            .find(|scoped| scoped.file == file)
+        else {
+            return String::new();
+        };
+        let Some(blob) = self.read_indexable(scoped).blob else {
+            return String::new();
+        };
+        String::from_utf8_lossy(&blob)
+            .lines()
+            .nth(line.saturating_sub(1) as usize)
+            .unwrap_or_default()
+            .trim()
+            .to_owned()
+    }
+
     /// Every whole-word occurrence of `word` in the scope's files, by file then
-    /// line — read from the blobs, so a reference in a line this change did not
-    /// touch still counts.
-    fn references_of(&self, word: &str) -> Vec<Reference> {
+    /// line. The fallback for a file no grammar claims.
+    fn lines_naming(&self, word: &str) -> Vec<Reference> {
         let scope = self.scope();
         let mut found = Vec::new();
         for file in self.scoped_files(&scope) {
@@ -156,6 +219,7 @@ impl App {
                         file: index,
                         line: u32::try_from(number + 1).unwrap_or(u32::MAX),
                         text: line.trim().to_owned(),
+                        kind: None,
                     });
                 }
             }

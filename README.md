@@ -378,8 +378,8 @@ left it.
 | `g` `/` | Find a symbol by name: type, `Enter` jumps to the best match, `Esc` cancels |
 | `g` `f` | Next flag in the review, wrapping round |
 | `g` `F` | The previous flag |
-| `g` `d` | Go to the definition of the word under the column cursor — the next one on from here where the review defines it more than once |
-| `g` `r` | List every reference to the word under the column cursor, across every file in scope: each row is a file, a line number and the line itself. `↑`/`↓` choose (wrapping), `Home`/`End` jump to either end, `Enter` goes there, `Esc` leaves the review where it was. The cursor opens on the first reference past the one you are reading |
+| `g` `d` | Go to the definition of the symbol under the column cursor — the next one on from here where the review defines it more than once. The symbol is the one tree-sitter found at that spot, so on `self.write()` it is `write` |
+| `g` `r` | List every reference to the symbol under the column cursor, across every file in scope. The list is what tree-sitter found — real uses, each tagged with what it is (a call, a type) — so a name inside a comment or a string is not in it. Each row is a kind, a file, a line number and the line itself; `↑`/`↓` choose (wrapping), `Home`/`End` jump to either end, `Enter` goes there, `Esc` leaves the review where it was. The cursor opens on the first reference past the one you are reading. For a file rv has no grammar for the panel says **Lines naming**, and those rows are a plain whole-word text match |
 | `c` `c` | Comment on the highlighted line (the menu's spelling of `C`) |
 | `c` `d` | Delete a comment, after a `y`/`n` confirmation (`D`) |
 | `c` `r` | Resolve a comment — press it again to reopen (`R`) |

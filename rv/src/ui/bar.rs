@@ -140,8 +140,11 @@ pub(super) fn draw_bar(frame: &mut Frame, app: &App, area: Rect, now: Instant) {
                 .take(rows)
                 .map(|(rank, reference)| {
                     let text = format!(
-                        "{} {}:{}  {}",
+                        "{} {} {}:{}  {}",
                         if rank == at { "▸" } else { " " },
+                        // The grammar's word for the use, so a call is told
+                        // from a type mention without jumping to both.
+                        reference.kind.map_or("", |kind| kind.label()),
                         app.files()[reference.file].path,
                         reference.line,
                         reference.text
@@ -159,7 +162,16 @@ pub(super) fn draw_bar(frame: &mut Frame, app: &App, area: Rect, now: Instant) {
                     Block::bordered()
                         .border_type(BorderType::Rounded)
                         .title(format!(
-                            "References to {} ({} of {})",
+                            "{} {} ({} of {})",
+                            if app.references_are_syntactic() {
+                                "References to"
+                            } else {
+                                // No grammar for these files, so this is every
+                                // line that spells the word. Saying so is the
+                                // difference between a list a reviewer can
+                                // trust and one they cannot.
+                                "Lines naming"
+                            },
                             app.reference_word(),
                             at + 1,
                             references.len()
