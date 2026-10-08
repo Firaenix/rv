@@ -25,6 +25,7 @@ use rv_core::highlight::Highlights;
 use rv_core::symbols::Symbol;
 use rv_core::symbols::SymbolKind;
 use rv_core::symbols::of;
+use rv_core::symbols::tags;
 
 // ---------------------------------------------------------------------------
 // Oracles and helpers
@@ -652,4 +653,56 @@ proptest! {
         let elsewhere = of(&first, &two);
         prop_assert_eq!(&once, &elsewhere, "the file's name changed its symbols");
     }
+}
+
+/// A type mention is a reference, and the name of a `trait` or a `struct` is
+/// not: rv's own pattern sits behind the shipped definitions for that reason.
+#[test]
+fn a_type_mention_is_a_reference_and_a_definitions_name_is_not() {
+    let source = b"struct Config { a: u32 }\n\
+                   trait Store { fn put(&self); }\n\
+                   fn take(c: Config) -> Config { c }\n";
+    let tags = tags(source, "refs.rs");
+
+    let definitions: Vec<(&str, SymbolKind, u32)> = tags
+        .definitions
+        .iter()
+        .map(|symbol| (symbol.name.as_str(), symbol.kind, symbol.line))
+        .collect();
+    assert!(
+        definitions.contains(&("Config", SymbolKind::Struct, 1)),
+        "{definitions:?}"
+    );
+    assert!(
+        definitions.contains(&("Store", SymbolKind::Trait, 2)),
+        "a trait's name stayed a definition: {definitions:?}"
+    );
+
+    let mentions: Vec<(&str, SymbolKind, u32)> = tags
+        .references
+        .iter()
+        .map(|reference| (reference.name.as_str(), reference.kind, reference.line))
+        .collect();
+    assert_eq!(
+        mentions,
+        [
+            ("Config", SymbolKind::Type, 3),
+            ("Config", SymbolKind::Type, 3)
+        ],
+        "both type mentions on line 3, and nothing from lines 1 or 2"
+    );
+}
+
+/// A call reads as the function it reaches, so a row in the reference list can
+/// be told from a type mention without jumping to it.
+#[test]
+fn a_call_is_a_function_reference() {
+    let source = b"fn f() {}\nfn g() { f(); }\n";
+    let tags = tags(source, "calls.rs");
+    let calls: Vec<(&str, SymbolKind, u32)> = tags
+        .references
+        .iter()
+        .map(|reference| (reference.name.as_str(), reference.kind, reference.line))
+        .collect();
+    assert_eq!(calls, [("f", SymbolKind::Function, 2)]);
 }

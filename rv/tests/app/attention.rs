@@ -453,7 +453,7 @@ fn c() {
     app.on_key(KeyCode::Char('r')).expect("references");
 
     assert!(
-        app.references_are_syntactic(),
+        app.jump_list() == rv::app::JumpList::References,
         "a Rust file has a grammar, so the list is the grammar's"
     );
     let lines: Vec<(usize, u32)> = app
@@ -493,7 +493,7 @@ setup
     app.on_key(KeyCode::Char('r')).expect("references");
 
     assert!(
-        !app.references_are_syntactic(),
+        app.jump_list() == rv::app::JumpList::Lines,
         "bash has no tags query in rv, so this is a text match"
     );
     assert_eq!(app.references().len(), 2, "both lines name it");

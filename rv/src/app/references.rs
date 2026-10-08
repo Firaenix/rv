@@ -15,6 +15,18 @@ use super::App;
 use super::Focus;
 use super::Mode;
 
+/// What the list in front of the reviewer is a list *of*, which is the only
+/// thing the panel needs to know to label itself honestly.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum JumpList {
+    /// Definitions of one name, when there is more than one to choose from.
+    Definitions,
+    /// Uses the grammar found.
+    References,
+    /// Lines that spell the name, for a file no grammar claims.
+    Lines,
+}
+
 /// One occurrence: where it is, the line it is on so the list can be read
 /// without jumping to every row in it, and what the grammar called it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -41,7 +53,11 @@ impl App {
             self.status = format!("no reference to {word} in this review");
             return Ok(());
         }
-        self.references_syntactic = syntactic;
+        self.jump_list = if syntactic {
+            JumpList::References
+        } else {
+            JumpList::Lines
+        };
         let here = (self.file_index, self.selected_line_number());
         self.reference_index = references
             .iter()
@@ -136,11 +152,34 @@ impl App {
         Ok(())
     }
 
-    /// Whether the list came from the grammar, which is the difference between
-    /// "every use of this symbol" and "every line that spells this word".
+    /// What the open list is a list of.
     #[must_use]
-    pub fn references_are_syntactic(&self) -> bool {
-        self.references_syntactic
+    pub fn jump_list(&self) -> JumpList {
+        self.jump_list
+    }
+
+    /// Opens the definitions of `word` as a list, for the cursor to choose
+    /// from. Only reached when there is more than one: a single definition is a
+    /// jump, not a question.
+    pub(super) fn choose_definition(&mut self, word: &str, entries: &[crate::index::Entry]) {
+        let here = (self.file_index, self.selected_line_number());
+        self.reference_index = entries
+            .iter()
+            .position(|entry| (entry.file, entry.symbol.line) > here)
+            .unwrap_or(0);
+        self.references = entries
+            .iter()
+            .map(|entry| Reference {
+                file: entry.file,
+                line: entry.symbol.line,
+                text: self.source_line(entry.file, entry.symbol.line),
+                kind: Some(entry.symbol.kind),
+            })
+            .collect();
+        self.reference_word = word.to_owned();
+        self.jump_list = JumpList::Definitions;
+        self.mode = Mode::References;
+        self.status = "choose a definition: ↑/↓, Enter to jump, Esc to cancel".to_owned();
     }
 
     /// The uses of `name`, and whether the grammar found them.

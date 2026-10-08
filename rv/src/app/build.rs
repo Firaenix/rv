@@ -122,7 +122,7 @@ impl App {
             column: 0,
             references: Vec::new(),
             reference_index: 0,
-            references_syntactic: false,
+            jump_list: super::JumpList::References,
             reference_word: String::new(),
             file_index: 0,
             cursor_rows,

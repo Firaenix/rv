@@ -13,6 +13,8 @@ use ratatui::widgets::BorderType;
 use ratatui::widgets::Paragraph;
 use rv_core::store::CommentState;
 
+use crate::app::JumpList;
+
 use super::BORDER_ROWS;
 use super::text::clip;
 use super::text::tail;
@@ -163,14 +165,14 @@ pub(super) fn draw_bar(frame: &mut Frame, app: &App, area: Rect, now: Instant) {
                         .border_type(BorderType::Rounded)
                         .title(format!(
                             "{} {} ({} of {})",
-                            if app.references_are_syntactic() {
-                                "References to"
-                            } else {
+                            match app.jump_list() {
+                                JumpList::Definitions => "Definitions of",
+                                JumpList::References => "References to",
                                 // No grammar for these files, so this is every
                                 // line that spells the word. Saying so is the
                                 // difference between a list a reviewer can
                                 // trust and one they cannot.
-                                "Lines naming"
+                                JumpList::Lines => "Lines naming",
                             },
                             app.reference_word(),
                             at + 1,

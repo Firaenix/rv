@@ -239,7 +239,9 @@ fn kind_of(syntax_type: &str) -> SymbolKind {
     match syntax_type {
         // A method is a function for navigation purposes: a reviewer looking
         // for `write` does not know or care which one they will land on.
-        "function" | "method" => SymbolKind::Function,
+        // `call` is what every shipped `tags.scm` names a reference to a
+        // function, so a call row reads as the function it reaches.
+        "function" | "method" | "call" => SymbolKind::Function,
         // `class` is what Python and JavaScript call theirs; `struct` is
         // rv's own refinement of the Rust query (see [`RUST_KINDS_QUERY`]).
         "struct" | "class" => SymbolKind::Struct,
@@ -325,7 +327,10 @@ fn rust_tags() -> Option<&'static TagsConfiguration> {
     static CONFIG: OnceLock<Option<TagsConfiguration>> = OnceLock::new();
     CONFIG
         .get_or_init(|| {
-            let refined = format!("{RUST_KINDS_QUERY}{}", tree_sitter_rust::TAGS_QUERY);
+            let refined = format!(
+                "{RUST_KINDS_QUERY}{}{RUST_REFS_QUERY}",
+                tree_sitter_rust::TAGS_QUERY
+            );
             TagsConfiguration::new(tree_sitter_rust::LANGUAGE.into(), &refined, "")
                 .or_else(|_| {
                     TagsConfiguration::new(
@@ -338,6 +343,18 @@ fn rust_tags() -> Option<&'static TagsConfiguration> {
         })
         .as_ref()
 }
+
+/// Type mentions, which the shipped query has no pattern for: it captures
+/// calls and nothing else, so a type was a symbol you could jump *to* and never
+/// one you could find the uses of.
+///
+/// Appended rather than prepended, unlike [`RUST_KINDS_QUERY`]: a bare
+/// `type_identifier` also matches the name of a `trait` or a `struct`, and the
+/// first pattern that claims a node wins. Behind the shipped definitions it
+/// only ever sees the mentions they left.
+const RUST_REFS_QUERY: &str = r"
+(type_identifier) @name @reference.type
+";
 
 fn go_tags() -> Option<&'static TagsConfiguration> {
     static CONFIG: OnceLock<Option<TagsConfiguration>> = OnceLock::new();

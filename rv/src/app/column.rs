@@ -162,24 +162,98 @@ impl App {
             self.status = "no symbol under the cursor".to_owned();
             return Ok(());
         };
-        let here = (self.file_index, self.selected_line_number());
-        let entries: Vec<crate::index::Entry> = self
+        let wanted = self.use_kind_under_cursor();
+        let entries = self.definitions_of(&word, wanted);
+        match entries.as_slice() {
+            [] => {
+                self.status = format!("no definition of {word} in this review");
+                Ok(())
+            }
+            // One answer is a jump. Asking would be a keystroke spent on a
+            // question with one option.
+            [only] => {
+                let only = only.clone();
+                self.jump_to_symbol(&only)?;
+                self.set_column_to(&word);
+                Ok(())
+            }
+            // Several names match and nothing here can tell them apart: tags is
+            // an index, not a type checker. Walking them one `g d` at a time
+            // hid that, so the list says it instead and the reviewer decides.
+            _ => {
+                self.choose_definition(&word, &entries);
+                Ok(())
+            }
+        }
+    }
+
+    /// The definitions of `name` worth offering, narrowed by what the cursor is
+    /// sitting on.
+    ///
+    /// Two narrowings, both about not offering an answer that cannot be the one
+    /// meant. A call reaches a function, so a call with any function definition
+    /// in scope is not also asking about a type of the same name. And an `impl`
+    /// block is a definition *about* a type rather than of it, so it only ever
+    /// answers when nothing else does — which is what used to make `g d` on a
+    /// type cycle through every `impl` it had.
+    fn definitions_of(
+        &mut self,
+        name: &str,
+        wanted: Option<rv_core::symbols::SymbolKind>,
+    ) -> Vec<crate::index::Entry> {
+        use rv_core::symbols::SymbolKind;
+        let all: Vec<crate::index::Entry> = self
             .index()
-            .definitions_named(&word)
+            .definitions_named(name)
             .into_iter()
             .cloned()
             .collect();
-        if entries.is_empty() {
-            self.status = format!("no definition of {word} in this review");
-            return Ok(());
-        }
-        let next = entries
+        let named = |kinds: &[SymbolKind], entries: &[crate::index::Entry]| -> Vec<_> {
+            entries
+                .iter()
+                .filter(|entry| kinds.contains(&entry.symbol.kind))
+                .cloned()
+                .collect::<Vec<_>>()
+        };
+        let by_kind = match wanted {
+            Some(SymbolKind::Function) => named(&[SymbolKind::Function], &all),
+            Some(SymbolKind::Type | SymbolKind::Struct | SymbolKind::Enum | SymbolKind::Trait) => {
+                named(
+                    &[
+                        SymbolKind::Struct,
+                        SymbolKind::Enum,
+                        SymbolKind::Trait,
+                        SymbolKind::Type,
+                    ],
+                    &all,
+                )
+            }
+            _ => Vec::new(),
+        };
+        let candidates = if by_kind.is_empty() { all } else { by_kind };
+        let without_impls = candidates
             .iter()
-            .find(|entry| (entry.file, entry.symbol.line) > here)
-            .unwrap_or(&entries[0]);
-        self.jump_to_symbol(next)?;
-        self.set_column_to(&word);
-        Ok(())
+            .filter(|entry| entry.symbol.kind != SymbolKind::Impl)
+            .cloned()
+            .collect::<Vec<_>>();
+        if without_impls.is_empty() {
+            candidates
+        } else {
+            without_impls
+        }
+    }
+
+    /// What the grammar calls the use under the cursor, where there is one: a
+    /// call, a type mention. `None` in a file no grammar claims.
+    fn use_kind_under_cursor(&mut self) -> Option<rv_core::symbols::SymbolKind> {
+        let line = self.selected_line_number();
+        let column = self
+            .word_range()
+            .map_or(0, |range| u32::try_from(range.start).unwrap_or(u32::MAX));
+        let file = self.file_index;
+        self.index()
+            .use_at(file, line, column)
+            .map(|use_| use_.reference.kind)
     }
 
     pub(super) fn selected_line_number(&self) -> u32 {
