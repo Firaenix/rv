@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.5.0](https://github.com/Firaenix/rv/compare/v2.4.0...v2.5.0) - 2026-10-08
+
+### Added
+
+- *(nav)* g d answers once where it can, and asks where it cannot
+
 ## [2.4.0](https://github.com/Firaenix/rv/compare/v2.3.0...v2.4.0) - 2026-10-08
 
 ### Added
