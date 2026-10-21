@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.6.0](https://github.com/Firaenix/rv/compare/v2.5.0...v2.6.0) - 2026-10-21
+
+### Added
+
+- *(tui)* the arrows walk the diff, and the view follows the cursor
+
 ## [2.5.0](https://github.com/Firaenix/rv/compare/v2.4.0...v2.5.0) - 2026-10-08
 
 ### Added
