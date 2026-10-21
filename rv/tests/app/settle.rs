@@ -158,7 +158,7 @@ fn the_file_list_settles_nothing_and_says_why(#[case] key: KeyCode) {
     let workspace = Fixture::new();
     let mut app = workspace.app();
     write_comment(&mut app, "a remark");
-    app.on_key(KeyCode::Left).expect("focus the file list");
+    app.on_key(KeyCode::Tab).expect("focus the file list");
     assert_eq!(app.focus(), Focus::Sidebar);
 
     app.on_key(KeyCode::Char('c')).expect("comment leader");

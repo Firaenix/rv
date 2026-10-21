@@ -59,7 +59,7 @@ use crate::support::*;
 #[rstest]
 #[case::next_line_arrow(KeyCode::Down, Action::Continue, Mode::Browse, Focus::Diff, (0, 1), None)]
 #[case::previous_line_arrow(KeyCode::Up, Action::Continue, Mode::Browse, Focus::Diff, (0, 0), None)]
-#[case::focus_sidebar_arrow(KeyCode::Left, Action::Continue, Mode::Browse, Focus::Sidebar, (0, 0), None)]
+#[case::left_stays_in_the_diff(KeyCode::Left, Action::Continue, Mode::Browse, Focus::Diff, (0, 0), None)]
 #[case::focus_diff_arrow(KeyCode::Right, Action::Continue, Mode::Browse, Focus::Diff, (0, 0), None)]
 #[case::next_file(KeyCode::Char(']'), Action::Continue, Mode::Browse, Focus::Diff, (1, 0), None)]
 #[case::previous_file(KeyCode::Char('['), Action::Continue, Mode::Browse, Focus::Diff, (0, 0), None)]

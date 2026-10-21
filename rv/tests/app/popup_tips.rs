@@ -29,7 +29,7 @@ fn the_overview_advertises_the_leaders_from_every_context() {
 
     // Sidebar-focused on the Files list: the same leaders, a different title.
     app.on_key(KeyCode::Esc).expect("close the overview");
-    app.on_key(KeyCode::Left).expect("focus the sidebar");
+    app.on_key(KeyCode::Tab).expect("focus the sidebar");
     app.on_key(KeyCode::Char('?')).expect("?");
     let files = buffer_text(&frame_at(&app, 100, 30));
     assert!(files.contains("FILES"), "files overview:\n{files}");
@@ -48,7 +48,7 @@ fn the_overview_advertises_the_leaders_from_every_context() {
 fn the_tip_lists_the_keys_that_act_here_global_ones_included() {
     let workspace = Fixture::new();
     let mut app = workspace.app();
-    app.on_key(KeyCode::Left).expect("focus the sidebar");
+    app.on_key(KeyCode::Tab).expect("focus the sidebar");
     app.on_key(KeyCode::Char('?')).expect("?");
     let files = buffer_text(&frame_at(&app, 100, 30));
     assert!(files.contains("X      reviewed"), "{files}");

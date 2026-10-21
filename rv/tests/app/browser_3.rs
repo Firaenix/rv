@@ -64,7 +64,7 @@ fn d_from_the_files_tab_still_deletes_nothing() {
     let mut app = workspace.app();
     write_comment(&mut app, "needs a doc");
 
-    app.on_key(KeyCode::Left).expect("focus the file list");
+    app.on_key(KeyCode::Tab).expect("focus the file list");
     assert_eq!(app.sidebar_tab(), SidebarTab::Files);
     app.on_key(KeyCode::Char('c')).expect("comment leader");
     app.on_key(KeyCode::Char('d')).expect("d");

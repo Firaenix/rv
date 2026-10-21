@@ -70,7 +70,7 @@ fn s_folds_a_directory_row_and_hides_the_files_under_it() {
     let mut app = workspace.app();
     app.on_key(KeyCode::Char('v')).expect("view leader");
     app.on_key(KeyCode::Char('t')).expect("the tree");
-    app.on_key(KeyCode::Left).expect("focus the file list");
+    app.on_key(KeyCode::Tab).expect("focus the file list");
     // The review opens on the first file, which is under `docs/specs`; one
     // step up is the directory row itself.
     app.on_key(KeyCode::Up).expect("onto the directory row");
@@ -246,7 +246,7 @@ fn no_row_of_the_file_list_is_painted_over() {
 
     for focused in [false, true] {
         if focused {
-            app.on_key(KeyCode::Left).expect("focus the file list");
+            app.on_key(KeyCode::Tab).expect("focus the file list");
         }
         let frame = frame_at(&app, 100, 24);
         let area = inner(areas(100, 24, Split::default()).sidebar);

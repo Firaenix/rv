@@ -149,7 +149,6 @@ fn s_folds_a_change_and_hides_its_files() {
     let workspace = two_changes();
     let mut app = workspace.app();
     to_commits(&mut app);
-    app.on_key(KeyCode::Left).expect("focus the sidebar");
     down_to_a_change_with_files(&mut app);
     let before = app.commit_nodes().len();
 
@@ -172,7 +171,6 @@ fn t_switches_the_files_under_a_change_between_a_list_and_a_tree() {
     let workspace = Fixture::nested();
     let mut app = workspace.app();
     to_commits(&mut app);
-    app.on_key(KeyCode::Left).expect("focus the sidebar");
 
     let flat = app.commit_nodes();
     app.on_key(KeyCode::Char('v')).expect("view leader");
@@ -199,7 +197,6 @@ fn moving_onto_a_file_row_selects_that_file() {
     let workspace = two_changes();
     let mut app = workspace.app();
     to_commits(&mut app);
-    app.on_key(KeyCode::Left).expect("focus the sidebar");
 
     down_to_a_file(&mut app);
 
@@ -361,7 +358,6 @@ fn the_bar_names_the_change_the_cursor_is_in() {
     let workspace = two_changes();
     let mut app = workspace.app();
     to_commits(&mut app);
-    app.on_key(KeyCode::Left).expect("focus the sidebar");
     down_to_a_file(&mut app);
 
     let (change, _, subject) = app
@@ -431,7 +427,6 @@ fn a_file_row_shows_the_diff_of_the_change_it_sits_under() {
 
     // And the second change's, which is one of them.
     to_commits(&mut app);
-    app.on_key(KeyCode::Left).expect("focus the sidebar");
     to_top(&mut app);
     let mut found = false;
     for _ in 0..app.nodes().len() {
@@ -471,7 +466,6 @@ fn a_comment_written_under_a_change_is_anchored_to_that_change() {
 
     let mut app = workspace.app();
     to_commits(&mut app);
-    app.on_key(KeyCode::Left).expect("focus the sidebar");
     to_top(&mut app);
     while !app
         .nodes()
@@ -580,7 +574,6 @@ fn a_commit_row_carries_its_subject_and_the_border_points_at_i() {
     let workspace = two_changes();
     let mut app = workspace.app();
     to_commits(&mut app);
-    app.on_key(KeyCode::Left).expect("focus the sidebar");
     down_to_a_file(&mut app);
 
     let frame = frame_at(&app, 200, 24);
@@ -610,7 +603,7 @@ fn a_commit_row_carries_its_subject_and_the_border_points_at_i() {
 fn a_directory_row_is_quieter_than_the_files_under_it() {
     let workspace = Fixture::nested();
     let mut app = workspace.app();
-    app.on_key(KeyCode::Left).expect("focus the sidebar");
+    app.on_key(KeyCode::Tab).expect("focus the sidebar");
     app.on_key(KeyCode::Char('v')).expect("view leader");
     app.on_key(KeyCode::Char('t')).expect("tree");
     // Off row 0, so the selection's own styling is not what is measured.
@@ -663,7 +656,6 @@ fn highlighting_a_change_shows_it_in_full() {
 
     let mut app = workspace.app();
     to_commits(&mut app);
-    app.on_key(KeyCode::Left).expect("focus the sidebar");
     to_top(&mut app);
     while app
         .change_under_cursor()
@@ -704,7 +696,6 @@ fn i_puts_the_change_details_away_and_brings_them_back() {
     let workspace = two_changes();
     let mut app = workspace.app();
     to_commits(&mut app);
-    app.on_key(KeyCode::Left).expect("focus the sidebar");
     assert!(
         app.change_info().is_some(),
         "nothing was shown to begin with"
@@ -724,7 +715,6 @@ fn the_tooltip_stays_on_screen_and_off_the_sidebar() {
     let workspace = two_changes();
     let mut app = workspace.app();
     to_commits(&mut app);
-    app.on_key(KeyCode::Left).expect("focus the sidebar");
 
     for (width, height) in [(100u16, 30u16), (80, 24), (60, 12), (40, 10)] {
         let frame = frame_at(&app, width, height);

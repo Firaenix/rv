@@ -128,7 +128,7 @@ fn the_layers_overview_sits_in_the_corner_and_names_the_context() {
 
     // The title follows the focus: the sidebar's overview names the file list.
     app.on_key(KeyCode::Esc).expect("close");
-    app.on_key(KeyCode::Left).expect("focus the sidebar");
+    app.on_key(KeyCode::Tab).expect("focus the sidebar");
     app.on_key(KeyCode::Char('?')).expect("?");
     let text = buffer_text(&frame_at(&app, 100, 24));
     assert!(
@@ -357,7 +357,7 @@ fn the_popup_lists_the_keymap_as_the_config_left_it() {
 fn a_binding_that_does_nothing_here_is_dimmed_rather_than_hidden() {
     let workspace = Fixture::new();
     let mut app = workspace.app();
-    app.on_key(KeyCode::Left).expect("focus the sidebar");
+    app.on_key(KeyCode::Tab).expect("focus the sidebar");
     assert_eq!(app.sidebar_tab(), SidebarTab::Files);
     app.on_key(KeyCode::Char('?')).expect("?");
     app.on_key(KeyCode::Char('?'))

@@ -61,7 +61,7 @@ fn the_diff_takes_the_whole_width_when_the_sidebar_is_away() {
 fn hiding_the_sidebar_takes_the_focus_with_it() {
     let workspace = Fixture::new();
     let mut app = workspace.app();
-    app.on_key(KeyCode::Left).expect("focus the sidebar");
+    app.on_key(KeyCode::Tab).expect("focus the sidebar");
     assert_eq!(app.focus(), Focus::Sidebar);
 
     app.on_key(KeyCode::Char('v')).expect("view leader");
@@ -124,7 +124,7 @@ fn s_folds_a_directory() {
     let key = KeyCode::Char('s');
     let workspace = Fixture::nested();
     let mut app = workspace.app();
-    app.on_key(KeyCode::Left).expect("focus the sidebar");
+    app.on_key(KeyCode::Tab).expect("focus the sidebar");
     app.on_key(KeyCode::Char('v')).expect("view leader");
     app.on_key(KeyCode::Char('t')).expect("tree");
 
@@ -154,7 +154,7 @@ fn s_folds_a_directory() {
 fn enter_on_a_file_row_opens_it() {
     let workspace = Fixture::new();
     let mut app = workspace.app();
-    app.on_key(KeyCode::Left).expect("focus the sidebar");
+    app.on_key(KeyCode::Tab).expect("focus the sidebar");
     let before = app.nodes().len();
 
     app.on_key(KeyCode::Enter).expect("enter");

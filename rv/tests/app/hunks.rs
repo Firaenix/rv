@@ -180,7 +180,7 @@ fn a_hunk_jump_moves_the_row_cursor_a_comment_is_anchored_to() {
 #[test]
 fn a_hunk_jump_from_the_sidebar_lands_in_the_diff() {
     let (_workspace, mut app) = on_wide();
-    app.on_key(KeyCode::Left).expect("focus the sidebar");
+    app.on_key(KeyCode::Tab).expect("focus the sidebar");
     assert_eq!(app.focus(), Focus::Sidebar);
 
     app.on_key(KeyCode::Char('g')).expect("goto leader");

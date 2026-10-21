@@ -80,7 +80,7 @@ fn the_sideways_scroll_resets_when_another_file_is_selected() {
 fn l_in_the_sidebar_shifts_the_names_and_h_shifts_back() {
     let workspace = Fixture::nested();
     let mut app = workspace.app();
-    app.on_key(KeyCode::Left).expect("focus the sidebar");
+    app.on_key(KeyCode::Tab).expect("focus the sidebar");
     app.on_key_event(KeyEvent::new(KeyCode::Right, KeyModifiers::SHIFT))
         .expect("scroll right");
     assert!(app.sidebar_hscroll() > 0, "L did not move the sidebar");
@@ -111,7 +111,7 @@ fn the_diff_and_the_sidebar_scroll_independently() {
     let mut app = workspace.app();
     app.on_key_event(KeyEvent::new(KeyCode::Right, KeyModifiers::SHIFT))
         .expect("scroll diff right");
-    app.on_key(KeyCode::Left).expect("focus the sidebar");
+    app.on_key(KeyCode::Tab).expect("focus the sidebar");
     app.on_key_event(KeyEvent::new(KeyCode::Right, KeyModifiers::SHIFT))
         .expect("scroll sidebar right");
     app.on_key_event(KeyEvent::new(KeyCode::Left, KeyModifiers::SHIFT))

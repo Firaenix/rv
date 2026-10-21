@@ -11,7 +11,7 @@ use crate::support::*;
 fn clicking_a_diff_line_selects_it_and_focuses_the_diff() {
     let workspace = Fixture::new();
     let mut app = workspace.app();
-    app.on_key(KeyCode::Left).expect("focus the sidebar");
+    app.on_key(KeyCode::Tab).expect("focus the sidebar");
     assert_eq!(app.focus(), Focus::Sidebar);
 
     let row = diff_pane_row(&app, 100, 24, 2);
@@ -34,7 +34,7 @@ fn clicking_a_diff_line_selects_it_and_focuses_the_diff() {
 fn clicking_below_the_last_row_of_the_diff_selects_nothing() {
     let workspace = Fixture::new();
     let mut app = workspace.app();
-    app.on_key(KeyCode::Left).expect("focus the sidebar");
+    app.on_key(KeyCode::Tab).expect("focus the sidebar");
     let before = (app.focus(), app.line_index());
 
     let row = diff_pane_row(&app, 100, 24, 12);

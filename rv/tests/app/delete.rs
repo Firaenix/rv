@@ -277,7 +277,7 @@ fn d_from_the_file_list_deletes_nothing() {
     write_comment(&mut app, "needs a doc");
     let line = app.line_index();
 
-    app.on_key(KeyCode::Left).expect("focus the file list");
+    app.on_key(KeyCode::Tab).expect("focus the file list");
     assert_eq!(app.focus(), Focus::Sidebar);
     app.on_key(KeyCode::Char('c')).expect("comment leader");
     app.on_key(KeyCode::Char('d')).expect("d");

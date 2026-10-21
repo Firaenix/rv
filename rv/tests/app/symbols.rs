@@ -269,7 +269,6 @@ fn the_commits_tab_narrows_the_walk_to_one_change() {
 
     // Onto the commits tab, and down to a file of the later change.
     to_commits(&mut app);
-    app.on_key(KeyCode::Left).expect("focus the sidebar");
     to_top(&mut app);
     while app
         .nodes()
@@ -303,7 +302,6 @@ fn the_scope_follows_the_cursor_between_changes() {
 
     let mut app = workspace.app();
     to_commits(&mut app);
-    app.on_key(KeyCode::Left).expect("focus the sidebar");
     to_top(&mut app);
 
     let mut seen: Vec<Vec<String>> = Vec::new();

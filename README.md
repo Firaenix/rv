@@ -305,7 +305,8 @@ typed or a confirmation being answered.
 
 Movement is the **arrows** (and the mouse); in the diff `←`/`→` step a column
 cursor along the selected line a character at a time and `h`/`l` step it a word
-at a time, and clicking a character places it there. **Uppercase acts, lowercase moves**: every key that
+at a time, clicking a character places it there, and the line scrolls sideways
+to keep the cursor on screen. **Uppercase acts, lowercase moves**: every key that
 writes to the review or leaves the reviewer is a shifted letter — `C` comment,
 `D` delete, `R` resolve, `A` acknowledge a flag, `F` flag, `X` tick reviewed,
 `E` edit — so a mutation is always a deliberate chord and a lowercase letter
@@ -322,8 +323,8 @@ left it.
 | --- | --- |
 | `↓` | Next row, file or comment — whichever the focused pane is listing |
 | `↑` | The previous one |
-| `←` | One character left along the diff line — and, on its first character, out / up a level: the diff hands the focus back to the sidebar, a comment stack back to the diff, and in the file or commits list it climbs one level of the tree you drilled into |
-| `→` | One character right along the diff line; elsewhere into / open: in the file or commits list it drills into the directory or change under the cursor, opens the file under it (moving the focus to the diff), and in the Comments tab jumps to the comment's code |
+| `←` | One character left along the diff line, scrolling the view to follow; elsewhere out / up a level: a comment stack hands the focus back to the diff, and in the file or commits list it climbs one level of the tree you drilled into. It never leaves the diff — `Tab` does that |
+| `→` | One character right along the diff line, scrolling the view to follow; elsewhere into / open: in the file or commits list it drills into the directory or change under the cursor, opens the file under it (moving the focus to the diff), and in the Comments tab jumps to the comment's code |
 | `PgDn` | Move the cursor a screenful forward in the focused pane |
 | `PgUp` | A screenful back |
 | `Home` | Jump the cursor to the first row of the focused pane |

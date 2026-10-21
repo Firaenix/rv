@@ -55,7 +55,7 @@ fn the_mode_leader_selects_each_list() {
 /// there without disturbing the file or line the reviewer had.
 #[rstest]
 #[case(&[])]
-#[case(&[KeyCode::Left])]
+#[case(&[KeyCode::Tab])]
 #[case(&[KeyCode::Enter])]
 fn the_mode_leader_selects_a_list_from_any_focus(#[case] approach: &[KeyCode]) {
     let workspace = Fixture::new();

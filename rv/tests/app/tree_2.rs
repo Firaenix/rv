@@ -39,7 +39,7 @@ fn the_shape_and_the_order_never_reach_disk() {
     app.on_key(KeyCode::Char('t')).expect("the tree");
     app.on_key(KeyCode::Char('v')).expect("view leader");
     app.on_key(KeyCode::Char('o')).expect("order by additions");
-    app.on_key(KeyCode::Left).expect("focus the file list");
+    app.on_key(KeyCode::Tab).expect("focus the file list");
     app.on_key(KeyCode::Char('s')).expect("fold something");
     app.on_key(KeyCode::Char('v')).expect("view leader");
     app.on_key(KeyCode::Char('o')).expect("order by removals");
@@ -60,7 +60,7 @@ fn the_cursor_can_rest_on_a_directory_without_changing_the_diff() {
     let mut app = workspace.app();
     app.on_key(KeyCode::Char('v')).expect("view leader");
     app.on_key(KeyCode::Char('t')).expect("the tree");
-    app.on_key(KeyCode::Left).expect("focus the file list");
+    app.on_key(KeyCode::Tab).expect("focus the file list");
 
     let file = app.file_index();
     app.on_key(KeyCode::Up).expect("onto the directory row");
@@ -108,7 +108,7 @@ fn the_file_lists_cursor_follows_the_file_that_is_selected() {
     );
 
     // ...and the pane highlights that row rather than the file's own index.
-    app.on_key(KeyCode::Left).expect("focus the file list");
+    app.on_key(KeyCode::Tab).expect("focus the file list");
     let frame = frame_at(&app, 100, 24);
     let area = inner(areas(100, 24, Split::default()).sidebar);
     let highlighted = (area.y..area.bottom())
@@ -200,7 +200,7 @@ fn the_tree_carries_nerdfont_icons_unless_ascii_asks_otherwise() {
     );
 
     // Folding swaps the folder icon for its closed form.
-    app.on_key(crossterm::event::KeyCode::Left)
+    app.on_key(crossterm::event::KeyCode::Tab)
         .expect("focus the sidebar");
     app.on_key(crossterm::event::KeyCode::Up)
         .expect("onto the directory row");

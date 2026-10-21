@@ -29,7 +29,7 @@ fn the_focused_pane_border_is_the_accent_and_the_other_is_not() {
         "the sidebar does not have focus and its border is the accent anyway"
     );
 
-    app.on_key(KeyCode::Left).expect("focus the sidebar");
+    app.on_key(KeyCode::Tab).expect("focus the sidebar");
     let frame = frame_at(&app, 100, 24);
     assert_eq!(
         corner(&frame, rects.sidebar),

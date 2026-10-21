@@ -169,7 +169,7 @@ fn from_the_files_tab_s_still_folds_the_selected_lines_boxes() {
     write_comment(&mut app, "needs a doc");
     let id = app.comments()[0].id.clone();
 
-    app.on_key(KeyCode::Left).expect("focus the file list");
+    app.on_key(KeyCode::Tab).expect("focus the file list");
     assert_eq!(app.sidebar_tab(), SidebarTab::Files);
     app.on_key(KeyCode::Char('s')).expect("fold");
 

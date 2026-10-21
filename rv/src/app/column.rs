@@ -11,6 +11,7 @@ use anyhow::Result;
 use rv_core::diff::DiffLine;
 
 use super::App;
+use crate::ui;
 
 fn is_word(character: char) -> bool {
     character.is_alphanumeric() || character == '_'
@@ -49,8 +50,12 @@ impl App {
         self.column.min(length.saturating_sub(1))
     }
 
+    /// Moving the cursor is also how the view scrolls sideways: the line is
+    /// shifted just far enough that the cursor's character is on screen.
     pub(super) fn set_column(&mut self, column: usize) {
         self.column = column;
+        let pane = self.painted.get().diff;
+        self.diff_hscroll = ui::diff_hscroll_showing(self, pane, self.column());
     }
 
     /// The word the column cursor is in, or the next one along the line.
@@ -108,13 +113,9 @@ impl App {
     }
 
     /// `←`/`→` inside the diff: one character along the selected line.
-    ///
-    /// Answers whether it moved, so `←` on the first character can mean "leave
-    /// the pane" instead — the column cursor and the pane cursor share one key
-    /// without either stealing it.
-    pub(super) fn step_column(&mut self, forward: bool) -> bool {
+    pub(super) fn step_column(&mut self, forward: bool) {
         let Some(line) = self.selected_line() else {
-            return false;
+            return;
         };
         let column = self.column_in(&line);
         let last = line.text.chars().count().saturating_sub(1);
@@ -123,11 +124,9 @@ impl App {
         } else {
             column.saturating_sub(1)
         };
-        if target == column {
-            return false;
+        if target != column {
+            self.set_column(target);
         }
-        self.set_column(target);
-        true
     }
 
     /// `h`/`l`: to the start of the previous or next word — relative to the

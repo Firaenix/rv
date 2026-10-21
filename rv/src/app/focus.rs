@@ -1,5 +1,5 @@
 //! Which panel has the focus, and moving between them: `←`/`→` drill the tree
-//! and cross the panes — in the diff they walk the column cursor first — `Tab`
+//! and cross the panes — in the diff they only walk the column cursor — `Tab`
 //! swaps between the two panels, and a file row opens into the diff.
 
 use anyhow::Result;
@@ -10,20 +10,14 @@ use super::SidebarTab;
 use crate::tree::NodeKind;
 
 impl App {
-    /// `←`: one character left along the diff line, and out to the sidebar once
-    /// there is no line left to walk; out of a comment stack and back to the
-    /// diff; and — inside the file list or the commits list — up one level of
-    /// the tree the reviewer drilled into with `→`.
+    /// `←`: one character left along the diff line — the diff is left by
+    /// `Tab`, not by walking off its edge; out of a comment stack and back to
+    /// the diff; and — inside the file list or the commits list — up one level
+    /// of the tree the reviewer drilled into with `→`.
     pub(super) fn focus_left(&mut self) -> Result<()> {
-        // A symbol is picked out by walking to it, so the arrow belongs to the
-        // column while there is somewhere to go; the start of the line is where
-        // it means the pane again.
-        if self.focus == Focus::Diff && self.step_column(false) {
-            return Ok(());
-        }
         match self.focus {
             Focus::Stack | Focus::Flag => self.focus = Focus::Diff,
-            Focus::Diff => self.focus = Focus::Sidebar,
+            Focus::Diff => self.step_column(false),
             Focus::Sidebar => match self.sidebar_tab {
                 // The comment browser has no tree to climb, so `←` leads out to
                 // the diff the way it does from every other focus.

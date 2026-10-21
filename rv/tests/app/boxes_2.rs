@@ -213,6 +213,6 @@ fn drawing_never_panics_at_awkward_sizes(#[case] width: u16, #[case] height: u16
     let _ = frame_at(&app, width, height);
 
     app.on_key(KeyCode::Left).expect("back to the diff");
-    app.on_key(KeyCode::Left).expect("onto the sidebar");
+    app.on_key(KeyCode::Tab).expect("onto the sidebar");
     let _ = frame_at(&app, width, height);
 }

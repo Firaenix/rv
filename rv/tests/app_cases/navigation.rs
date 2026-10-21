@@ -43,15 +43,21 @@ fn the_vim_letters_are_inert_and_the_arrows_move() {
         );
     }
 
-    // `←` walks the column back along the line first — `l` above left it on the
-    // second word — and takes the focus to the sidebar from its start; `→`
-    // brings it back to the diff.
+    // `←` walks the column back along the line — `l` above left it on the
+    // second word — and stays in the diff at its start; `Tab` is what leaves
+    // the pane, and `→` on the file row brings it back.
     while app.column() > 0 {
         press(app, KeyCode::Left);
     }
     assert_eq!(app.focus(), Focus::Diff, "← left the pane mid-line");
     press(app, KeyCode::Left);
-    assert_eq!(app.focus(), Focus::Sidebar, "← did not move the focus");
+    assert_eq!(
+        app.focus(),
+        Focus::Diff,
+        "← at the line start moved the focus"
+    );
+    press(app, KeyCode::Tab);
+    assert_eq!(app.focus(), Focus::Sidebar, "Tab did not move the focus");
     press(app, KeyCode::Right);
     assert_eq!(app.focus(), Focus::Diff, "→ did not bring it back");
 }

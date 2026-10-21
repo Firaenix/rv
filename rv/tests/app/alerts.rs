@@ -197,7 +197,7 @@ fn a_jump_to_a_line_that_left_the_diff_raises_an_alert() {
     assert_eq!(later.comments().len(), 1, "the comment is not in range");
     assert!(later.alerts().is_empty(), "{:?}", later.alerts().len());
 
-    later.on_key(KeyCode::Left).expect("the sidebar");
+    later.on_key(KeyCode::Tab).expect("the sidebar");
     to_comments(&mut later);
     later.on_key(KeyCode::Enter).expect("jump");
 
@@ -244,7 +244,7 @@ fn the_same_failure_twice_is_one_toast() {
     let workspace = stale_anchor();
     let mut later = workspace.app_from("@--");
 
-    later.on_key(KeyCode::Left).expect("the sidebar");
+    later.on_key(KeyCode::Tab).expect("the sidebar");
     to_comments(&mut later);
     for _ in 0..3 {
         later.on_key(KeyCode::Enter).expect("jump");
@@ -277,7 +277,7 @@ fn an_alert_raised_before_the_clock_is_known_is_stamped_by_the_first_pass() {
     let workspace = stale_anchor();
     let mut later = workspace.app_from("@--");
 
-    later.on_key(KeyCode::Left).expect("the sidebar");
+    later.on_key(KeyCode::Tab).expect("the sidebar");
     to_comments(&mut later);
     later.on_key(KeyCode::Enter).expect("jump");
     assert_eq!(later.alerts().len(), 1);

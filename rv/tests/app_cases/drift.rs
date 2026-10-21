@@ -312,7 +312,7 @@ fn walking_to_another_change_reads_the_cursors_place_again() {
     press_n(&mut app, KeyCode::Down, 4);
     let read_there = position(&app).expect("a place in the older pair's diff");
 
-    press(&mut app, KeyCode::Left);
+    press(&mut app, KeyCode::Tab);
     press_n(&mut app, KeyCode::Up, 2);
     let newer = selected_pair(&app);
     assert_ne!(older, newer, "the walk never left the older pair");

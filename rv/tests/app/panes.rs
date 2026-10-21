@@ -7,12 +7,19 @@ use rv::app::Focus;
 use crate::support::*;
 
 #[test]
-fn left_and_right_move_focus_between_the_panes() {
+fn tab_and_right_move_focus_between_the_panes_and_the_arrows_stay_in_the_diff() {
     let workspace = Fixture::new();
     let mut app = workspace.app();
     assert_eq!(app.focus(), Focus::Diff, "the diff has focus on launch");
 
     app.on_key(KeyCode::Left).expect("left");
+    assert_eq!(
+        app.focus(),
+        Focus::Diff,
+        "← is the column cursor, not a pane"
+    );
+
+    app.on_key(KeyCode::Tab).expect("tab");
     assert_eq!(app.focus(), Focus::Sidebar);
     app.on_key(KeyCode::Left).expect("left again");
     assert_eq!(
@@ -40,7 +47,7 @@ fn with_the_files_focused_both_key_pairs_move_the_file_selection(
 ) {
     let workspace = Fixture::new();
     let mut app = workspace.app();
-    app.on_key(KeyCode::Left).expect("focus files");
+    app.on_key(KeyCode::Tab).expect("focus files");
 
     app.on_key(forward).expect("forward");
     assert_eq!(app.file_index(), 1, "moved to the second file");
@@ -114,7 +121,7 @@ fn file_navigation_keys_work_from_either_pane() {
     let mut app = workspace.app();
     app.on_key(KeyCode::Char(']')).expect("next file");
     assert_eq!(app.file_index(), 1);
-    app.on_key(KeyCode::Left).expect("focus files");
+    app.on_key(KeyCode::Tab).expect("focus files");
     app.on_key(KeyCode::Char('[')).expect("previous file");
     assert_eq!(app.file_index(), 0);
 }

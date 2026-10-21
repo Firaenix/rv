@@ -12,7 +12,7 @@ fn tree_sidebar() -> (Fixture, rv::app::App) {
     let mut app = workspace.app();
     app.on_key(KeyCode::Char('v')).expect("view leader");
     app.on_key(KeyCode::Char('t')).expect("tree view");
-    app.on_key(KeyCode::Left).expect("focus the sidebar");
+    app.on_key(KeyCode::Tab).expect("focus the sidebar");
     // The cursor opens on the selected file's row; the directory above it is
     // the thing to zoom into.
     app.on_key(KeyCode::Up).expect("onto the directory row");

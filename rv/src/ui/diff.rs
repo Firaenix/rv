@@ -149,6 +149,28 @@ pub fn diff_column_at(app: &App, pane: Rect, column: u16) -> usize {
     hscroll.saturating_add(into)
 }
 
+/// The sideways scroll that keeps character `column` of a diff line on screen
+/// in a pane drawn at `pane`: the current one where it already does, else the
+/// nearest that does.
+#[must_use]
+pub fn diff_hscroll_showing(app: &App, pane: Rect, column: usize) -> usize {
+    let hscroll = app.diff_hscroll();
+    // The borders and the gutter never hold text, and the clipped marker takes
+    // one more column whenever the view is scrolled.
+    let room = usize::from(pane.width).saturating_sub(2 + GUTTER);
+    if room < 2 {
+        return hscroll;
+    }
+    if column < hscroll {
+        return column;
+    }
+    let shown = room - usize::from(hscroll > 0);
+    if column < hscroll + shown {
+        return hscroll;
+    }
+    column + 2 - room
+}
+
 /// The first row on screen after `delta` rows of wheel, clamped to the plan.
 #[must_use]
 pub fn diff_scrolled(app: &App, pane: Rect, delta: isize) -> usize {

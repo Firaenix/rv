@@ -195,7 +195,7 @@ fn the_focused_pane_is_marked() {
     let mut app = workspace.app();
 
     let diff_focused = buffer_text(&frame_at(&app, 100, 24));
-    app.on_key(KeyCode::Left).expect("focus files");
+    app.on_key(KeyCode::Tab).expect("focus files");
     let files_focused = buffer_text(&frame_at(&app, 100, 24));
 
     assert_ne!(
@@ -235,7 +235,7 @@ fn only_the_focused_panes_border_is_bold() {
     };
 
     assert_eq!(bold(&app), (false, true), "the diff has focus on launch");
-    app.on_key(KeyCode::Left).expect("focus files");
+    app.on_key(KeyCode::Tab).expect("focus files");
     assert_eq!(bold(&app), (true, false), "the mark did not move");
     app.on_key(KeyCode::Right).expect("focus the diff");
     assert_eq!(bold(&app), (false, true), "and did not come back");
@@ -261,7 +261,7 @@ fn the_unfocused_sidebar_dims_its_selection() {
     };
 
     assert!(!reversed(&app), "the unfocused file list is still reversed");
-    app.on_key(KeyCode::Left).expect("focus files");
+    app.on_key(KeyCode::Tab).expect("focus files");
     assert!(reversed(&app), "the focused file list lost its highlight");
 }
 

@@ -32,7 +32,7 @@ fn the_mode_segment_follows_the_context() {
     let mut app = workspace.app();
     assert!(last_row(&frame_at(&app, 100, 24)).contains("DIFF"));
 
-    app.on_key(KeyCode::Left).expect("focus the sidebar");
+    app.on_key(KeyCode::Tab).expect("focus the sidebar");
     assert!(last_row(&frame_at(&app, 100, 24)).contains("FILES"));
 
     app.on_key(KeyCode::Char('m')).expect("mode leader");

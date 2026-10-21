@@ -12,10 +12,10 @@ use crate::support::*;
 /// starts inside the pane.
 const GUTTER: u16 = 7;
 
-/// `←`/`→` in the diff walk the line a character at a time, and the start of the
-/// line is where `←` goes back to meaning "leave the pane".
+/// `←`/`→` in the diff walk the line a character at a time, and at the start
+/// of the line `←` stays put: leaving the pane is `Tab`'s job.
 #[test]
-fn the_arrows_walk_the_column_before_they_leave_the_diff() {
+fn the_arrows_walk_the_column_and_never_leave_the_diff() {
     let workspace = Fixture::new();
     let mut app = workspace.app();
     assert_eq!(app.focus(), Focus::Diff, "the diff has focus on launch");
@@ -31,13 +31,51 @@ fn the_arrows_walk_the_column_before_they_leave_the_diff() {
     app.on_key(KeyCode::Left).expect("left");
     assert_eq!((app.column(), app.focus()), (0, Focus::Diff));
 
-    // Nothing left to walk, so the arrow means the pane again.
     app.on_key(KeyCode::Left).expect("left");
     assert_eq!(
-        app.focus(),
-        Focus::Sidebar,
-        "← at the line start stayed put"
+        (app.column(), app.focus()),
+        (0, Focus::Diff),
+        "← at the line start left the pane"
     );
+}
+
+/// Walking the cursor off the right edge of the pane scrolls the line to keep
+/// it on screen, and walking back to the start scrolls it home again: the
+/// cursor is how the view moves sideways.
+#[test]
+fn the_view_follows_the_column_cursor_sideways() {
+    let workspace = Fixture::wide();
+    let mut app = workspace.app();
+    let _ = frame_at(&app, 80, 24);
+    let diff = app.painted_layout().diff;
+    let text_columns = usize::from(diff.width) - 2 - usize::from(GUTTER);
+
+    for _ in 0..text_columns - 1 {
+        app.on_key(KeyCode::Right).expect("right");
+    }
+    assert_eq!(
+        app.diff_hscroll(),
+        0,
+        "the view moved before the cursor left it"
+    );
+
+    app.on_key(KeyCode::Right).expect("right off the edge");
+    let column = app.column();
+    let scrolled = app.diff_hscroll();
+    assert!(scrolled > 0, "the view did not follow the cursor");
+    // The marker takes one column once scrolled, so the cursor sits last.
+    assert_eq!(column, scrolled + text_columns - 2);
+    let frame = buffer_text(&frame_at(&app, 80, 24));
+    assert!(
+        frame.contains("…"),
+        "no marker for the clipped head:\n{frame}"
+    );
+
+    for _ in 0..column {
+        app.on_key(KeyCode::Left).expect("left");
+    }
+    assert_eq!((app.column(), app.diff_hscroll()), (0, 0));
+    assert_eq!(app.focus(), Focus::Diff);
 }
 
 /// `Tab` out of the diff is a focus toggle: it must not also reset the sidebar
