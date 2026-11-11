@@ -1,5 +1,5 @@
 //! Marks laid over a code row after it is drawn: the `/` query's matches, and
-//! the column cursor's word on the selected line.
+//! the column cursor's character on the selected line.
 //!
 //! Applied by column on the finished row rather than woven into the syntax
 //! spans, so the code row stays one function of the line and neither mark
@@ -33,18 +33,23 @@ fn match_style() -> Style {
     Style::default().add_modifier(Modifier::UNDERLINED)
 }
 
-/// The column cursor's word: a grey ground under it, the one background in
-/// the pane that is not a line wash, so it reads as a cursor and not as a
-/// second selected line.
-fn cursor_style() -> Style {
+/// The symbol the column cursor is inside.
+fn symbol_style() -> Style {
     Style::default()
         .bg(Color::DarkGray)
         .add_modifier(Modifier::BOLD)
 }
 
+/// A block cursor in the character's own colour, the character showing
+/// through in the row's: readable on any wash and any theme, blank cells
+/// included.
+fn cursor_style() -> Style {
+    Style::default().add_modifier(Modifier::REVERSED)
+}
+
 /// What to lay over diff line `index`: every query match, and — on the
-/// selected line while the diff pane has the focus — the word under the
-/// column cursor.
+/// selected line while the diff pane has the focus — the symbol the column
+/// cursor is inside, and the cursor's own character over it.
 ///
 /// `selected` is the line the row cursor is on, handed down from
 /// [`super::diff::body`] rather than asked here: asking costs a plan of the
@@ -60,12 +65,18 @@ pub(super) fn marks(app: &App, index: usize, line: &DiffLine, selected: usize) -
             style: match_style(),
         })
         .collect();
-    if index == selected
-        && app.focus() == Focus::Diff
-        && let Some(chars) = app.word_range_in(line)
-    {
+    if index == selected && app.focus() == Focus::Diff {
+        let column = app.column_in(line);
+        if let Some(symbol) = app.word_range_in(line)
+            && symbol.contains(&column)
+        {
+            marks.push(Mark {
+                chars: symbol,
+                style: symbol_style(),
+            });
+        }
         marks.push(Mark {
-            chars,
+            chars: column..column + 1,
             style: cursor_style(),
         });
     }

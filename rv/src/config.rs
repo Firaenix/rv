@@ -10,8 +10,11 @@
 //! spellings. The command vocabulary and the collision rules live in
 //! [`crate::app::keymap`], which is where the default table is.
 
+mod agent;
 mod settings;
 
+pub use agent::AgentSettings;
+pub use agent::OrientationName;
 pub use settings::EngineName;
 pub use settings::Settings;
 pub use settings::SortName;

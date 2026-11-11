@@ -161,11 +161,19 @@ impl App {
             self.status = "no symbol under the cursor".to_owned();
             return Ok(());
         };
+        let asking = self.lsp_question(rv_core::lsp::RequestKind::Definition, &word);
+        self.definition_by_grammar(&word)?;
+        self.ask_language_server(asking);
+        Ok(())
+    }
+
+    fn definition_by_grammar(&mut self, word: &str) -> Result<()> {
         let wanted = self.use_kind_under_cursor();
-        let entries = self.definitions_of(&word, wanted);
+        let entries = self.definitions_of(word, wanted);
         match entries.as_slice() {
             [] => {
                 self.status = format!("no definition of {word} in this review");
+                self.hover_after_miss(word);
                 Ok(())
             }
             // One answer is a jump. Asking would be a keystroke spent on a
@@ -173,14 +181,14 @@ impl App {
             [only] => {
                 let only = only.clone();
                 self.jump_to_symbol(&only)?;
-                self.set_column_to(&word);
+                self.set_column_to(word);
                 Ok(())
             }
             // Several names match and nothing here can tell them apart: tags is
             // an index, not a type checker. Walking them one `g d` at a time
             // hid that, so the list says it instead and the reviewer decides.
             _ => {
-                self.choose_definition(&word, &entries);
+                self.choose_definition(word, &entries);
                 Ok(())
             }
         }
@@ -195,7 +203,7 @@ impl App {
     /// block is a definition *about* a type rather than of it, so it only ever
     /// answers when nothing else does — which is what used to make `g d` on a
     /// type cycle through every `impl` it had.
-    fn definitions_of(
+    pub(super) fn definitions_of(
         &mut self,
         name: &str,
         wanted: Option<rv_core::symbols::SymbolKind>,
@@ -244,7 +252,7 @@ impl App {
 
     /// What the grammar calls the use under the cursor, where there is one: a
     /// call, a type mention. `None` in a file no grammar claims.
-    fn use_kind_under_cursor(&mut self) -> Option<rv_core::symbols::SymbolKind> {
+    pub(super) fn use_kind_under_cursor(&mut self) -> Option<rv_core::symbols::SymbolKind> {
         let line = self.selected_line_number();
         let column = self
             .word_range()

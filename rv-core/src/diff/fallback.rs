@@ -62,7 +62,7 @@ pub fn diff(old: Option<&[u8]>, new: Option<&[u8]>) -> (Vec<DiffLine>, bool) {
 /// Byte indexing is safe here: `\r` and `\n` are ASCII, so they never occur
 /// inside a multi-byte UTF-8 sequence and every split lands on a character
 /// boundary.
-fn split_lines(text: &str) -> Vec<&str> {
+pub(super) fn split_lines(text: &str) -> Vec<&str> {
     let bytes = text.as_bytes();
     let mut lines = Vec::new();
     let mut start = 0;

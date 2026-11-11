@@ -36,20 +36,27 @@ becomes a pull request, or instead of ever becoming one.
   in, one exit code to poll
 - **Configurable** — remap any key in `keybindings.toml`, set your session
   defaults in `Config.toml`, or use it stock with zero setup
-- **No forge, no network, no accounts** — it never leaves your machine
+- **No forge, no network, no accounts** — it never leaves your machine, unless
+  you configure an agent CLI for it to run ([Asking an agent](#asking-an-agent))
 
 ## What rv is not
 
 - **No forge.** It does not know what GitHub, GitLab, Gerrit or Forgejo are. It
   never reads or writes a pull request, a merge request or a change list.
-- **No network.** Nothing `rv` does makes an outbound connection.
+- **No network.** Nothing `rv` does makes an outbound connection. An `[agent]`
+  command you configure is a separate program, and it may.
 - **No authentication.** There is no account, no token, no config file to hold
   one.
-- **No model calls.** `rv` never talks to an LLM. The handoff is a file you give
-  to whatever agent you already use.
+- **No model calls of its own.** `rv` holds no API key, no URL and no provider
+  code, and never talks to an LLM itself. The handoff is a file you give to
+  whatever agent you already use — or, if you configure one, a command `rv` runs
+  for you: the prompt on its stdin, the answer read back from its stdout, the
+  same shape as shelling out to difftastic. Off by default; see
+  [Asking an agent](#asking-an-agent).
 - **No history mutation.** `rv` opens the repository read-only. It never starts
   a transaction and never writes inside `.jj/`. The only things it writes are
-  `.review/` and one line appended to `.git/info/exclude`.
+  `.review/` and one line appended to `.git/info/exclude` — unless you turn on
+  [language servers](#language-servers), which write their own caches.
 - **No jj-config coupling.** `rv` deliberately ignores your jj config — your
   `revset-aliases`, your `ui.diff.tool`, all of it. It behaves the same on a
   fresh jj install as on a heavily customised one. Its own configuration
@@ -107,12 +114,15 @@ Run `rv` from the **workspace root** — the directory holding `.jj/`. See
 | `rv` | `trunk()..@` — everything on your stack that trunk does not have |
 | `rv <bookmark>` | `trunk()..<bookmark>`. The target may be a bookmark, a change id or a commit id |
 | `rv --from <rev> --to <rev>` | An explicit range, e.g. `rv --from main --to my-feature` |
+| `rv browse [<path>] [--to <rev>]` | The code as it stands at `@` (or `<rev>`), every file whole — see [Browsing the tree](#browsing-the-tree) |
 | `rv comment <file> --line <n> [--side left] -m <text>` | Adds a comment exactly as the TUI would — anchor and id handled. `-m -` reads the body from stdin. The reviewer agent's way in |
 | `rv comments [--json] [--state open]` | Lists the comments — id, state, body, reply, anchor and excerpt. The agent's read channel |
 | `rv reply <id> -m <text>` | Stores an answer on the comment (`-m -` for stdin). A second reply replaces the first; state is untouched |
 | `rv resolve <id>` / `rv abandon <id>` | Settles a comment, recording who (`--by agent` is the default; the TUI's `R` and `c a` record `user`). Re-applying reopens it |
 | `rv diff [<file>] --json` | The changes in rv's own side-aware coordinates — the numbers `rv comment --line` accepts |
 | `rv render [--out <path>]` | Prints the review as markdown, a view nothing reads back; `--out` writes it to a file |
+| `rv brief [--json] [--out <path>] [--context <n>]` | The handoff bundle: every unsettled comment, grouped by file, with its anchor's confidence, the code around it as it stands now (`--context` lines either side, default 5) and the commands that answer it. See [Handing off with `rv brief`](#handing-off-with-rv-brief) |
+| `rv brief --ask [--context <n>]` | Pipes the brief through the agent configured under `[agent]`, prints its answer (with duration and cost when reported), and files the lines it points at as flags by `agent`. The one query that writes — see [Asking an agent](#asking-an-agent) |
 | `rv status` | Prints the range, its changes, its changed files and its comment counts |
 | `rv status --json` | The same report as JSON, for scripting |
 | `rv status --check` | Exit 1 while any comment is open, 0 otherwise, nothing printed — the worker's poll and a CI gate |
@@ -123,6 +133,8 @@ Run `rv` from the **workspace root** — the directory holding `.jj/`. See
 | `rv reviewed [--json]` | Lists the ticked files, and which have changed since |
 | `rv completions <shell>` | Prints the completion script for `bash`, `zsh`, `fish`, `elvish` or `powershell` on stdout. The nix and Homebrew packages install it for you |
 | `rv --repo <path> …` | Reviews the workspace at `<path>` instead of the current directory |
+| `rv --tree …` | Runs any subcommand against the tree review `rv browse` opens instead of the range review, e.g. `rv --tree comments --json` |
+| `rv --no-agent …` | Runs no agent this time, whatever `[agent]` says |
 | `rv --no-difft …` | Diffs with the in-process engine instead of difftastic: line-based rather than structural, with context lines. What a reviewer with no `difft` on `PATH` sees |
 
 ### Nix
@@ -283,7 +295,48 @@ split = 40             # sidebar share of the width, in percent
 ascii = true           # ASCII status-bar separators (RV_ASCII as a setting)
 engine = "fallback"    # auto | fallback — --no-difft as a default
 auto_refresh = false   # stop refreshing when the repo or a reviewed file moves (on by default)
+hover = true           # open g i's card when the pointer rests on a name (off by default)
+provenance = true      # open with the v p provenance gutter on (off by default)
 ```
+
+`hover = true` depends on the terminal reporting pointer motion, which not all
+do; `g` `i` is the same card from the keyboard.
+
+### Browsing the tree
+
+`rv browse` reviews the repository as it is rather than a range: the sidebar
+lists every file in the tree at `@` (or `--to <rev>`), and each opens whole,
+every line context. `rv browse src/` lists only what is under `src/`. Files
+are read when opened, not at launch, so a large tree opens at once.
+
+Comments, flags and reviewed ticks work as they do in a range — anchors follow
+the code as it is edited — and live in a review of their own, `@tree`
+(`@tree-<rev>` for another revision), which never mixes with the range review
+of the same head. The subcommands reach it with `--tree`:
+
+```sh
+rv --tree comment src/lib.rs --line 12 -m "why is this public?"
+rv --tree comments --json
+rv --tree status --check
+```
+
+In the sidebar a file's mark is `·` and its count is its size on disk; `v o`
+cycles between `path` and `size` order (`sort = "path"` or `"size"` in
+`Config.toml`).
+
+### Line provenance
+
+`v` `p` puts a gutter ahead of the line numbers naming, by the first eight
+characters of its change id, the change that last touched each line of the
+head side. A run of lines from one change is named once, on its first line;
+changes this review covers are bright and older ones dim. Removed lines have
+no head-side origin and stay blank. `i` on a line opens a card with the
+change's id, author, date and the first line of its description.
+
+The annotation walks the file's history with jj, so it runs in the background:
+the gutter shows `…` until it lands, and nothing waits on it. It is computed
+once per file and head commit, and works the same in `rv browse` and in a
+range review.
 
 ### Several reviews at once
 
@@ -337,15 +390,15 @@ left it.
 | `Tab` | From the diff, to the sidebar on whatever tab it was left on; from the sidebar, round the four lists: Files → Commits → Comments → Flags → Files. The diff is not a stop on that walk — `Enter`, `→` on a file or `m` `d` go there — so holding `Tab` cannot strand you between the flag browser and the diff. A file row under a change shows *that change's* diff of it |
 | `s` | Fold a comment box away, or a directory in the file list — again to unfold |
 | `f` | On the diff: toggle full-file context (also `v` `f` from anywhere) |
-| `i` | In the **Commits** list: put the change details away, or bring them back (also `v` `i` from anywhere) |
+| `i` | In the **Commits** list: put the change details away, or bring them back (also `v` `i` from anywhere). On the diff: a card naming the change that last touched the line under the cursor — see [Line provenance](#line-provenance) |
 | `E` | Open the selected file at the cursor's line in `$EDITOR`, and come back to the review when it exits. Unset `$EDITOR` is reported in the status line rather than guessed at |
 | `+` | Widen the sidebar |
 | `_` | Narrow it |
-| `Esc` | Leave the comment stack or the flag, or back out of a zoomed directory |
+| `Esc` | Leave the comment stack or the flag, or back out of a zoomed directory; with nothing to back out of, stop a running agent ask |
 | `?` | What the keys do **here**: a contextual tip in the corner above the bar. `?` again unrolls the whole keymap; `Esc` or `q` closes either |
 | `q` | Quit |
 | `Ctrl+C` | Quit from anywhere, including out of a half-typed comment |
-| `C` | Comment on the highlighted line: type, `Enter` saves, `Esc` discards. **Every key that writes to the review is a shifted letter** — `C D R A F X E` — so a mutation is always a deliberate chord, and a lowercase letter only ever moves, toggles a view, or opens a menu |
+| `C` | Comment on the highlighted line: type, `Enter` saves, `Esc` discards. **Every key that writes to the review is a shifted letter** — `C D R A F X E K B` — so a mutation is always a deliberate chord, and a lowercase letter only ever moves, toggles a view, or opens a menu |
 | `D` | Delete the comment or flag under the cursor, after a `y`/`n` confirmation |
 | `R` | Resolve the comment under the cursor — again to reopen |
 | `X` | Tick the file off as **reviewed** — again to untick. From the file list it ticks the range's diff of the file, from a row under a change it ticks *that change's* diff of it, and on a change row it ticks every file the change touched. Ticking folds the file's comments and flags away; the tick shows as `✓` on the row and in the diff's title, `≈` once the file has changed under it |
@@ -357,6 +410,9 @@ left it.
 | `h` | (Diff) Move the column cursor to the previous word of the highlighted line |
 | `l` | (Diff) The next word — the word under the cursor is what `*`, `g` `d` and `g` `r` look up |
 | `*` | (Diff) Search for the word under the column cursor and jump to its next occurrence — `/` without retyping what is already on screen |
+| `K` | Ask the configured agent: on the diff, about the line under the cursor; from a list, what the selected file is for. Runs in the background — a tooltip top right says it is thinking, and `Esc` stops it. The lines it points at are filed as flags by `agent`. See [Asking an agent](#asking-an-agent) |
+| `B` | Brief the agent on the whole review — the same bundle `rv brief --ask` sends — and file the lines it points at as flags |
+| `a` | The agent's last answer in full: what it was asked, its prose, the lines it flagged, and how long it took and what it cost. `↑`/`↓` scroll, `Esc` or `q` closes |
 | `Space` `t` | (Files/Commits) Switch the list between a flat list and a tree |
 | `Space` `o` | (Files/Commits) Cycle the list's order: by path, additions, deletions |
 | `Space` `#` | (Files/Commits) Show or hide the `+n -n` counts |
@@ -381,6 +437,12 @@ left it.
 | `g` `F` | The previous flag |
 | `g` `d` | Go to the definition of the symbol under the column cursor — the next one on from here where the review defines it more than once. The symbol is the one tree-sitter found at that spot, so on `self.write()` it is `write` |
 | `g` `r` | List every reference to the symbol under the column cursor, across every file in scope. The list is what tree-sitter found — real uses, each tagged with what it is (a call, a type) — so a name inside a comment or a string is not in it. Each row is a kind, a file, a line number and the line itself; `↑`/`↓` choose (wrapping), `Home`/`End` jump to either end, `Enter` goes there, `Esc` leaves the review where it was. The cursor opens on the first reference past the one you are reading. For a file rv has no grammar for the panel says **Lines naming**, and those rows are a plain whole-word text match |
+| `g` `i` | A card over the code for the symbol under the column cursor: its kind and name, where it is declared with the declaration's first lines, how many references tree-sitter found, and the keys that go on from there (as your keymap spells them). `g` `d` and `g` `r` raise the same card when they find nothing to go to. `Esc` closes it, and so does any other command or click |
+| `g` `o` | Open a file by name: type any part of its path — or just its letters in order — and `Enter` opens the best match, a hit in the file's own name first |
+| `g` `s` | Search every file in the review for text (`/` searches only the diff on screen): type, `Enter` lists every line holding it in the `g` `r` panel, case-blind unless the query has a capital |
+| `g` `b` | Back to where the cursor was before the last jump — `g` `d`, a reference or search hit, a picked symbol or file, a comment or flag. Press again to keep walking back |
+| `g` `a` | Next flag the agent filed (`✦`), wrapping round the review — the queue of what it said deserves a look |
+| `g` `A` | The previous one |
 | `c` `c` | Comment on the highlighted line (the menu's spelling of `C`) |
 | `c` `d` | Delete a comment, after a `y`/`n` confirmation (`D`) |
 | `c` `r` | Resolve a comment — press it again to reopen (`R`) |
@@ -396,6 +458,7 @@ left it.
 | `v` `<` | Narrow the sidebar |
 | `v` `>` | Widen it |
 | `v` `i` | Put the change details away, or bring them back. They show whenever a change is highlighted in the **Commits** tab: both ids, the whole description, and every file it touched |
+| `v` `p` | Show or hide the provenance gutter: ahead of each head-side line, the change that last touched it — see [Line provenance](#line-provenance) |
 | `v` `r` | Refresh: re-resolve the range against the repository as it now stands — after a push, a rebase, or a bookmark move |
 
 In the diff, `↓` and `↑` move by **row** rather than by diff line, so a comment
@@ -549,9 +612,158 @@ the loop parses a document. The `-m -` form reads the body from stdin — the
 meets the shell. Two skills in this repository teach the loop to agents:
 `rv-reviewer` and `rv-worker` under `.claude/skills/`.
 
+### Handing off with `rv brief`
+
+`rv brief` is the prompt you paste into an agent — or `--out brief.md` and
+attach. It needs no repository knowledge beyond what is in it:
+
+- the review's revset, base and head, its changes and the workspace root;
+- every open, awaiting-verification and outdated comment, grouped by file, with
+  its id, line, side, state and anchor confidence (`exact`, `moved`, `weak`,
+  `outdated`), its body and any reply;
+- for each, a fenced excerpt of the file *as it stands now* around the line the
+  anchor resolves to — so after an edit above it, the excerpt shows the moved
+  code at its new number. An `outdated` comment quotes the context it stored
+  when it was written instead, labelled as such, never whatever now sits at its
+  old line number;
+- the protocol: answer with `rv reply <id> -m …`, settle with `rv resolve <id>`
+  or `rv abandon <id>`, with `--tree`, `--from` and `--to` included when the
+  review needs them to be reached again.
+
+Resolved and abandoned comments and flags are left out: a brief is the work
+still to answer. `--json` emits the same content as one object —
+`session`, `notes[]` (`id`, `file`, `line`, `side`, `confidence`, `state`,
+`body`, `replies[]`, `excerpt{source, start_line, lines[]}`) and `protocol` —
+and like `rv status` it only reads: `session.toml` is not rewritten.
+`rv comments --json` stays the machine channel; `rv brief` is the handoff.
+
 `rv render` still produces the markdown for human reading, and a reply an agent
 wrote into a pre-CLI export is rescued into the store once, the first time this
 version loads the review.
+
+### Asking an agent
+
+`rv` can run an agent CLI you already use — `maki -p` or `claude --print`,
+whose `--output-format json` replies share one shape — and read its answer
+back. It makes no model call of its own: it runs the command you configured in
+the repository root, writes the prompt to its stdin, and reads its stdout,
+killing it after `timeout_secs`. Nothing is configured by default, and with no
+`[agent]` section `rv` behaves exactly as if this section did not exist.
+
+**The prompt leaves your machine** if the agent sends it anywhere, and it
+carries your code and your notes. Keep the agent read-only with
+`allowed_tools = "Read"`: `rv` only ever wants an answer from it, and writes
+nothing but its own `.review/` store.
+
+```toml
+[agent]
+command = ["maki", "-p", "--output-format", "json"]   # or ["claude", "--print", "--output-format", "json"]
+model = "opus"              # optional; passed as `--model opus`
+allowed_tools = "Read"      # passed as `--allowedTools Read`
+timeout_secs = 120          # the default
+orientation = "files"       # off | on-demand (the default with a command) | files
+# model_flag = "--model"    # the flags rv appends, for a CLI that spells them
+# allowed_tools_flag = "--allowedTools"   # differently
+# resume_flag = "-r"
+```
+
+`rv brief --ask` sends the [brief](#handing-off-with-rv-brief) and asks the
+agent to answer each note and name the lines worth a look, ending its reply with
+a fenced JSON block — `{"summary": …, "focus": [{"path", "line", "why",
+"importance"}]}`. `rv` prints the prose and, from the block alone, files each
+focus line as a flag by `agent` (`rv flags --json` shows `"by": "agent"`).
+A focus on a file outside the review or past its end is skipped and named; a
+line already flagged by the agent with the same reason — where it was, or where
+the code has since moved it — is not filed twice. Flags never block
+`rv status --check`. A reply without the block is still printed; it just flags
+nothing.
+
+The agent's session id is kept in the review's `session.toml`, and the next ask
+resumes it with `resume_flag`, so asks are one conversation rather than many
+cold ones; a session the agent no longer knows is retried fresh once. The reply
+is untrusted input: terminal escapes and control characters are stripped and
+every field is length-capped before it is printed or stored.
+
+In the reviewer, the agent runs in the background, one ask at a time, so no key
+waits on it. `K` asks about the line under the cursor (from a list: what the
+selected file is for), `B` briefs it on the whole review, `a` opens its last
+answer in full with how long it took and what it cost, and `g` `a` / `g` `A`
+walk the flags it filed — drawn `✦` rather than `⚑` here and in the Flags tab,
+so its suggestions never read as yours. `Esc` stops a running ask when there is
+nothing else for it to back out of (a menu, the hover card, a comment stack or
+flag, a zoomed directory all come first). While an ask runs, a tooltip in the
+diff pane's top-right corner says so: a spinner, what was asked about, how long
+it has taken, and the key that stops it. The status bar says `agent: maki`, or
+`agent: unavailable` when the command is not on `PATH` — then nothing is asked
+and nothing else changes. While a file is shown, the
+diff pane's bottom border carries the agent's one-line purpose of it, how many
+of its flags there are still open, and the agent keys as your keymap spells
+them.
+
+`orientation` decides whether rv asks by itself:
+
+| `orientation` | What the reviewer does |
+|---|---|
+| `"off"` | Never asks from the reviewer at all — `K` and `B` say so; only `rv brief --ask` runs the agent |
+| `"on-demand"` | Asks only when you press `K` or `B`; the default once a command is configured |
+| `"files"` | Also asks *what is this file for, and what deserves a review?* the first time each file is shown — once per file and content, so an unchanged file is never asked twice and an edited one is asked again |
+
+## Language servers
+
+`g d`, `g r` and `g i` answer from tree-sitter: names, not types, and nothing
+across files the review does not list. With `lsp = "auto"` in `Config.toml`
+rv also asks a language server (rust-analyzer for Rust out of the box) and
+swaps its answer in when it lands — the grammar's answer is still shown at
+once, so no key ever waits on the server. A definition moves the cursor only
+if you have not moved since pressing `g d`; a list that is still open is
+replaced in place; anything later is dropped. Results outside the review's
+files are listed as `outside` and cannot be opened. The status bar's `nav:`
+segment says which is in force: `nav: grammar`, `nav: rust-analyzer indexing
+42%`, `nav: rust-analyzer`, or `nav: unavailable` when the server is missing
+or died (navigation then carries on with the grammar).
+
+```toml
+lsp = "auto"                                  # default "off"
+# Optional — discovery covers the common servers:
+# lsp_servers = { go = "gopls serve" }        # a command, split on spaces…
+# lsp_servers = { go = ["/opt/my tools/gopls"] }   # …or an argv array
+# lsp_servers = { rust = "" }                 # an empty command turns one off
+```
+
+`lsp = "auto"` discovers a server for each language you have not configured,
+taking the first one installed:
+
+| Language | Tried, in order |
+|---|---|
+| `rust` | `rust-analyzer` |
+| `go` | `gopls` |
+| `typescript` (also JS) | `typescript-language-server --stdio`, `vtsls --stdio` |
+| `python` | `basedpyright-langserver --stdio`, `pyright-langserver --stdio`, `pylsp`, `jedi-language-server` |
+| `c` (also C++) | `clangd` |
+| `zig` | `zls` |
+| `lua` | `lua-language-server` |
+| `nix` | `nixd`, `nil` |
+| `ruby` | `ruby-lsp`, `solargraph stdio` |
+| `bash` | `bash-language-server start` |
+
+It looks in the repo's `node_modules/.bin`, `.venv/bin` and `venv/bin` first,
+then on `PATH`, then in `~/.cargo/bin`, `~/go/bin` (or `$GOPATH/bin`), Neovim's
+Mason directory and `~/.local/bin`. **A repo-local server is used only if jj
+does not track it**, so the branch under review cannot ship its own
+"language server" for rv to run. A configured command's program is looked up
+the same way. `rv lsp` prints what each language would use and where it was
+found, or what was tried.
+
+Servers read files from disk, so they are only asked
+when the reviewed head *is* the working copy, and never about a removed line;
+anywhere else the list and the card say `grammar only — this revision is not
+on disk`.
+
+**This departs from rv writing only `.review/`.** rust-analyzer runs `cargo
+metadata` and `cargo check` on the workspace and populates `target/` as a
+build would, which is why it is opt-in. The server is started when a file of
+its language is first shown, and asked to shut down when rv exits — rv does
+not wait for it to finish.
 
 ## `RV_ASCII`
 

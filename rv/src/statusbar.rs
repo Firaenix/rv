@@ -14,8 +14,8 @@
 //! hint with `deleted comment at app.rs:42` and it never came back — the one
 //! in-app reference to the keys, evicted by the first thing anybody does. Here
 //! it is one segment among six and can displace nothing. It is also the *first*
-//! segment dropped when the bar is short, because it is the only part of the
-//! bar that stops being true on its own.
+//! segment dropped when the bar is short (after the opt-in `nav:` segment),
+//! because it is the only part of the bar that stops being true on its own.
 //!
 //! **The `?` hint is the last segment dropped**, ahead even of the mode. A
 //! reviewer on an 80-column ssh session is exactly the one who cannot afford to
@@ -110,6 +110,12 @@ pub enum Role {
     /// one segment describing something a reviewer cannot verify by looking
     /// at the pane, because a one-sided diff looks like a normal diff.
     ViewState,
+    /// Which engine answers `g d`/`g r` — `nav: grammar`, `nav: rust-analyzer
+    /// indexing 42%` — and absent while language servers are off.
+    Navigation,
+    /// `agent: maki`, `agent: thinking`, `agent: unavailable` — absent with
+    /// no agent configured.
+    Agent,
     /// The last thing that happened.
     Status,
     /// Right-aligned, and it names `?`.
@@ -126,26 +132,31 @@ impl Role {
     /// because it is the segment that says what the next keystroke means.
     const fn rank(self) -> u8 {
         match self {
-            Role::Status => 0,
+            // Which navigation engine is in force is background information:
+            // it goes before even the status a keystroke just wrote.
+            Role::Navigation => 0,
+            Role::Status => 1,
             // Above Status only because it is a job-in-progress and going
             // silent on a small terminal would leave the reviewer wondering
             // why the pane just changed.
-            Role::Busy => 1,
+            // The agent is a background job too, and whether it is thinking
+            // is what tells the reviewer an answer is on its way.
+            Role::Busy | Role::Agent => 2,
             // Nice to know, never load-bearing: the position already says the
             // line, and the symbol is only present when the index is warm.
-            Role::Symbol => 2,
+            Role::Symbol => 3,
             // Above the symbol: what the pane is *showing* cannot be read off
             // the pane itself, so it outlives the nice-to-knows.
-            Role::ViewState => 3,
-            Role::Scope => 4,
+            Role::ViewState => 4,
+            Role::Scope => 5,
             // Above the scope and below the position: a reviewer who has walked
             // into a change wants to know which one, and the revset is the same
             // sentence it was when they opened the review.
-            Role::Change => 5,
-            Role::Position => 6,
-            Role::Comments => 7,
-            Role::Mode => 8,
-            Role::Hint => 9,
+            Role::Change => 6,
+            Role::Position => 7,
+            Role::Comments => 8,
+            Role::Mode => 9,
+            Role::Hint => 10,
         }
     }
 
@@ -168,7 +179,12 @@ impl Role {
             // The bar's own ground: the mode is coloured by its ink, not its
             // block — see [`segments`].
             Role::Mode => Color::Black,
-            Role::Position | Role::Scope | Role::Hint | Role::ViewState => Color::DarkGray,
+            Role::Position
+            | Role::Scope
+            | Role::Hint
+            | Role::ViewState
+            | Role::Navigation
+            | Role::Agent => Color::DarkGray,
             Role::Symbol => Color::Gray,
             // Between the position and the scope, because that is what it is
             // between: narrower than the review, wider than one file.
@@ -275,6 +291,10 @@ pub struct View<'a> {
     /// `changes-only · grouped · after` — or empty when the view is standard,
     /// which drops the segment entirely.
     pub view_state: String,
+    /// The `nav:` segment's text, or empty while language servers are off.
+    pub navigation: String,
+    /// The `agent:` segment's text, or empty with no agent configured.
+    pub agent: String,
 }
 
 /// The bar's segments, left to right, skipping the ones with nothing to say.
@@ -330,6 +350,8 @@ pub fn segments(view: &View<'_>) -> Vec<Segment> {
     push(Role::Change, view.change.clone());
     push(Role::Scope, view.scope.to_owned());
     push(Role::Comments, format!("{} open", view.open_comments));
+    push(Role::Navigation, view.navigation.clone());
+    push(Role::Agent, view.agent.clone());
     push(Role::Status, view.status.to_owned());
     if view.busy {
         push(Role::Busy, "preparing full view".to_owned());

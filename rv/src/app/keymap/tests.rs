@@ -6,7 +6,8 @@ use crossterm::event::KeyCode;
 
 use super::super::Context;
 use super::super::bindings::{
-    AppCommand, Command, CursorCommand, DiffCommand, FilesCommand, Leader,
+    AgentCommand, AppCommand, Command, CursorCommand, DiffCommand, FilesCommand, Leader,
+    ProvenanceCommand,
 };
 use super::Keymap;
 use crate::config::parse;
@@ -217,5 +218,104 @@ fn repro_comments_pane_delete_bind() {
         command_of(&map, None, KeyCode::Char('d'), Context::Comments)
             .map(super::vocab::config_name),
         Some("comment_delete"),
+    );
+}
+
+#[test]
+fn no_two_default_rows_claim_one_key_in_one_place() {
+    let map = Keymap::default();
+    let rows = map.bindings();
+    for (index, first) in rows.iter().enumerate() {
+        for second in &rows[index + 1..] {
+            let overlap = first.contexts.is_empty()
+                || second.contexts.is_empty()
+                || first
+                    .contexts
+                    .iter()
+                    .any(|pane| second.contexts.contains(pane));
+            let shared = first.codes.iter().find(|code| second.codes.contains(code));
+            assert!(
+                first.leader != second.leader
+                    || first.command == second.command
+                    || !overlap
+                    || shared.is_none(),
+                "{} and {} both claim {shared:?}",
+                super::vocab::config_name(first.command),
+                super::vocab::config_name(second.command),
+            );
+        }
+    }
+}
+
+#[test]
+fn the_agent_keys_take_only_free_keys() {
+    let map = Keymap::default();
+    let expected = [
+        (None, 'K', AgentCommand::Ask),
+        (None, 'B', AgentCommand::OrientReview),
+        (None, 'a', AgentCommand::ShowAnswer),
+        (Some(Leader::Goto), 'a', AgentCommand::NextFlag),
+        (Some(Leader::Goto), 'A', AgentCommand::PrevFlag),
+    ];
+    for context in Context::PANES {
+        for (leader, key, command) in expected {
+            assert_eq!(
+                command_of(&map, leader, KeyCode::Char(key), *context),
+                Some(Command::Agent(command)),
+                "{leader:?} {key} in {context:?}"
+            );
+        }
+    }
+    assert_eq!(
+        command_of(&map, None, KeyCode::Char('A'), Context::Diff),
+        Some(Command::Comment(
+            super::super::bindings::CommentCommand::Acknowledge
+        )),
+        "`A` still acknowledges"
+    );
+    assert!(
+        Leader::ALL
+            .iter()
+            .all(|leader| !['K', 'B', 'a'].contains(&leader.key())),
+        "no leader opens on an agent key"
+    );
+}
+
+#[test]
+fn an_agent_key_rebinds_like_any_other() {
+    let map = keymap("[keys]\nagent_ask = \"Q\"\n");
+    assert_eq!(
+        command_of(&map, None, KeyCode::Char('Q'), Context::Diff),
+        Some(Command::Agent(AgentCommand::Ask))
+    );
+    assert_eq!(
+        command_of(&map, None, KeyCode::Char('K'), Context::Diff),
+        None
+    );
+}
+
+#[test]
+fn the_provenance_keys_take_only_free_keys() {
+    let map = Keymap::default();
+    for context in Context::PANES {
+        assert_eq!(
+            command_of(&map, Some(Leader::View), KeyCode::Char('p'), *context),
+            Some(Command::Provenance(ProvenanceCommand::ToggleGutter)),
+            "v p in {context:?}"
+        );
+    }
+    assert_eq!(
+        command_of(&map, None, KeyCode::Char('i'), Context::Diff),
+        Some(Command::Provenance(ProvenanceCommand::ShowOrigin))
+    );
+    assert_eq!(
+        command_of(&map, None, KeyCode::Char('i'), Context::Commits),
+        Some(Command::App(AppCommand::ToggleChangeDetails)),
+        "`i` in the commits list still toggles the change details"
+    );
+    assert_eq!(
+        command_of(&map, Some(Leader::Goto), KeyCode::Char('i'), Context::Diff),
+        Some(Command::Diff(DiffCommand::Hover)),
+        "`g i` is still the symbol card"
     );
 }

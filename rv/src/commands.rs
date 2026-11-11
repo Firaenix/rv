@@ -1,13 +1,19 @@
 //! What each subcommand does, once the arguments are parsed.
 
+mod ask;
 pub mod attention;
+mod brief;
 mod configcmd;
 mod diffcmd;
+mod lsp;
 mod report;
 
+pub use ask::ask_about_brief;
+pub use brief::brief;
 pub use configcmd::edit_config;
 pub use configcmd::edit_keymap;
 pub use configcmd::print_keymap;
+pub use lsp::list_language_servers;
 
 /// `rv reviews`: every review stored under this repo, one line each — the
 /// map a reviewer jumping between branches navigates by.

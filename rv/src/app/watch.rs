@@ -26,6 +26,9 @@ use std::time::Instant;
 /// handful of stat calls every two seconds costs nothing worth counting.
 pub(super) const WATCH_INTERVAL: Duration = Duration::from_secs(2);
 
+/// The most top-level entries a tree review stats per look.
+const TREE_WATCH_CAP: usize = 256;
+
 pub(super) struct Watch {
     enabled: bool,
     /// The head-side paths of the files under review, relative to the root.
@@ -88,10 +91,37 @@ impl Watch {
         self.files = files(root, &self.paths);
     }
 
+    /// Adds `path` to what is watched — a tree review's file once it is open —
+    /// and takes the baseline again so the addition is not itself movement.
+    pub fn follow(&mut self, root: &Path, path: PathBuf) {
+        if self.paths.contains(&path) {
+            return;
+        }
+        self.paths.push(path);
+        self.files = files(root, &self.paths);
+    }
+
     /// Whether the event loop needs to wake for this watch at all.
     pub fn enabled(&self) -> bool {
         self.enabled
     }
+}
+
+/// What a tree review watches before any file is opened: each top-level file
+/// and directory, capped, rather than every file in the repository — a
+/// directory's mtime moves when an entry is added or removed directly in it.
+pub(super) fn tree_paths<'a>(files: impl Iterator<Item = &'a str>) -> Vec<PathBuf> {
+    let mut tops: Vec<PathBuf> = Vec::new();
+    for path in files {
+        let top = PathBuf::from(path.split('/').next().unwrap_or(path));
+        if tops.last() != Some(&top) {
+            tops.push(top);
+        }
+        if tops.len() == TREE_WATCH_CAP {
+            break;
+        }
+    }
+    tops
 }
 
 /// The operation heads as one string: the sorted file names under
@@ -238,6 +268,35 @@ mod tests {
 
         std::fs::remove_file(dir.path().join("src/a.rs")).expect("delete");
         assert!(watch.look(dir.path()), "the file went missing");
+    }
+
+    #[test]
+    fn a_tree_watches_its_top_level_entries_only() {
+        let files = ["README.md", "src/a.rs", "src/deep/b.rs", "tests/c.rs"];
+        assert_eq!(
+            tree_paths(files.into_iter()),
+            [
+                PathBuf::from("README.md"),
+                PathBuf::from("src"),
+                PathBuf::from("tests")
+            ]
+        );
+    }
+
+    /// A followed file's edit is movement; following it is not.
+    #[test]
+    fn a_followed_file_is_watched_from_then_on() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        heads_dir(dir.path());
+        std::fs::create_dir_all(dir.path().join("src/deep")).expect("src");
+        std::fs::write(dir.path().join("src/deep/a.rs"), b"fn a() {}\n").expect("a.rs");
+
+        let mut watch = Watch::new(true, dir.path(), vec![PathBuf::from("src")]);
+        watch.follow(dir.path(), PathBuf::from("src/deep/a.rs"));
+        assert!(!watch.look(dir.path()), "following is not an edit");
+
+        std::fs::write(dir.path().join("src/deep/a.rs"), b"fn a() { 1 }\n").expect("edit");
+        assert!(watch.look(dir.path()), "the followed file changed");
     }
 
     #[test]

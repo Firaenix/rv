@@ -21,6 +21,7 @@
 //! Design: `docs/superpowers/specs/2026-08-18-rv-viewport-design.md`, and
 //! `2026-08-17-rv-storage-model-design.md` for what a comment costs to save.
 
+mod agent;
 mod alerts;
 mod anchor;
 mod bindings;
@@ -40,9 +41,12 @@ mod errorlog;
 mod flags;
 mod focus;
 mod fold;
+mod hover;
 mod hunks;
+mod jumps;
 pub mod keymap;
 mod keys;
+mod lsp;
 mod measure;
 mod merges;
 mod mode;
@@ -50,6 +54,9 @@ mod mouse;
 mod navigate;
 mod paging;
 mod paint;
+mod picker;
+mod pointer;
+pub mod provenance;
 mod query;
 mod references;
 mod refresh;
@@ -67,9 +74,16 @@ mod viewside;
 mod watch;
 mod zoom;
 
+pub use agent::Answer;
+pub use agent::CornerTip;
+pub use agent::Thinking;
 pub use alerts::Alert;
 pub use changes::ChangeInfo;
 pub use errorlog::subscriber as error_log_subscriber;
+pub use hover::Declaration;
+pub use hover::HoverCard;
+pub use hover::JumpSource;
+pub use picker::Picking;
 pub use references::JumpList;
 pub use references::Reference;
 pub use sidebar::BrowserRow;
@@ -165,6 +179,11 @@ pub struct App {
     /// The word that list is about, kept past the close so the jump can put the
     /// column cursor back on it.
     reference_word: String,
+    /// What the open picker matches its query against.
+    picking: picker::Picking,
+    hover: Option<hover::Hover>,
+    resting: pointer::Dwell,
+    jumps: jumps::Jumps,
     /// The files ticked off as reviewed, each with whether its diff has
     /// changed since — surveyed when read, since the check costs blob reads.
     reviewed: Vec<(ReviewedFile, reviewed::Freshness)>,
@@ -367,4 +386,7 @@ pub struct App {
     /// run it. `None` at every other moment: [`App::take_edit`] is the only
     /// reader and it takes.
     pending_edit: Option<editor::Edit>,
+    navigation: lsp::Navigation,
+    assistant: agent::Assistant,
+    provenance: provenance::Provenance,
 }

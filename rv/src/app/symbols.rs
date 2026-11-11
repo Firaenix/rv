@@ -26,6 +26,8 @@ pub(super) enum Scope {
     /// Every changed file in the range.
     Bookmark,
     Change(usize),
+    /// Every text file a tree review lists, skipping binary and oversized ones.
+    Tree,
 }
 
 /// One file in scope, before its bytes have been read.
@@ -64,6 +66,9 @@ impl App {
 
     /// What the sidebar is listing, which is what `n` walks.
     pub(super) fn scope(&self) -> Scope {
+        if self.review.is_tree() {
+            return Scope::Tree;
+        }
         match self.sidebar_tab {
             SidebarTab::Commits => self
                 .commit_change(self.commit_file_under_cursor().unwrap_or(0))
@@ -143,12 +148,17 @@ impl App {
             ),
             Side::Right => (&self.review.session.head_commit, file.path.clone()),
         };
-        let blob = self
-            .review
-            .repo
-            .read_blob(commit, &read_path)
-            .ok()
-            .flatten();
+        let tree = self.review.is_tree();
+        let blob = if tree && !crate::index::worth_indexing(self.stat(file.file).bytes) {
+            None
+        } else {
+            self.review
+                .repo
+                .read_blob(commit, &read_path)
+                .ok()
+                .flatten()
+        };
+        let blob = blob.filter(|blob| !tree || crate::index::indexable_text(blob));
         Indexable {
             file: file.file,
             path: file.path,
@@ -166,7 +176,7 @@ impl App {
     /// back is a jump `select_file` can perform.
     pub(super) fn scoped_files(&self, scope: &Scope) -> Vec<ScopedFile> {
         match scope {
-            Scope::Bookmark => self
+            Scope::Bookmark | Scope::Tree => self
                 .review
                 .files
                 .iter()
@@ -259,6 +269,7 @@ impl App {
 
     /// Puts the cursor on `entry`'s definition and says where it went.
     pub(super) fn jump_to_symbol(&mut self, entry: &crate::index::Entry) -> Result<()> {
+        self.record_jump();
         self.select_file(entry.file)?;
         // The definition's source line, found in the diff by number rather than
         // by position: a diff holds only the lines that changed, so the nth

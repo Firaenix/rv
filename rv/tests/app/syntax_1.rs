@@ -156,7 +156,8 @@ fn the_wash_is_the_palettes_own_green_and_red() {
 
 /// Reversing swaps the foreground and the background, which on a tinted line
 /// turns the syntax colours into the wash and the wash into the text —
-/// legible in neither direction. The selection is a *brighter* tint instead.
+/// legible in neither direction. The selection is a *brighter* tint instead,
+/// and only the column cursor's one character is reversed.
 #[test]
 fn the_selected_line_is_brighter_rather_than_reversed() {
     let workspace = Fixture::new();
@@ -166,13 +167,15 @@ fn the_selected_line_is_brighter_rather_than_reversed() {
     let frame = frame_at(&app, 100, 24);
     let selected = area.y + 1;
     assert_eq!(app.line_index(), 0, "the reviewer opens on the first line");
-    for x in (area.x + 1)..area.right() - 1 {
-        assert!(
-            !frame[(x, selected)].modifier.contains(Modifier::REVERSED),
-            "the selected line is drawn with reversed video:\n{}",
-            buffer_text(&frame)
-        );
-    }
+    let reversed = ((area.x + 1)..area.right() - 1)
+        .filter(|&x| frame[(x, selected)].modifier.contains(Modifier::REVERSED))
+        .count();
+    assert_eq!(
+        reversed,
+        1,
+        "only the cursor's cell may be reversed:\n{}",
+        buffer_text(&frame)
+    );
 
     let bright = diff_bg(&frame, area, selected).expect("the selection is tinted");
     let neighbour = diff_bg(&frame, area, selected + 1).expect("its neighbour is tinted");

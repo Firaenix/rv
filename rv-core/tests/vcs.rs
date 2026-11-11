@@ -3,7 +3,12 @@ mod fixture;
 use std::fs;
 
 use fixture::Fixture;
+use rv_core::diff::DiffSource;
+use rv_core::diff::LineKind;
+use rv_core::diff::whole_file;
 use rv_core::model::ChangeKind;
+use rv_core::store::review_key;
+use rv_core::store::tree_review_key;
 use rv_core::vcs::Error;
 use rv_core::vcs::Repository;
 
@@ -185,4 +190,109 @@ fn tracks_reports_an_excluded_directory_as_untracked() {
         !repo.tracks(".review").expect("look up .review"),
         "an excluded directory never reaches the tree"
     );
+}
+
+#[test]
+fn tree_lists_every_plain_file_through_nested_directories_in_path_order() {
+    let workspace = Fixture::new();
+    workspace.write("src/deep/inner/leaf.rs", "fn leaf() {}\n");
+    workspace.write("src/lib.rs", "pub mod deep;\n");
+    workspace.write("README.md", "# readme\n");
+    workspace.write("image.bin", "\0\x01binary\0");
+    workspace.commit("a tree with depth");
+
+    let repo = Repository::open(workspace.root()).expect("open workspace");
+    let head = repo.resolve(None).expect("resolve @");
+    let tree = repo.tree(&head).expect("walk the tree");
+
+    let paths: Vec<&str> = tree.iter().map(|entry| entry.path.as_str()).collect();
+    assert_eq!(
+        paths,
+        [
+            "README.md",
+            "image.bin",
+            "src/deep/inner/leaf.rs",
+            "src/lib.rs"
+        ]
+    );
+    assert!(
+        tree.iter()
+            .all(|entry| entry.file_id.chars().all(|c| c.is_ascii_hexdigit())),
+        "{tree:?}"
+    );
+}
+
+/// The walk reads no blob; a binary file is listed and shows as binary once
+/// its bytes are read.
+#[test]
+fn a_binary_tree_file_is_listed_and_opens_as_binary() {
+    let workspace = Fixture::new();
+    workspace.write("image.bin", "\0\x01binary\0");
+    workspace.commit("a binary file");
+
+    let repo = Repository::open(workspace.root()).expect("open workspace");
+    let head = repo.resolve(None).expect("resolve @");
+    let tree = repo.tree(&head).expect("walk the tree");
+    assert_eq!(tree.len(), 1, "{tree:?}");
+
+    let bytes = repo
+        .read_blob(&head, &tree[0].path)
+        .expect("read the blob")
+        .expect("a plain file");
+    assert_eq!(whole_file("image.bin", &bytes).source, DiffSource::Binary);
+}
+
+#[test]
+fn an_empty_tree_lists_nothing() {
+    let workspace = Fixture::new();
+    let repo = Repository::open(workspace.root()).expect("open workspace");
+    let head = repo.resolve(None).expect("resolve @");
+    assert_eq!(repo.tree(&head).expect("walk the tree"), Vec::new());
+}
+
+#[test]
+fn only_the_working_copy_commit_is_the_working_copy() {
+    let workspace = Fixture::new();
+    workspace.write("a.rs", "fn a() {}\n");
+    workspace.commit("first change");
+
+    let repo = Repository::open(workspace.root()).expect("open workspace");
+    let working_copy = repo.resolve(None).expect("resolve @");
+    let parent = repo.resolve(Some("@-")).expect("resolve @-");
+    assert!(repo.head_is_working_copy(&working_copy));
+    assert!(!repo.head_is_working_copy(&parent));
+    assert_eq!(
+        repo.change_of(&parent).expect("read @-").description,
+        "first change"
+    );
+}
+
+#[test]
+fn whole_file_numbers_every_line_as_context_on_both_sides() {
+    let diff = whole_file("a.rs", b"fn a() {\n    1\n}\n");
+    assert_eq!(diff.source, DiffSource::WholeFile);
+    let numbered: Vec<(LineKind, Option<u32>, Option<u32>, &str)> = diff
+        .lines
+        .iter()
+        .map(|line| (line.kind, line.left, line.right, line.text.as_str()))
+        .collect();
+    assert_eq!(
+        numbered,
+        [
+            (LineKind::Context, Some(1), Some(1), "fn a() {"),
+            (LineKind::Context, Some(2), Some(2), "    1"),
+            (LineKind::Context, Some(3), Some(3), "}"),
+        ]
+    );
+}
+
+#[test]
+fn a_tree_review_key_never_collides_with_a_range_review_key() {
+    assert_eq!(tree_review_key(None), "@tree");
+    assert_eq!(tree_review_key(Some("@")), "@tree");
+    assert_eq!(tree_review_key(Some("feature")), "@tree-feature");
+    for head in [None, Some("@"), Some("tree"), Some("@tree")] {
+        assert_ne!(review_key(head), tree_review_key(head), "{head:?}");
+        assert_ne!(review_key(Some("tree")), tree_review_key(head), "{head:?}");
+    }
 }

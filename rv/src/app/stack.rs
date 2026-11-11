@@ -118,6 +118,11 @@ impl App {
     /// `Esc`: out of the stack, or one zoom level back out of the file list —
     /// wherever the reviewer has stepped *into* something, this is the step
     /// back, so nowhere is somewhere they can get stuck.
+    pub(super) fn escape_steps_back(&self) -> bool {
+        matches!(self.focus, Focus::Stack | Focus::Flag)
+            || (self.focus == Focus::Sidebar && self.zoomed())
+    }
+
     pub(super) fn escape(&mut self) {
         if matches!(self.focus, Focus::Stack | Focus::Flag) {
             self.focus = Focus::Diff;
@@ -209,6 +214,7 @@ impl App {
             return Ok(());
         };
 
+        self.record_jump();
         self.file_index = file_index;
         self.load_selected()?;
         match self.line_of_anchor(anchor) {

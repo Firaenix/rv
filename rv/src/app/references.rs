@@ -25,6 +25,8 @@ pub enum JumpList {
     References,
     /// Lines that spell the name, for a file no grammar claims.
     Lines,
+    /// Lines holding a `g s` search's text.
+    Matches,
 }
 
 /// One occurrence: where it is, the line it is on so the list can be read
@@ -37,6 +39,9 @@ pub struct Reference {
     /// What the grammar says this use is, a call or a type mention, or `None`
     /// where the list fell back to matching the name as text.
     pub kind: Option<rv_core::symbols::SymbolKind>,
+    /// The path of a language-server answer the review does not list, which
+    /// the list shows but cannot open; `file` is meaningless then.
+    pub elsewhere: Option<String>,
 }
 
 impl App {
@@ -48,10 +53,18 @@ impl App {
             self.status = "no symbol under the cursor".to_owned();
             return Ok(());
         };
+        let asking = self.lsp_question(rv_core::lsp::RequestKind::References, &word);
+        self.references_by_grammar(word);
+        self.ask_language_server(asking);
+        Ok(())
+    }
+
+    fn references_by_grammar(&mut self, word: String) {
         let (references, syntactic) = self.references_to(&word);
         if references.is_empty() {
             self.status = format!("no reference to {word} in this review");
-            return Ok(());
+            self.hover_after_miss(&word);
+            return;
         }
         self.jump_list = if syntactic {
             JumpList::References
@@ -67,7 +80,6 @@ impl App {
         self.reference_word = word;
         self.mode = Mode::References;
         self.status = "choose a reference: ↑/↓, Enter to jump, Esc to cancel".to_owned();
-        Ok(())
     }
 
     /// The list as drawn, and which row the cursor is on.
@@ -80,6 +92,17 @@ impl App {
     pub fn reference_index(&self) -> usize {
         self.reference_index
             .min(self.references.len().saturating_sub(1))
+    }
+
+    /// The path a list row names, whether or not the review lists it.
+    #[must_use]
+    pub fn reference_path<'a>(&'a self, reference: &'a Reference) -> &'a str {
+        reference.elsewhere.as_deref().unwrap_or_else(|| {
+            self.review
+                .files
+                .get(reference.file)
+                .map_or("", |file| file.path.as_str())
+        })
     }
 
     #[must_use]
@@ -97,6 +120,11 @@ impl App {
             KeyCode::End => self.reference_index = self.references.len().saturating_sub(1),
             KeyCode::Enter => {
                 let chosen = self.references.get(self.reference_index()).cloned();
+                if let Some(path) = chosen.as_ref().and_then(|r| r.elsewhere.as_deref()) {
+                    self.status =
+                        format!("{path} is outside this review — it cannot be opened here");
+                    return Ok(Action::Continue);
+                }
                 self.close_references(super::status::HELP);
                 if let Some(reference) = chosen {
                     self.jump_to_reference(&reference)?;
@@ -129,7 +157,8 @@ impl App {
 
     /// Lands on `reference` and puts the column cursor back on the word, so a
     /// jump out of the list leaves the review pointing at the same symbol.
-    fn jump_to_reference(&mut self, reference: &Reference) -> Result<()> {
+    pub(super) fn jump_to_reference(&mut self, reference: &Reference) -> Result<()> {
+        self.record_jump();
         self.select_file(reference.file)?;
         let found = self.displayed_lines().iter().position(|shown| {
             shown.right == Some(reference.line) || shown.left == Some(reference.line)
@@ -143,7 +172,7 @@ impl App {
         }
         self.focus = Focus::Diff;
         let word = std::mem::take(&mut self.reference_word);
-        self.set_column_to(&word);
+        self.put_column_on(&word);
         self.reference_word = word;
         self.status = format!(
             "{}: {}:{}",
@@ -174,6 +203,7 @@ impl App {
                 line: entry.symbol.line,
                 text: self.source_line(entry.file, entry.symbol.line),
                 kind: Some(entry.symbol.kind),
+                elsewhere: None,
             })
             .collect();
         self.reference_word = word.to_owned();
@@ -204,6 +234,7 @@ impl App {
                 line,
                 text: self.source_line(file, line),
                 kind: Some(kind),
+                elsewhere: None,
             })
             .collect();
         if !found.is_empty() {
@@ -259,6 +290,7 @@ impl App {
                         line: u32::try_from(number + 1).unwrap_or(u32::MAX),
                         text: line.trim().to_owned(),
                         kind: None,
+                        elsewhere: None,
                     });
                 }
             }

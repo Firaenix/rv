@@ -20,6 +20,7 @@ mod fallback;
 mod model;
 mod ordering;
 mod probe;
+mod wholefile;
 
 pub use context::merge as merge_context;
 
@@ -31,6 +32,7 @@ pub use model::FallbackReason;
 pub use model::FileDiff;
 pub use model::LineKind;
 pub use probe::MINIMUM_DIFFT;
+pub use wholefile::whole_file;
 
 /// Set to force the `similar` fallback, bypassing difftastic even when it is
 /// on `PATH`. Read only by `compute`; [`compute_with`] takes the choice as an

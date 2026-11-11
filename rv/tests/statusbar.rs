@@ -66,6 +66,7 @@ fn sample_view() -> View<'static> {
         stat: Some(Stat {
             added: 12,
             removed: 3,
+            bytes: 0,
         }),
         scope: "trunk()..@",
         change: "ytskpxpw close the alias bypass".to_owned(),
@@ -73,6 +74,8 @@ fn sample_view() -> View<'static> {
         status: "saved comment at app.rs:42",
         busy: false,
         view_state: String::new(),
+        navigation: String::new(),
+        agent: String::new(),
     }
 }
 

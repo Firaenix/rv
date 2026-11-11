@@ -96,12 +96,16 @@ impl App {
             let now = Instant::now();
             self.expire_alerts(now);
             self.expire_status(now);
+            self.dwell(now);
             self.auto_refresh(now);
             // Before the frame, so a parse that landed while the reviewer was
             // reading is painted on this pass rather than the next.
             self.collect_highlights();
             self.collect_refined();
             self.collect_merged();
+            self.collect_lsp(now);
+            self.collect_agent(now);
+            self.collect_provenance();
             terminal
                 .draw(|frame| ui::draw(frame, self, now))
                 .context("could not draw the review")?;
@@ -110,7 +114,12 @@ impl App {
             // step of the fade — or the colour that has just been parsed.
             let deadline = match (
                 self.next_deadline(Instant::now()),
-                self.painting() || self.refining() || self.merging(),
+                self.painting()
+                    || self.refining()
+                    || self.merging()
+                    || self.lsp_busy()
+                    || self.agent_busy()
+                    || self.provenance_busy(),
             ) {
                 (Some(fade), true) => Some(fade.min(PAINT_POLL)),
                 (Some(fade), false) => Some(self.bounded_by_watch(fade)),
@@ -118,6 +127,10 @@ impl App {
                 // An idle loop still wakes for the watch — a review nobody is
                 // touching is exactly the one an agent is committing under.
                 (None, false) => self.watch.enabled().then_some(WATCH_INTERVAL),
+            };
+            let deadline = match (deadline, self.dwell_deadline(Instant::now())) {
+                (Some(ceiling), Some(dwell)) => Some(ceiling.min(dwell)),
+                (ceiling, dwell) => ceiling.or(dwell),
             };
             if let Some(timeout) = deadline
                 && !event::poll(timeout).context("could not wait for an event")?

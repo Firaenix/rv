@@ -160,3 +160,62 @@ fn star_searches_for_the_word_under_the_cursor() {
     app.on_key(KeyCode::Char('*')).expect("star");
     assert_eq!(app.query(), "let", "`*` did not search for the word");
 }
+
+fn reversed_cells(app: &rv::app::App) -> Vec<u16> {
+    let frame = frame_at(app, 100, 24);
+    let diff = app.painted_layout().diff;
+    let row = diff.y + 1;
+    ((diff.x + 1)..diff.right() - 1)
+        .filter(|&x| {
+            frame[(x, row)]
+                .modifier
+                .contains(ratatui::style::Modifier::REVERSED)
+        })
+        .collect()
+}
+
+/// The cursor is one cell, on the character the column names, and moves with it.
+#[test]
+fn the_column_cursor_is_a_single_cell_on_its_character() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    let _ = frame_at(&app, 100, 24);
+    let text_start = app.painted_layout().diff.x + 1 + GUTTER;
+
+    assert_eq!(reversed_cells(&app), vec![text_start]);
+    app.on_key(KeyCode::Right).expect("right");
+    app.on_key(KeyCode::Right).expect("right");
+    assert_eq!(reversed_cells(&app), vec![text_start + 2]);
+}
+
+/// The symbol under the cursor is marked, and nothing is marked while the
+/// cursor sits between symbols.
+#[test]
+fn the_symbol_is_marked_only_while_the_cursor_is_inside_it() {
+    let workspace = Fixture::new();
+    let mut app = workspace.app();
+    let frame = frame_at(&app, 100, 24);
+    let diff = app.painted_layout().diff;
+    let row = diff.y + 1;
+    let text_start = diff.x + 1 + GUTTER;
+    let text: Vec<char> = rows_of(&frame)[usize::from(row)]
+        .chars()
+        .skip(usize::from(text_start))
+        .collect();
+    let blank = text
+        .iter()
+        .position(|c| *c == ' ')
+        .expect("a space on the line");
+    let symbol_cells = |app: &rv::app::App| {
+        let frame = frame_at(app, 100, 24);
+        ((diff.x + 1)..diff.right() - 1)
+            .filter(|&x| frame[(x, row)].bg == ratatui::style::Color::DarkGray)
+            .count()
+    };
+
+    assert!(symbol_cells(&app) > 0, "the opening symbol is not marked");
+    for _ in 0..blank {
+        app.on_key(KeyCode::Right).expect("right");
+    }
+    assert_eq!(symbol_cells(&app), 0, "a symbol is marked from a space");
+}

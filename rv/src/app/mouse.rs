@@ -65,10 +65,25 @@ impl App {
             }
             return Ok(Action::Continue);
         }
+        if self.answer_open() {
+            match event.kind {
+                MouseEventKind::ScrollDown => self.scroll_answer(1),
+                MouseEventKind::ScrollUp => self.scroll_answer(-1),
+                _ => {}
+            }
+            return Ok(Action::Continue);
+        }
         if !self.takes_gestures() {
             return Ok(Action::Continue);
         }
 
+        if event.kind == MouseEventKind::Moved {
+            self.pointer_moved(event.column, event.row);
+            return Ok(Action::Continue);
+        }
+        // Any other gesture is a new look or a new choice; a card is about the
+        // old one, and a click on it lands on nothing beneath it.
+        self.close_hover();
         let painted = self.painted.get();
         match event.kind {
             MouseEventKind::Down(MouseButton::Left) => {
@@ -84,8 +99,8 @@ impl App {
             MouseEventKind::ScrollLeft => {
                 self.wheel_sideways(&painted, event.column, event.row, -WHEEL);
             }
-            // Every other button, and the pointer merely moving: `rv` binds
-            // nothing to them, and a right-click menu is a second keymap.
+            // Every other button: `rv` binds nothing to them, and a
+            // right-click menu is a second keymap.
             _ => {}
         }
         Ok(Action::Continue)
@@ -126,7 +141,7 @@ impl App {
             Some(Target::DiffRow(row)) => self.click_diff(painted, row, column),
             // The bar reports state and the popup is dismissed by key; neither
             // answers a click. `None` is the pointer outside everything drawn.
-            Some(Target::Bar | Target::Popup) | None => {}
+            Some(Target::Bar | Target::Popup | Target::Hover) | None => {}
         }
         Ok(())
     }

@@ -15,6 +15,7 @@ use super::bindings::DiffCommand;
 use super::bindings::FilesCommand;
 use super::bindings::LayoutCommand;
 use super::bindings::PaneCommand;
+use super::bindings::ProvenanceCommand;
 use super::hunks;
 use super::keymap::RuntimeBinding;
 use crate::tree::NodeKind;
@@ -49,6 +50,12 @@ impl App {
                 | LayoutCommand::ToggleSidebar,
             ) => true,
             Command::App(command) => self.app_enabled(command),
+            Command::Agent(command) => self.agent_enabled(command),
+            Command::Provenance(ProvenanceCommand::ToggleGutter) => true,
+            // Not `on_a_line`: that plans the file, and this is asked per frame.
+            Command::Provenance(ProvenanceCommand::ShowOrigin) => {
+                self.focus == Focus::Diff && self.selected_file().is_some()
+            }
         }
     }
 
@@ -103,10 +110,7 @@ impl App {
                 }
                 (Focus::Stack | Focus::Flag, _) => false,
             },
-            PaneCommand::BackOut => {
-                matches!(self.focus, Focus::Stack | Focus::Flag)
-                    || (self.focus == Focus::Sidebar && self.zoomed())
-            }
+            PaneCommand::BackOut => self.escape_steps_back() || self.agent_busy(),
         }
     }
 
@@ -136,12 +140,15 @@ impl App {
             }
             DiffCommand::ToggleFullContext => true,
             DiffCommand::GroupBySide | DiffCommand::CycleSide => self.selected_diff().is_some(),
-            DiffCommand::NextFlag | DiffCommand::PrevFlag => self.has_flags(),
+            DiffCommand::NextFlag | DiffCommand::PrevFlag => self.has_flags(None),
             DiffCommand::Search => self.selected_diff().is_some(),
             DiffCommand::NextMatch | DiffCommand::PrevMatch => self.has_query(),
-            DiffCommand::Definition | DiffCommand::References | DiffCommand::SearchWord => {
-                self.focus == Focus::Diff && self.word_under_cursor().is_some()
-            }
+            DiffCommand::OpenFile | DiffCommand::SearchRepo => !self.review.files.is_empty(),
+            DiffCommand::JumpBack => !self.jumps.is_empty(),
+            DiffCommand::Definition
+            | DiffCommand::References
+            | DiffCommand::SearchWord
+            | DiffCommand::Hover => self.focus == Focus::Diff && self.word_under_cursor().is_some(),
         }
     }
 
@@ -165,7 +172,7 @@ impl App {
 
     /// Whether a write is about a diff line under the cursor: live only where
     /// that cursor is the one being steered.
-    fn on_a_line(&self) -> bool {
+    pub(super) fn on_a_line(&self) -> bool {
         matches!(self.focus, Focus::Diff | Focus::Stack | Focus::Flag)
             && self.selected_line().is_some()
     }

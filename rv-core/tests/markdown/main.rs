@@ -6,6 +6,7 @@
 //! pin is what the page says: every comment present exactly once, sections
 //! ordered and counted, and interpolated prose kept off column 0.
 
+mod brief;
 mod excerpt;
 
 use rv_core::markdown::render;
@@ -38,6 +39,7 @@ fn session() -> Session {
             },
         ],
         started_at: "2026-08-17T14:02Z".to_owned(),
+        agent_session: None,
         // `render` takes its comments as an argument, so these fixtures leave
         // the stored array out: the page must not depend on it.
         comments: Vec::new(),

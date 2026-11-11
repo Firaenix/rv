@@ -18,6 +18,7 @@ use crate::store::Comment;
 use crate::store::CommentState;
 use crate::store::Session;
 
+pub mod brief;
 mod entry;
 
 /// First line of every document: the format version, so a future `rv` can

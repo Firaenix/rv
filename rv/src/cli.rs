@@ -11,6 +11,18 @@ use crate::commands::SideArg;
 
 #[derive(Debug, Subcommand)]
 pub(crate) enum Command {
+    /// Review the code as it stands rather than a range: every file at `@`
+    /// (or `--to`), each shown whole, every line context.
+    ///
+    /// Its notes are a review of their own, which the other subcommands reach
+    /// with `--tree`: `rv --tree comments --json`, `rv --tree status --check`.
+    Browse {
+        /// Only the files under this path, relative to the repo root.
+        path: Option<String>,
+        /// The revision whose tree to browse [default: @].
+        #[arg(long, value_name = "REV")]
+        to: Option<String>,
+    },
     /// Add a comment to the review, exactly as the TUI would.
     ///
     /// For reviewer agents: the anchor, the id and the store are all handled,
@@ -93,6 +105,29 @@ pub(crate) enum Command {
         #[arg(long, value_name = "PATH")]
         out: Option<PathBuf>,
     },
+    /// Print the review's unsettled notes as one self-contained handoff: each
+    /// with its anchor's confidence, the code around it as it stands now, and
+    /// the commands that answer it.
+    ///
+    /// The prompt a human or agent pastes; `rv comments --json` stays the
+    /// machine channel. Reads only — the session record is not rewritten.
+    Brief {
+        /// Emit the same content as JSON.
+        #[arg(long)]
+        json: bool,
+        /// Write to this file instead of stdout.
+        #[arg(long, value_name = "PATH")]
+        out: Option<PathBuf>,
+        /// Lines of code shown either side of each note's line.
+        #[arg(long, value_name = "N", default_value_t = 5)]
+        context: u32,
+        /// Send the brief to the agent configured under `[agent]` in
+        /// Config.toml and print its answer. Unlike a plain brief this
+        /// writes: the lines it points at become flags by `agent`, and its
+        /// session id is kept so the next ask resumes the conversation.
+        #[arg(long, conflicts_with_all = ["json", "out"])]
+        ask: bool,
+    },
     /// Open the session defaults (`~/.config/rv/Config.toml`) in $EDITOR.
     ///
     /// A missing file is seeded with the fully-commented defaults first, and
@@ -110,6 +145,11 @@ pub(crate) enum Command {
     /// List every review stored under this repo — one per reviewed head —
     /// with its range and comment counts.
     Reviews,
+    /// Show which language server each language would use, and where it was
+    /// found: configured in `lsp_servers`, or discovered in the repo's
+    /// untracked tool directories, on PATH, or in installer directories
+    /// (~/.cargo/bin, ~/go/bin, Mason).
+    Lsp,
     /// Report the range, its changes, its files and its comment counts.
     Status {
         /// Emit JSON instead of text.

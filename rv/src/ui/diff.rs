@@ -33,6 +33,7 @@ use super::comment_box;
 use super::emphasis;
 use super::flag_row;
 use super::pane::pane;
+use super::provenance;
 use crate::app::App;
 use crate::app::Focus;
 use crate::rows::Plan;
@@ -133,6 +134,16 @@ pub fn diff_row_at(app: &App, pane: Rect, row: usize) -> Option<usize> {
     (index < rows.end).then_some(index)
 }
 
+/// The content row of a diff pane drawn at `pane` that plan row `row` is drawn
+/// on — the inverse of [`diff_row_at`] — or `None` where it is off screen.
+#[must_use]
+pub fn diff_screen_row(app: &App, pane: Rect, row: usize) -> Option<usize> {
+    let height = usize::from(pane.height.saturating_sub(BORDER_ROWS));
+    let (_, rows) = visible(app, pane);
+    rows.contains(&row)
+        .then(|| row - rows.start + usize::from(suppressed_note(app, height)))
+}
+
 /// Which character of a diff line is under screen column `column`, for a pane
 /// drawn at `pane`.
 ///
@@ -144,7 +155,7 @@ pub fn diff_column_at(app: &App, pane: Rect, column: u16) -> usize {
     let hscroll = app.diff_hscroll();
     // One column for the border, the gutter, and — when the row is scrolled —
     // the clipped marker drawn in place of the text cut off to the left.
-    let indent = 1 + GUTTER + usize::from(hscroll > 0);
+    let indent = 1 + provenance::columns(app) + GUTTER + usize::from(hscroll > 0);
     let into = usize::from(column.saturating_sub(pane.x)).saturating_sub(indent);
     hscroll.saturating_add(into)
 }
@@ -157,7 +168,7 @@ pub fn diff_hscroll_showing(app: &App, pane: Rect, column: usize) -> usize {
     let hscroll = app.diff_hscroll();
     // The borders and the gutter never hold text, and the clipped marker takes
     // one more column whenever the view is scrolled.
-    let room = usize::from(pane.width).saturating_sub(2 + GUTTER);
+    let room = usize::from(pane.width).saturating_sub(2 + provenance::columns(app) + GUTTER);
     if room < 2 {
         return hscroll;
     }
@@ -253,10 +264,19 @@ fn body<'a>(
             Style::default().fg(Color::Yellow),
         ));
     }
+    // Code rows give the gutter its columns; comment boxes keep the width the
+    // plan measured them at.
+    let mut gutter = provenance::Rows::of(app);
+    let code_width = width.saturating_sub(provenance::columns(app));
     lines.extend(
         plan.rows[rows]
             .iter()
-            .map(|row| draw_row(app, highlighting, row, selected, width)),
+            .map(|row| match (row, gutter.as_mut()) {
+                (Row::Diff { line, .. }, Some(gutter)) => {
+                    gutter.prefixed(line, draw_row(app, highlighting, row, selected, code_width))
+                }
+                _ => draw_row(app, highlighting, row, selected, width),
+            }),
     );
     Text::from(lines)
 }

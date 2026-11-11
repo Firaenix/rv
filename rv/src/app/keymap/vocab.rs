@@ -4,8 +4,8 @@
 //! file for other people's dotfiles to disagree in.
 
 use super::super::bindings::{
-    AppCommand, BINDINGS, Command, CommentCommand, CursorCommand, DiffCommand, FilesCommand, Group,
-    LayoutCommand, PaneCommand,
+    AgentCommand, AppCommand, BINDINGS, Command, CommentCommand, CursorCommand, DiffCommand,
+    FilesCommand, Group, LayoutCommand, PaneCommand, ProvenanceCommand,
 };
 
 /// Exhaustive by construction: a new variant without a config name is a
@@ -62,6 +62,10 @@ pub(in crate::app) fn config_name(command: Command) -> &'static str {
             DiffCommand::PrevMatch => "diff_prev_match",
             DiffCommand::Definition => "diff_definition",
             DiffCommand::References => "diff_references",
+            DiffCommand::Hover => "diff_hover",
+            DiffCommand::OpenFile => "diff_open_file",
+            DiffCommand::SearchRepo => "diff_search_repo",
+            DiffCommand::JumpBack => "diff_jump_back",
         },
         Command::Comment(c) => match c {
             CommentCommand::Write => "comment_write",
@@ -83,6 +87,17 @@ pub(in crate::app) fn config_name(command: Command) -> &'static str {
             AppCommand::Refresh => "app_refresh",
             AppCommand::OpenEditor => "app_open_editor",
             AppCommand::ToggleChangeDetails => "app_toggle_change_details",
+        },
+        Command::Agent(c) => match c {
+            AgentCommand::Ask => "agent_ask",
+            AgentCommand::OrientReview => "agent_orient_review",
+            AgentCommand::NextFlag => "agent_next_flag",
+            AgentCommand::PrevFlag => "agent_prev_flag",
+            AgentCommand::ShowAnswer => "agent_show_answer",
+        },
+        Command::Provenance(c) => match c {
+            ProvenanceCommand::ToggleGutter => "provenance_toggle_gutter",
+            ProvenanceCommand::ShowOrigin => "provenance_show_origin",
         },
     }
 }
@@ -132,6 +147,10 @@ pub(in crate::app) const ALL_COMMANDS: &[Command] = &[
     Command::Diff(DiffCommand::PrevMatch),
     Command::Diff(DiffCommand::Definition),
     Command::Diff(DiffCommand::References),
+    Command::Diff(DiffCommand::Hover),
+    Command::Diff(DiffCommand::OpenFile),
+    Command::Diff(DiffCommand::SearchRepo),
+    Command::Diff(DiffCommand::JumpBack),
     Command::Comment(CommentCommand::Write),
     Command::Comment(CommentCommand::Delete),
     Command::Comment(CommentCommand::Resolve),
@@ -147,6 +166,13 @@ pub(in crate::app) const ALL_COMMANDS: &[Command] = &[
     Command::App(AppCommand::Refresh),
     Command::App(AppCommand::OpenEditor),
     Command::App(AppCommand::ToggleChangeDetails),
+    Command::Agent(AgentCommand::Ask),
+    Command::Agent(AgentCommand::OrientReview),
+    Command::Agent(AgentCommand::NextFlag),
+    Command::Agent(AgentCommand::PrevFlag),
+    Command::Agent(AgentCommand::ShowAnswer),
+    Command::Provenance(ProvenanceCommand::ToggleGutter),
+    Command::Provenance(ProvenanceCommand::ShowOrigin),
 ];
 
 pub(super) fn command_by_name(name: &str) -> Option<Command> {

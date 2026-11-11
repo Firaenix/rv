@@ -9,6 +9,9 @@ use crossterm::event::KeyCode;
 
 use super::Context;
 
+mod agent;
+mod goto;
+mod provenance;
 mod review;
 mod table;
 mod view;
@@ -175,6 +178,8 @@ pub(super) enum Command {
     Comment(CommentCommand),
     Layout(LayoutCommand),
     App(AppCommand),
+    Agent(AgentCommand),
+    Provenance(ProvenanceCommand),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -236,6 +241,10 @@ pub(super) enum DiffCommand {
     PrevMatch,
     Definition,
     References,
+    Hover,
+    OpenFile,
+    SearchRepo,
+    JumpBack,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -265,4 +274,21 @@ pub(super) enum AppCommand {
     Refresh,
     OpenEditor,
     ToggleChangeDetails,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum AgentCommand {
+    /// About the line under the cursor on the diff; from a list, what the
+    /// selected file is for.
+    Ask,
+    OrientReview,
+    NextFlag,
+    PrevFlag,
+    ShowAnswer,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ProvenanceCommand {
+    ToggleGutter,
+    ShowOrigin,
 }

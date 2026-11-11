@@ -80,12 +80,15 @@ impl App {
         if self.help != HelpStage::Closed {
             return Ok(self.on_key_help(key));
         }
+        if self.answer_open() {
+            return Ok(self.on_key_answer(key));
+        }
 
         match self.mode {
             Mode::Browse => self.on_key_browse(key),
             Mode::Comment | Mode::Flag => self.on_key_comment(key),
             Mode::ConfirmDelete { .. } => self.on_key_confirm_delete(key),
-            Mode::Pick => self.on_key_pick(key),
+            Mode::Pick => self.on_key_picker(key),
             Mode::References => self.on_key_references(key),
             Mode::Search => self.on_key_search(key),
         }
@@ -207,6 +210,9 @@ impl App {
     /// from, so dispatching through it is what makes an undocumented binding
     /// unrepresentable. A key no row claims is inert.
     fn on_key_browse(&mut self, key: KeyCode) -> Result<Action> {
+        if self.pending_leader.is_none() && key == KeyCode::Esc && self.close_hover() {
+            return Ok(Action::Continue);
+        }
         let context = self.context();
         if let Some(leader) = self.pending_leader.take() {
             if let Some(command) = self
@@ -246,6 +252,7 @@ impl App {
     /// exhaustive over its sub-enum, which is the other half of the table's
     /// anti-drift claim.
     fn run_command(&mut self, command: Command) -> Result<Action> {
+        self.close_hover();
         match command {
             Command::Cursor(command) => self.run_cursor(command)?,
             Command::Pane(command) => self.run_pane(command)?,
@@ -254,6 +261,8 @@ impl App {
             Command::Comment(command) => self.run_comment(command)?,
             Command::Layout(command) => self.run_layout(command),
             Command::App(command) => return self.run_app(command),
+            Command::Agent(command) => self.run_agent(command)?,
+            Command::Provenance(command) => self.run_provenance(command),
         }
         Ok(Action::Continue)
     }
@@ -279,7 +288,7 @@ impl App {
             PaneCommand::FocusLeft => self.focus_left()?,
             PaneCommand::FocusRight => self.focus_right()?,
             PaneCommand::Open => self.on_enter()?,
-            PaneCommand::BackOut => self.escape(),
+            PaneCommand::BackOut => self.back_out(),
             PaneCommand::CycleTab => self.cycle_mode()?,
             PaneCommand::GotoFiles => self.goto_mode(SidebarTab::Files)?,
             PaneCommand::GotoCommits => self.goto_mode(SidebarTab::Commits)?,
@@ -315,14 +324,18 @@ impl App {
             DiffCommand::ToggleFullContext => self.toggle_full_context(),
             DiffCommand::GroupBySide => self.toggle_grouped(),
             DiffCommand::CycleSide => self.cycle_view_side(),
-            DiffCommand::NextFlag => self.jump_flag(true)?,
-            DiffCommand::PrevFlag => self.jump_flag(false)?,
+            DiffCommand::NextFlag => self.jump_flag(true, None)?,
+            DiffCommand::PrevFlag => self.jump_flag(false, None)?,
             DiffCommand::Search => self.begin_search(),
             DiffCommand::SearchWord => self.search_word_under_cursor()?,
             DiffCommand::NextMatch => self.jump_match(true)?,
             DiffCommand::PrevMatch => self.jump_match(false)?,
             DiffCommand::Definition => self.goto_definition()?,
             DiffCommand::References => self.begin_references()?,
+            DiffCommand::Hover => self.show_hover()?,
+            DiffCommand::OpenFile => self.begin_open_file(),
+            DiffCommand::SearchRepo => self.begin_repo_search(),
+            DiffCommand::JumpBack => self.jump_back()?,
         }
         Ok(())
     }

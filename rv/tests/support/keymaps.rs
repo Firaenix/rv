@@ -51,6 +51,9 @@ pub const BROWSE_KEYS: &[&str] = &[
     "`h`",
     "`l`",
     "`*`",
+    "`K`",
+    "`B`",
+    "`a`",
     // Space — contextual actions (files/commits lists, the diff, and comments)
     "`Space` `t`",
     "`Space` `o`",
@@ -78,6 +81,12 @@ pub const BROWSE_KEYS: &[&str] = &[
     "`g` `F`",
     "`g` `d`",
     "`g` `r`",
+    "`g` `i`",
+    "`g` `o`",
+    "`g` `s`",
+    "`g` `b`",
+    "`g` `a`",
+    "`g` `A`",
     // c — comment
     "`c` `c`",
     "`c` `d`",
@@ -95,5 +104,6 @@ pub const BROWSE_KEYS: &[&str] = &[
     "`v` `<`",
     "`v` `>`",
     "`v` `i`",
+    "`v` `p`",
     "`v` `r`",
 ];

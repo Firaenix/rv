@@ -17,45 +17,38 @@ use super::Group;
 use super::LayoutCommand;
 use super::Leader;
 use super::PaneCommand;
+use super::agent::AGENT;
+use super::goto::GOTO;
 use super::review::REVIEW;
 use super::view::JUMPS;
 use super::view::VIEW;
 
-/// Every key browse mode answers, the direct keys and the `Space`/`m`/`g`/`c`
-/// leaders' children here and the stable `v` view list in [`view`], concatenated
-/// so callers still see one slice.
+/// Every key browse mode answers, and the **only** thing the browse handler
+/// dispatches from, so the popup and the keyboard cannot drift. The order is the
+/// order the popup reads in, grouped by [`Group`].
 pub const BINDINGS: &[Binding] = &concat();
 
-/// Concatenates the two halves of the table at compile time. Sizes are spelled
-/// out because stable Rust cannot add const generics in an array length.
-const fn concat() -> [Binding; 73] {
-    let mut out = [HEAD[0]; 73];
-    let mut n = 0;
-    let mut i = 0;
-    while i < HEAD.len() {
-        out[n] = HEAD[i];
-        n += 1;
-        i += 1;
-    }
-    let mut j = 0;
-    while j < JUMPS.len() {
-        out[n] = JUMPS[j];
-        n += 1;
-        j += 1;
-    }
-    let mut k = 0;
-    while k < VIEW.len() {
-        out[n] = VIEW[k];
-        n += 1;
-        k += 1;
-    }
-    let mut r = 0;
-    while r < REVIEW.len() {
-        out[n] = REVIEW[r];
-        n += 1;
-        r += 1;
-    }
+/// Joined at compile time; stable Rust cannot sum const generics in a length.
+const fn concat() -> [Binding; 84] {
+    let mut out = [HEAD[0]; 84];
+    let mut filled = append(&mut out, 0, &HEAD);
+    filled = append(&mut out, filled, &JUMPS);
+    filled = append(&mut out, filled, &VIEW);
+    filled = append(&mut out, filled, &REVIEW);
+    filled = append(&mut out, filled, &GOTO);
+    filled = append(&mut out, filled, &AGENT);
+    filled = append(&mut out, filled, &super::provenance::PROVENANCE);
+    assert!(filled == out.len(), "the table's length is wrong");
     out
+}
+
+const fn append(out: &mut [Binding], from: usize, rows: &[Binding]) -> usize {
+    let mut at = 0;
+    while at < rows.len() {
+        out[from + at] = rows[at];
+        at += 1;
+    }
+    from + at
 }
 
 /// The modes whose `Space` menu offers the file-list toggles.
@@ -76,11 +69,7 @@ const DELETABLE: &[Context] = &[
 /// A direct key or a non-contextual leader child: no `contexts`.
 const ANY: &[Context] = &[];
 
-/// Every key browse mode answers, and the **only** thing the browse handler
-/// dispatches from, so the popup and the keyboard cannot drift. The order is the
-/// order the popup reads in, grouped by [`Group`].
-/// The direct keys and the `Space`/`m`/`g`/`c` leaders' children. The `v` view
-/// list lives in [`view`] and is concatenated on above.
+/// The direct keys and the `Space`/`m` leaders' children.
 const HEAD: [Binding; 35] = [
     // ── Direct motion & controls ─────────────────────────────────────────────
     Binding {

@@ -28,7 +28,11 @@ const WASH: f32 = 0.74;
 
 /// The same for the selected line — the same hue a step brighter, rather than
 /// `REVERSED`, which would put the syntax colours into the wash.
-const WASH_SELECTED: f32 = 0.50;
+const WASH_SELECTED: f32 = 0.62;
+
+/// A selected unchanged line: a lift just off a dark terminal's ground. The
+/// column cursor, not the band, is what says where the reviewer is.
+const SELECTED_CONTEXT: Color = Color::Rgb(40, 42, 54);
 
 /// The two blobs' highlight spans for the file being drawn, one per side,
 /// fetched once per frame.
@@ -172,8 +176,8 @@ fn boundary(text: &str, at: usize) -> usize {
 /// copy of the palette. The hues are [`gradient::ADDED`] and
 /// [`gradient::REMOVED`] themselves, so the diff pane and the sidebar's
 /// gradient cannot end up with two greens and two reds that drift. A selected
-/// **context** line carries no hue of its own, so its band is the theme's own
-/// dark grey — index 8, the tone every scheme defines for exactly this.
+/// **context** line carries no hue of its own and gets [`SELECTED_CONTEXT`];
+/// not index 8, which is also the comment colour and erased comments on it.
 #[must_use]
 pub fn line_background(kind: rv_core::diff::LineKind, selected: bool) -> Option<Color> {
     use rv_core::diff::LineKind;
@@ -183,7 +187,7 @@ pub fn line_background(kind: rv_core::diff::LineKind, selected: bool) -> Option<
         (LineKind::Removed, false) => (gradient::REMOVED, WASH),
         (LineKind::Removed, true) => (gradient::REMOVED, WASH_SELECTED),
         (LineKind::Context, false) => return None,
-        (LineKind::Context, true) => return Some(Color::DarkGray),
+        (LineKind::Context, true) => return Some(SELECTED_CONTEXT),
     };
     let gradient::Rgb(red, green, blue) = gradient::oklab_mix(hue, gradient::INK_DARK, wash);
     Some(Color::Rgb(red, green, blue))

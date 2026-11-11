@@ -27,6 +27,9 @@ impl App {
     /// whole review, and **says so**: measuring it as zero in silence draws the
     /// row exactly like a file nobody touched.
     pub(super) fn measure(review: &Review) -> (Vec<Stat>, Vec<String>) {
+        if review.is_tree() {
+            return (Self::measure_tree(review), Vec::new());
+        }
         let mut unreadable = Vec::new();
         let stats = review
             .files
@@ -64,6 +67,29 @@ impl App {
             })
             .collect();
         (stats, unreadable)
+    }
+
+    /// A tree review's sizes, from the working copy on disk where it is the
+    /// tree under review: a stat per file, where reading every blob to learn
+    /// its length would stall the first frame of a large repository. Any
+    /// other revision measures zero.
+    fn measure_tree(review: &Review) -> Vec<Stat> {
+        let root = review.store.root();
+        let on_disk = review
+            .repo
+            .head_is_working_copy(&review.session.head_commit);
+        review
+            .files
+            .iter()
+            .map(|file| Stat {
+                bytes: if on_disk {
+                    std::fs::metadata(root.join(&file.path)).map_or(0, |meta| meta.len())
+                } else {
+                    0
+                },
+                ..Stat::default()
+            })
+            .collect()
     }
 
     /// One side's blob for [`App::measure`], with a failure recorded rather
