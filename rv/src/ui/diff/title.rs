@@ -79,6 +79,7 @@ pub fn title(
             None => format!("{} — fallback", diff.path),
         },
         DiffSource::Binary => format!("{} — binary", diff.path),
+        DiffSource::WholeFile => format!("{} — whole file", diff.path),
     };
     let with_grammar = match language {
         // A binary file needs no second sentence about why it is not coloured:

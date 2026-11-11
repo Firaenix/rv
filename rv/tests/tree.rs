@@ -70,6 +70,7 @@ fn stats_of<'a>(
             .map_or_else(Stat::default, |(_, added, removed)| Stat {
                 added: *added,
                 removed: *removed,
+                bytes: 0,
             })
     }
 }
@@ -84,6 +85,7 @@ fn by_index(entries: &[(u32, u32)]) -> impl Fn(usize) -> Stat {
             .map_or_else(Stat::default, |(added, removed)| Stat {
                 added: *added,
                 removed: *removed,
+                bytes: 0,
             })
     }
 }
@@ -123,7 +125,11 @@ fn row<'a>(nodes: &'a [Node], label: &str) -> &'a Node {
 
 /// A [`Stat`], written the way the tests read.
 fn stat(added: u32, removed: u32) -> Stat {
-    Stat { added, removed }
+    Stat {
+        added,
+        removed,
+        bytes: 0,
+    }
 }
 
 /// The rows drawn the way the sidebar will draw them: indented by depth, with
@@ -1180,13 +1186,23 @@ fn sorting_the_commits_view_does_not_renumber_the_files() {
 fn the_order_cycles_natural_added_removed() {
     // One key, three modes, and the name the sidebar's title says.
     assert_eq!(Sort::default(), Sort::Natural);
-    assert_eq!(Sort::Natural.next(), Sort::Added);
-    assert_eq!(Sort::Added.next(), Sort::Removed);
-    assert_eq!(Sort::Removed.next(), Sort::Natural, "it cycles");
+    assert_eq!(Sort::Natural.next(false), Sort::Added);
+    assert_eq!(Sort::Added.next(false), Sort::Removed);
+    assert_eq!(Sort::Removed.next(false), Sort::Natural, "it cycles");
 
-    assert_eq!(Sort::Natural.label(), "natural");
-    assert_eq!(Sort::Added.label(), "added");
-    assert_eq!(Sort::Removed.label(), "removed");
+    assert_eq!(Sort::Natural.label(false), "natural");
+    assert_eq!(Sort::Added.label(false), "added");
+    assert_eq!(Sort::Removed.label(false), "removed");
+}
+
+#[test]
+fn a_tree_review_cycles_path_and_size() {
+    assert_eq!(Sort::Natural.next(true), Sort::Size);
+    assert_eq!(Sort::Size.next(true), Sort::Natural, "it cycles");
+    assert_eq!(Sort::Added.next(true), Sort::Natural);
+
+    assert_eq!(Sort::Natural.label(true), "path");
+    assert_eq!(Sort::Size.label(true), "size");
 }
 
 // ---------------------------------------------------------------------------

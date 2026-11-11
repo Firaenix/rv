@@ -37,6 +37,11 @@ impl App {
         &self.review.session
     }
 
+    /// Whether this is a tree review — the files as they stand, not a range.
+    pub fn is_tree(&self) -> bool {
+        self.review.is_tree()
+    }
+
     /// Which file the sidebar has selected.
     pub fn file_index(&self) -> usize {
         self.file_index

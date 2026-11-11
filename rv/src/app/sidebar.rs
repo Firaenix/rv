@@ -231,7 +231,7 @@ impl App {
             self.status = VIEW_KEYS_ARE_FOR_THE_FILE_LIST.to_owned();
             return;
         }
-        self.view.sort = self.view.sort.next();
+        self.view.sort = self.view.sort.next(self.review.is_tree());
         self.resettle_sidebar();
     }
 

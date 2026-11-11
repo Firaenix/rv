@@ -1302,3 +1302,61 @@ script wants to know where else a name appears, and an empty list would read as
 "nowhere" rather than as "rv cannot parse this". What this is not is name
 resolution — two methods called `write` on different types are still two
 answers to one question, because tags is an index, not a type checker.
+
+
+## 2026-11-11 — the tree, the server, the brief, the agent and the blame
+
+Six phases of one plan (whole-repo review, native navigation, agent handoff),
+landed together. What each added, and the rulings that differ from the plan.
+
+**Tree review.** `rv browse [PATH] [--to REV]` reviews the tree at a revision
+as it stands: every file is a whole-file "diff" of all-context lines
+(`DiffSource::WholeFile`, never difftastic), so anchors, comments, flags and
+ticks carry over untouched. The other subcommands reach it with a global
+`--tree` rather than a stored session kind, so no command has hidden state to
+read. Its store key is `@tree` / `@tree-<rev>`, not the plan's `tree`: a
+bookmark called `tree` already owns that key, and range keys never start with
+`@`. `Repository::tree` lists paths and ids only — sizing or sniffing every
+blob would read the whole repo at startup — so binary files are found on open
+and sidebar sizes come from a `stat`, only when the head is the working copy.
+
+**Hover cards, jumps, history.** `g i` symbol card (hints from the live
+keymap), `g o` file picker, `g s` repo-wide search, `g b` jump back. Search is
+`g s` because `g f` was already "next flag" and `g /` the symbol finder. The
+card is built once on trigger: a per-frame card would rebuild the plan.
+
+**Language servers.** rv-core gained a hand-rolled JSON-RPC client
+(`rv-core/src/lsp/`, no `lsp-types`), one process per language, never blocking
+the caller. In the TUI the grammar answers at once and the server's answer
+swaps in only while the reviewer has not moved; rules in
+`specs/2026-11-11-rv-lsp-navigation-design.md`. `lsp = "auto"` *discovers*
+servers per language (rust-analyzer, gopls, typescript-language-server,
+pyright, clangd, …) across repo tool dirs, `PATH` and installer dirs; a
+repo-local binary is run only if jj does not track it, because the tree under
+review is untrusted. `rv lsp` prints what was found.
+
+**`rv brief`.** One self-contained handoff document (or `--json`): open notes
+with their placed anchor, confidence and an excerpt of the *current* head
+around it; an outdated note quotes its stored context instead of inventing an
+excerpt. Flags are left out — they have no reply/resolve step. The protocol
+block carries `--tree`/`--from`/`--to` so the agent's replies land on the same
+review.
+
+**Agent plugin.** rv still makes no model call of its own: it runs the command
+configured under `[agent]` with the prompt on stdin and reads stdout
+(maki/Claude Code JSON, raw text as fallback). Focus points become flags with
+`by: agent` (`✦`), deduplicated on re-ask; the session id is resumed. Keys: `K`
+ask about this line, `B` brief the agent on the review, `a` last answer, `g a`
+/ `g A` walk agent flags. The plan's `a`/`A`/`v`/`c a` collided (`A` acks,
+`v` and `c` are leaders); asking writes flags and sends code off the machine,
+so it took capitals under the "shifted letter writes" rule. Esc stops a
+running ask only after every other Esc meaning.
+
+**Line provenance.** `Repository::annotate` wraps jj-lib's `FileAnnotator`;
+`v p` shows a change-id gutter (runs named once, in-review changes cyan), `i`
+on a diff line opens a card naming the change. Annotation runs on a
+single-flight worker cached per (head, path).
+
+Open: `rv-core/src/symbols.rs` (454) predates this and still breaks the
+400-line rule; `bindings/table.rs` and `store.rs` sit at 399, so the next
+binding group or store field needs its own module.

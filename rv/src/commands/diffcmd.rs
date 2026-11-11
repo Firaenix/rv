@@ -68,6 +68,12 @@ fn compute(review: &Review, file: &FileChange, no_difft: bool) -> Result<FileDif
         .repo
         .read_blob(&review.session.head_commit, &file.path)
         .with_context(|| format!("could not read {} at the head of the review", file.path))?;
+    if review.is_tree() {
+        return Ok(diff::whole_file(
+            &file.path,
+            new.as_deref().unwrap_or_default(),
+        ));
+    }
     Ok(if no_difft {
         diff::compute_with(old.as_deref(), new.as_deref(), &file.path, false)
     } else {
@@ -83,6 +89,7 @@ fn file_json(computed: &FileDiff) -> serde_json::Value {
         DiffSource::Difftastic { language, .. } => ("difftastic", Some(language.as_str())),
         DiffSource::Similar { .. } => ("fallback", None),
         DiffSource::Binary => ("binary", None),
+        DiffSource::WholeFile => ("whole-file", None),
     };
     json!({
         "file": computed.path,
@@ -109,6 +116,7 @@ fn print_plain(computed: &FileDiff) {
         DiffSource::Difftastic { language, .. } => format!("difftastic ({language})"),
         DiffSource::Similar { .. } => "fallback".to_owned(),
         DiffSource::Binary => "binary".to_owned(),
+        DiffSource::WholeFile => "whole file".to_owned(),
     };
     let suppressed = if computed.suppressed {
         " — no semantic change"

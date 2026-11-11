@@ -14,6 +14,7 @@ use rv_core::store::Comment;
 use rv_core::store::CommentState;
 
 use super::Review;
+use super::ReviewKind;
 
 /// The change a comment on `path` belongs to: the newest change in the range
 /// whose own diff touches it.
@@ -24,6 +25,9 @@ use super::Review;
 /// touched nothing. Falls back to the newest change where no diff claims the
 /// path, which is also the answer for an empty stack's error path.
 pub fn owning_change<'a>(review: &'a Review, path: &str) -> Result<&'a ChangeRef> {
+    if let ReviewKind::Tree { head, .. } = &review.kind {
+        return Ok(head);
+    }
     let changes = &review.session.changes;
     for (position, change) in changes.iter().enumerate() {
         let base = changes

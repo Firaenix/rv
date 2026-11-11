@@ -23,37 +23,46 @@ pub enum Sort {
     Natural,
     Added,
     Removed,
+    /// Biggest file first — the order a tree review has instead of the two
+    /// hands of a change.
+    Size,
 }
 
 impl Sort {
-    /// The next order, cycling — what the one key that switches them does.
+    /// The next order, cycling — what the one key that switches them does. A
+    /// tree review changed nothing, so it cycles path and size alone.
     #[must_use]
-    pub const fn next(self) -> Self {
-        match self {
-            Self::Natural => Self::Added,
-            Self::Added => Self::Removed,
-            Self::Removed => Self::Natural,
+    pub const fn next(self, tree_review: bool) -> Self {
+        match (self, tree_review) {
+            (Self::Natural, true) => Self::Size,
+            (_, true) => Self::Natural,
+            (Self::Natural, false) => Self::Added,
+            (Self::Added, false) => Self::Removed,
+            (Self::Removed | Self::Size, false) => Self::Natural,
         }
     }
 
     /// The one word the sidebar's title says, so that the name of a mode is
     /// declared beside the mode rather than invented by a renderer.
     #[must_use]
-    pub const fn label(self) -> &'static str {
+    pub const fn label(self, tree_review: bool) -> &'static str {
         match self {
+            Self::Natural if tree_review => "path",
             Self::Natural => "natural",
             Self::Added => "added",
             Self::Removed => "removed",
+            Self::Size => "size",
         }
     }
 
     /// What this order weighs a row by, or `None` when it weighs nothing and
     /// the rows keep the order they arrived in.
-    const fn weigh(self, stat: Stat) -> Option<u32> {
+    fn weigh(self, stat: Stat) -> Option<u64> {
         match self {
             Self::Natural => None,
-            Self::Added => Some(stat.added),
-            Self::Removed => Some(stat.removed),
+            Self::Added => Some(u64::from(stat.added)),
+            Self::Removed => Some(u64::from(stat.removed)),
+            Self::Size => Some(stat.bytes),
         }
     }
 }

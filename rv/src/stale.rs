@@ -141,12 +141,7 @@ fn before_after(comment: &Comment, now: Option<&str>) -> FileDiff {
 /// grown too short to reach the excerpt at all.
 fn current(review: &Review, comment: &Comment, line: Option<u32>) -> Option<String> {
     let anchor = &comment.anchor;
-    let text = read(
-        review,
-        commit_of(review, anchor.side),
-        &anchor.file,
-        anchor.side,
-    )?;
+    let text = anchored_text(review, anchor)?;
     // Where in the excerpt the anchored line sits. `snapshot_of` clamps at the
     // top of a file, so it is not always the middle one.
     let offset = anchor.line.saturating_sub(anchor.context_start);
@@ -180,13 +175,22 @@ pub fn resolution(review: &Review, comment: &Comment) -> (Option<u32>, Confidenc
 
 /// Where `anchor` lands in the code as it now stands, and how confidently.
 fn resolve_anchor(review: &Review, anchor: &Anchor) -> (Option<u32>, Confidence) {
-    let commit = commit_of(review, anchor.side);
-    let Some(text) = read(review, commit, &anchor.file, anchor.side) else {
+    let Some(text) = anchored_text(review, anchor) else {
         // No blob at all — the file is gone from that side. That is the most
         // outdated a comment can be.
         return (None, Confidence::Outdated);
     };
     anchor::resolve(anchor, &text)
+}
+
+/// The text `anchor` resolves against: its side's file as it stands now.
+pub fn anchored_text(review: &Review, anchor: &Anchor) -> Option<String> {
+    read(
+        review,
+        commit_of(review, anchor.side),
+        &anchor.file,
+        anchor.side,
+    )
 }
 
 /// Which revision counts as "there now" for a comment on `side`: a comment on a

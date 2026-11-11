@@ -126,7 +126,7 @@ impl App {
                 "this line has no number on the side it belongs to".to_owned()
             ));
         };
-        if self.review.session.changes.is_empty() {
+        if self.review.session.changes.is_empty() && !self.review.is_tree() {
             return Ok(Err("the review covers no change to comment on".to_owned()));
         }
         Ok(Ok(session::save_comment(

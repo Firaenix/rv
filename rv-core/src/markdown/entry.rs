@@ -70,40 +70,41 @@ fn body(out: &mut String, comment: &Comment) {
         if let Some(caption) = excerpt_caption(anchor) {
             out.push_str(&format!("\n{BODY_INDENT}{caption}\n"));
         }
-        // One backtick longer than the longest run in the context (never
-        // shorter than three), so quoted code that itself contains a fence
-        // cannot close this one early.
-        let longest = anchor
-            .context
-            .iter()
-            .map(|line| longest_backtick_run(line))
-            .max()
-            .unwrap_or(0);
-        let fence = "`".repeat((longest + 1).max(3));
-        // The whole block — opener, quoted lines and closer — is indented by
-        // BODY_INDENT, for the same reason bodies are: nothing quoted may
-        // reach column 0. Markdown strips indentation equal to the opening
-        // fence's from each content line, so the code renders unchanged.
-        out.push_str(&format!(
-            "\n{BODY_INDENT}{fence}{}\n",
-            fence_language(&anchor.file)
-        ));
-        for line in &anchor.context {
-            if !line.is_empty() {
-                out.push_str(BODY_INDENT);
-            }
-            out.push_str(line);
-            out.push('\n');
-        }
-        out.push_str(BODY_INDENT);
-        out.push_str(&fence);
-        out.push('\n');
+        fenced(out, &anchor.file, &anchor.context);
     }
 
     labeled(out, COMMENT_MARKER, &comment.body);
     if let Some(reply) = &comment.reply {
         labeled(out, REPLY_MARKER, reply);
     }
+}
+
+/// Quotes `lines` of `file` in a code fence one backtick longer than the
+/// longest run inside them (never shorter than three), so quoted code that
+/// itself contains a fence cannot close this one early.
+///
+/// The whole block is indented by [`BODY_INDENT`], for the same reason bodies
+/// are: nothing quoted may reach column 0. Markdown strips indentation equal
+/// to the opening fence's from each content line, so the code renders
+/// unchanged.
+pub(super) fn fenced(out: &mut String, file: &str, lines: &[String]) {
+    let longest = lines
+        .iter()
+        .map(|line| longest_backtick_run(line))
+        .max()
+        .unwrap_or(0);
+    let fence = "`".repeat((longest + 1).max(3));
+    out.push_str(&format!("\n{BODY_INDENT}{fence}{}\n", fence_language(file)));
+    for line in lines {
+        if !line.is_empty() {
+            out.push_str(BODY_INDENT);
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    out.push_str(BODY_INDENT);
+    out.push_str(&fence);
+    out.push('\n');
 }
 
 /// Writes a `**Comment:**`/`**Reply:**` block as its own paragraph.
@@ -113,7 +114,7 @@ fn body(out: &mut String, comment: &Comment) {
 /// document's structure lives. Blank lines stay blank rather than becoming
 /// trailing whitespace, and an empty `text` renders the bare label rather than
 /// a label plus a trailing space.
-fn labeled(out: &mut String, label: &str, text: &str) {
+pub(super) fn labeled(out: &mut String, label: &str, text: &str) {
     out.push('\n');
     out.push_str(label);
     for (position, line) in text.lines().enumerate() {
@@ -166,7 +167,7 @@ fn excerpt_caption(anchor: &Anchor) -> Option<String> {
     ))
 }
 
-fn side_str(side: Side) -> &'static str {
+pub(super) fn side_str(side: Side) -> &'static str {
     match side {
         Side::Left => "left",
         Side::Right => "right",

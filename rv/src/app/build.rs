@@ -49,13 +49,17 @@ impl App {
         config: &Config,
         settings: &Settings,
     ) -> Result<Self> {
-        Self::build(
+        let mut app = Self::build(
             review,
             engine,
             config,
             View::from_settings(settings),
             settings.auto_refresh.unwrap_or(true),
-        )
+        )?;
+        app.navigation = super::lsp::Navigation::open(settings.language_servers(), &app.review);
+        app.assistant =
+            super::agent::Assistant::open(settings.agent_config(), app.review.store.root());
+        Ok(app)
     }
 
     /// The one constructor. `view` is the reviewer's whole display state,
@@ -102,11 +106,15 @@ impl App {
         let (stats, unreadable) = Self::measure(&review);
         let mut keymap = Keymap::from_config(config)?;
         let keymap_warnings = keymap.take_warnings();
-        let watched = review
-            .files
-            .iter()
-            .map(|file| std::path::PathBuf::from(&file.path))
-            .collect();
+        let watched = if review.is_tree() {
+            super::watch::tree_paths(review.files.iter().map(|file| file.path.as_str()))
+        } else {
+            review
+                .files
+                .iter()
+                .map(|file| std::path::PathBuf::from(&file.path))
+                .collect()
+        };
         let watch = super::watch::Watch::new(auto_refresh, review.store.root(), watched);
         let mut app = Self {
             review,
@@ -124,6 +132,10 @@ impl App {
             reference_index: 0,
             jump_list: super::JumpList::References,
             reference_word: String::new(),
+            picking: super::Picking::Symbol,
+            hover: None,
+            resting: super::pointer::Dwell::default(),
+            jumps: super::jumps::Jumps::default(),
             file_index: 0,
             cursor_rows,
             cursor_anchor: None,
@@ -173,6 +185,9 @@ impl App {
             info_scroll: 0,
             commits: commits::Commits::default(),
             pending_edit: None,
+            navigation: super::lsp::Navigation::default(),
+            assistant: super::agent::Assistant::default(),
+            provenance: super::provenance::Provenance::default(),
         };
         for message in unreadable {
             app.raise(message);

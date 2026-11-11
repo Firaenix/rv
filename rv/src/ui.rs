@@ -52,19 +52,25 @@
 //! nothing from where the cursor is. Nothing is hidden — but none of them
 //! competes with what is still waiting on somebody.
 
+mod answer;
 mod bar;
 mod code;
 mod comment_box;
+mod corner;
 mod diff;
 mod emphasis;
 mod files;
 mod flag_row;
 mod help;
+mod hover;
 mod info;
 mod list;
 mod pane;
+mod picker;
+mod provenance;
 mod sidebar;
 mod text;
+mod thinking;
 mod toast;
 mod whichkey;
 
@@ -73,6 +79,7 @@ pub use code::line_background;
 pub use diff::diff_column_at;
 pub use diff::diff_hscroll_showing;
 pub use diff::diff_row_at;
+pub use diff::diff_screen_row;
 pub use diff::diff_scrolled;
 pub use diff::title;
 pub use diff::visible;
@@ -130,7 +137,15 @@ const BOX_PADDING: usize = 4;
 /// reviewer can see.
 pub fn draw(frame: &mut Frame, app: &App, now: Instant) {
     let alerts: Vec<&Alert> = app.alerts().iter().filter(|a| a.live(now)).collect();
-    let rects = layout(frame.area(), app.split(), chrome(app, !alerts.is_empty()));
+    let corner_tip = app.corner_tip();
+    let thinking = app.thinking(now);
+    let rects = layout(frame.area(), app.split(), chrome(app, !alerts.is_empty()))
+        .with_card(app.hover_chrome())
+        .with_agent(
+            corner_tip.as_ref().map(corner::corner_columns),
+            thinking.as_ref().map(thinking::thinking_columns),
+            app.answer_open(),
+        );
     // Before anything is painted, so that a gesture arriving between this frame
     // and the next resolves against the geometry this frame had.
     app.note_layout(rects);
@@ -140,6 +155,9 @@ pub fn draw(frame: &mut Frame, app: &App, now: Instant) {
     bar::draw_bar(frame, app, beside(rects.bar, rects.chevron.width), now);
     sidebar::draw_sidebar(frame, app, rects.sidebar);
     diff::draw_diff(frame, app, rects.diff);
+    if let (Some(area), Some(tip)) = (rects.corner, &corner_tip) {
+        corner::draw_corner(frame, tip, area);
+    }
     // After the bar, which it is drawn on top of.
     draw_chevron(frame, rects.chevron, rects.sidebar.width > 0);
     // Over the panes, and under the keymap: a reviewer who asked for the manual
@@ -151,6 +169,15 @@ pub fn draw(frame: &mut Frame, app: &App, now: Instant) {
     // Under the keymap: a reviewer who asked for the manual is reading it.
     if let Some(area) = rects.tooltip {
         info::draw_info(frame, app, area);
+    }
+    if let Some(area) = rects.hover {
+        hover::draw_hover(frame, app, area);
+    }
+    if let (Some(area), Some(thinking)) = (rects.thinking, &thinking) {
+        thinking::draw_thinking(frame, thinking, area);
+    }
+    if let Some(area) = rects.answer {
+        answer::draw_answer(frame, app, area);
     }
     if let Some(area) = rects.popup {
         if app.help_full() {

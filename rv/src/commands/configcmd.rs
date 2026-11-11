@@ -23,7 +23,7 @@ const SETTINGS_TEMPLATE: &str = "\
 # this file for its run.
 
 # tree = true            # open the file list as a tree
-# sort = \"added\"         # natural | added | removed
+# sort = \"added\"         # natural (path) | added | removed | size
 # full_context = false   # open on changes-only
 # grouped = true         # removals before additions in each hunk
 # tint = false           # no proportion tint on sidebar rows
@@ -33,6 +33,23 @@ const SETTINGS_TEMPLATE: &str = "\
 # ascii = true           # ASCII status-bar separators
 # engine = \"fallback\"    # auto | fallback
 # auto_refresh = false    # stop refreshing when the repo moves
+# hover = true           # a symbol card when the pointer rests on a name
+# provenance = true      # open with the line provenance gutter (v p) on
+# lsp = \"auto\"           # off | auto: refine g d, g r, g i with a language server
+# lsp_servers = { rust = \"rust-analyzer\" }  # per language: a command or [argv]
+
+# An agent CLI rv may run (`rv brief --ask`, the reviewer's ask keys). Off
+# unless a command is set. The prompt — your code and notes — goes to whatever
+# that command talks to, so it leaves this machine if the agent does.
+# [agent]
+# command = [\"maki\", \"-p\", \"--output-format\", \"json\"]  # or [\"claude\", \"--print\", \"--output-format\", \"json\"]
+# model = \"opus\"                 # passed as model_flag (default --model)
+# allowed_tools = \"Read\"         # passed as allowed_tools_flag (default --allowedTools); keep it read-only
+# resume_flag = \"-r\"             # how the agent resumes a session by id
+# timeout_secs = 120
+# orientation = \"on-demand\"      # off | on-demand | files (orient each file you open)
+# model_flag = \"--model\"
+# allowed_tools_flag = \"--allowedTools\"
 ";
 
 /// `rv config`: the session defaults, in `$EDITOR`.
@@ -112,7 +129,9 @@ mod tests {
     fn the_settings_template_uncommented_is_a_valid_config() {
         let uncommented: String = SETTINGS_TEMPLATE
             .lines()
-            .filter(|line| line.starts_with("# ") && line.contains('='))
+            .filter(|line| {
+                line.starts_with("# ") && (line.contains('=') || line.starts_with("# ["))
+            })
             .map(|line| format!("{}\n", &line[2..]))
             .collect();
         let settings: rv::config::Settings =
@@ -123,5 +142,9 @@ mod tests {
             settings.engine,
             Some(rv::config::EngineName::Fallback)
         ));
+        settings
+            .validate()
+            .expect("the template's agent is complete");
+        assert!(settings.agent_config().is_some());
     }
 }

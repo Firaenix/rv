@@ -148,7 +148,7 @@ fn draw_nodes_titled(
         .iter()
         .map(|node| {
             if app.counts_shown() {
-                counts(node.stat)
+                counts(node.stat, app.is_tree())
             } else {
                 (String::new(), String::new())
             }
@@ -182,7 +182,7 @@ fn shape(app: &App) -> String {
     format!(
         " {} · {} ",
         if app.tree_view() { "tree" } else { "list" },
-        app.sort().label()
+        app.sort().label(app.is_tree())
     )
 }
 
@@ -233,6 +233,7 @@ fn marker(kind: ChangeKind) -> &'static str {
         ChangeKind::Removed => "-",
         ChangeKind::Renamed => "->",
         ChangeKind::Modified => "~",
+        ChangeKind::Unchanged => "·",
     }
 }
 

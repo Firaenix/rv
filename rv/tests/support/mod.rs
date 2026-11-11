@@ -8,6 +8,7 @@
 pub mod diffpane;
 pub mod fixture;
 pub mod frame;
+pub mod goto;
 pub mod keymaps;
 pub mod keys;
 pub mod markdown;
@@ -18,6 +19,7 @@ pub mod rows;
 pub use diffpane::*;
 pub use fixture::*;
 pub use frame::*;
+pub use goto::*;
 pub use keymaps::*;
 pub use keys::*;
 pub use markdown::*;

@@ -26,12 +26,19 @@ rv resolve <id>
 rv status --json                     # open down, resolved up
 ```
 
+**Start from `rv brief`** when you pick a review up. It is one document (or
+`--json`) holding every unsettled comment with its replies, how confidently
+its anchor was placed, the code around it *as it stands now*, and the exact
+commands that answer it — including any `--tree` or `--from`/`--to` the
+review needs. Use those commands as printed.
+
 Poll with `rv status --check` between your own tasks — it is one exit code,
 prints nothing, and costs almost nothing. `--check --json` prints the report
 *and* sets the code, for when you want both.
 
 **Flags are not your work.** A reviewer may also leave *flags* (`rv flags
---json`) — "look here, because…" pointers for the human. They never gate
+--json`) — "look here, because…" pointers for the human, including ones with
+`"by": "agent"` filed by the human's configured agent. They never gate
 `--check`, they ask for no change, and you never `rv ack` one: acknowledging
 records that a human looked. Read them only for context on a comment nearby.
 Likewise `rv reviewed` — the files the human has ticked off — is theirs to
@@ -72,6 +79,23 @@ change, never yours.
 An unknown id is an error, not a no-op: if `rv reply` exits 1, you have the
 wrong id — re-run `rv comments --json`, never retry blind.
 
+## Tree reviews
+
+A review may be of the whole tree at `@` (`rv browse` in the TUI) rather than
+of a range. Every command then needs the global `--tree` flag:
+
+```sh
+rv --tree status --check
+rv --tree comments --json --state open
+rv --tree reply <id> -m "…"
+rv --tree resolve <id>
+```
+
+The tree review and the range review are separate stores. Without `--tree`,
+an id from a tree review is unknown and `rv reply` exits 1 — that error means
+you are on the wrong review, not that the comment is gone. `rv brief` prints
+the right flags in its protocol block.
+
 ## After a rebase, push or bookmark move
 
 The review range is a revset (`trunk()..@` by default), so `rv status`,
@@ -88,3 +112,5 @@ and some comments may have become `outdated`.
 - Never delete comments — deletion is behind the TUI's human confirmation.
 - Never `rv ack` a flag, `rv unflag` one, or `rv review`/`rv unreview` a
   file — all three record what the *human* has looked at.
+- Never run `rv brief --ask` — it sends the review to the human's configured
+  agent and files flags; that is the human's call, not part of your loop.

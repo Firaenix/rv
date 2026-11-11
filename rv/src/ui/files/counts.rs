@@ -10,7 +10,16 @@ use crate::tree;
 /// where the sidebar's colour lives now that no row is washed. Abbreviated by
 /// [`tree::abbreviate`], which is never wider than four characters, so the
 /// counts cannot push the path out of a narrow column by being long.
-pub(super) fn counts(stat: Stat) -> (String, String) {
+///
+/// A tree review changed nothing, so its one number is the file's size.
+pub(super) fn counts(stat: Stat, tree_review: bool) -> (String, String) {
+    if tree_review {
+        if stat.bytes == 0 {
+            return (String::new(), String::new());
+        }
+        let bytes = u32::try_from(stat.bytes).unwrap_or(u32::MAX);
+        return (tree::abbreviate(bytes), String::new());
+    }
     if stat.total() == 0 {
         return (String::new(), String::new());
     }

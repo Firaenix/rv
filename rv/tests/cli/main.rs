@@ -6,9 +6,15 @@
 
 mod support;
 
+#[cfg(unix)]
+mod agent;
 mod attention;
+mod brief;
+mod browse;
 mod comments;
 mod completions;
+#[cfg(unix)]
+mod lsp;
 mod output;
 mod session;
 mod status;

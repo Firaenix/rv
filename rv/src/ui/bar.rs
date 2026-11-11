@@ -5,17 +5,13 @@ use std::time::Instant;
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::Modifier;
-use ratatui::style::Style;
-use ratatui::text::Line;
 use ratatui::widgets::Block;
 use ratatui::widgets::BorderType;
 use ratatui::widgets::Paragraph;
 use rv_core::store::CommentState;
 
-use crate::app::JumpList;
-
 use super::BORDER_ROWS;
+use super::picker;
 use super::text::clip;
 use super::text::tail;
 use crate::app::App;
@@ -80,108 +76,8 @@ pub(super) fn draw_bar(frame: &mut Frame, app: &App, area: Rect, now: Instant) {
                 area,
             )
         }
-        // The query on the first row and the matches under it, best first, so
-        // the one `Enter` would take is the one nearest what was typed.
-        Mode::Pick => {
-            let width = usize::from(area.width.saturating_sub(BORDER_ROWS));
-            let rows = usize::from(area.height.saturating_sub(BORDER_ROWS)).saturating_sub(1);
-            let mut lines = vec![Line::from(format!("/{}", tail(app.buffer(), width)))];
-            let matches = app.matches();
-            lines.extend(matches.iter().take(rows).enumerate().map(|(rank, entry)| {
-                let text = format!(
-                    "{} {} {}  {}:{}",
-                    // The one `Enter` takes, marked: a list whose first row is
-                    // the choice has to say which row that is.
-                    if rank == 0 { "▸" } else { " " },
-                    // The kind, in its language's own keyword, so two symbols
-                    // sharing a name — a struct and its constructor fn — are
-                    // told apart without jumping to both.
-                    entry.symbol.kind.label(),
-                    entry.symbol.name,
-                    entry.path,
-                    entry.symbol.line
-                );
-                let style = if rank == 0 {
-                    Style::default().add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default().add_modifier(Modifier::DIM)
-                };
-                Line::styled(clip(&text, width), style)
-            }));
-            if matches.is_empty() {
-                lines.push(Line::styled(
-                    "no symbol matches",
-                    Style::default().add_modifier(Modifier::DIM),
-                ));
-            }
-            frame.render_widget(
-                Paragraph::new(lines).block(
-                    Block::bordered()
-                        .border_type(BorderType::Rounded)
-                        .title(format!(
-                            "Find a symbol ({} in scope)",
-                            app.symbols_in_scope()
-                        )),
-                ),
-                area,
-            )
-        }
-        // The references to one word, with a cursor on them. The window follows
-        // the cursor rather than the list's top, so a choice far down a long
-        // list is still on screen when it is made.
-        Mode::References => {
-            let width = usize::from(area.width.saturating_sub(BORDER_ROWS));
-            let rows = usize::from(area.height.saturating_sub(BORDER_ROWS));
-            let references = app.references();
-            let at = app.reference_index();
-            let first = at.saturating_sub(rows.saturating_sub(1));
-            let lines: Vec<Line> = references
-                .iter()
-                .enumerate()
-                .skip(first)
-                .take(rows)
-                .map(|(rank, reference)| {
-                    let text = format!(
-                        "{} {} {}:{}  {}",
-                        if rank == at { "▸" } else { " " },
-                        // The grammar's word for the use, so a call is told
-                        // from a type mention without jumping to both.
-                        reference.kind.map_or("", |kind| kind.label()),
-                        app.files()[reference.file].path,
-                        reference.line,
-                        reference.text
-                    );
-                    let style = if rank == at {
-                        Style::default().add_modifier(Modifier::BOLD)
-                    } else {
-                        Style::default().add_modifier(Modifier::DIM)
-                    };
-                    Line::styled(clip(&text, width), style)
-                })
-                .collect();
-            frame.render_widget(
-                Paragraph::new(lines).block(
-                    Block::bordered()
-                        .border_type(BorderType::Rounded)
-                        .title(format!(
-                            "{} {} ({} of {})",
-                            match app.jump_list() {
-                                JumpList::Definitions => "Definitions of",
-                                JumpList::References => "References to",
-                                // No grammar for these files, so this is every
-                                // line that spells the word. Saying so is the
-                                // difference between a list a reviewer can
-                                // trust and one they cannot.
-                                JumpList::Lines => "Lines naming",
-                            },
-                            app.reference_word(),
-                            at + 1,
-                            references.len()
-                        )),
-                ),
-                area,
-            )
-        }
+        Mode::Pick => picker::draw_picker(frame, app, area),
+        Mode::References => picker::draw_jump_list(frame, app, area),
     }
 }
 
@@ -224,6 +120,8 @@ fn status_view(app: &App, now: Instant) -> statusbar::View<'_> {
         status: app.status_line(now),
         busy: app.merging(),
         view_state: view_state(app),
+        navigation: app.navigation_label().unwrap_or_default(),
+        agent: app.agent_label().unwrap_or_default(),
     }
 }
 

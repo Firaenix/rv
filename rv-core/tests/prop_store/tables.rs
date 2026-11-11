@@ -180,6 +180,7 @@ fn session_fields_survive_toml_hostile_strings(#[case] text: &str) {
             description: text.to_owned(),
         }],
         started_at: text.to_owned(),
+        agent_session: None,
         comments: vec![fixed_comment("id0")],
         flags: Vec::new(),
         reviewed: Vec::new(),

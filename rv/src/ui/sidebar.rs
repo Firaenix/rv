@@ -142,7 +142,7 @@ fn browser_row<'a>(app: &App, row: &BrowserRow, width: usize) -> ListItem<'a> {
                     "{}:{} {}{}",
                     "  ".repeat(*depth),
                     flag.anchor.line,
-                    if flag.acknowledged { "⚐ " } else { "⚑ " },
+                    super::flag_row::glyph(flag),
                     flag.reason.lines().next().unwrap_or_default()
                 ),
                 flag_style(flag),

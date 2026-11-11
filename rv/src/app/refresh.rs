@@ -55,7 +55,6 @@ impl App {
     /// [`View`](super::view::View), and the fold state, which describes the
     /// reviewer's screen rather than the repository.
     pub(super) fn refresh(&mut self) -> Result<()> {
-        let (from, to) = self.review.asked.clone();
         let root = self.review.store.root().to_owned();
         // Snapshot first, then rebuild — see the module doc. Nothing here
         // waits on the outcome: a failed snapshot raises an alert and the
@@ -63,7 +62,7 @@ impl App {
         if let Err(message) = snapshot_working_copy(&root) {
             self.raise(message);
         }
-        let review = crate::session::build(&root, from.as_deref(), to.as_deref())?;
+        let review = self.review.reopen()?;
         let selected = self.selected_file().map(|file| file.path.clone());
         let place = self.sidebar_place();
 
@@ -124,6 +123,9 @@ impl App {
         {
             fresh.select_node_file(index)?;
         }
+        fresh.navigation = std::mem::take(&mut self.navigation).reopened(&fresh.review);
+        fresh.assistant = std::mem::take(&mut self.assistant).reopened();
+        fresh.provenance = std::mem::take(&mut self.provenance);
         fresh.status = format!(
             "refreshed — {} files, {} changes, {} comments",
             fresh.review.files.len(),

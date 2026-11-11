@@ -1048,6 +1048,7 @@ fn a_computed_diff_of_every_shape_survives_a_json_round_trip(
         DiffSource::Difftastic { .. } => "difftastic",
         DiffSource::Similar { .. } => "similar",
         DiffSource::Binary => "binary",
+        DiffSource::WholeFile => "whole-file",
     };
     assert_eq!(reached, source, "{diff:#?}");
     assert_eq!(diff.suppressed, suppressed, "{diff:#?}");
@@ -1449,6 +1450,7 @@ proptest! {
         let mut problems = Vec::new();
         match diff.source {
             DiffSource::Binary => problems.push("NUL-free text reported as binary".to_owned()),
+            DiffSource::WholeFile => problems.push("a diff reported as a whole file".to_owned()),
             DiffSource::Similar { .. } => {
                 for line in &diff.lines {
                     let present = (line.left.is_some(), line.right.is_some());

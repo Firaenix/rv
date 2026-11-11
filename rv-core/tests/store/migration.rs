@@ -29,6 +29,7 @@ fn session_toml_roundtrip() {
             description: "do the thing".to_owned(),
         }],
         started_at: "epoch:1755460770".to_owned(),
+        agent_session: None,
         comments: vec![sample_comment("c1"), sample_comment("c2")],
         flags: Vec::new(),
         reviewed: Vec::new(),

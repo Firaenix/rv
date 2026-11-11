@@ -49,6 +49,9 @@ impl App {
         let Some(file) = self.review.files.get(self.file_index) else {
             return Ok(());
         };
+        if self.review.is_tree() {
+            return self.load_whole_file();
+        }
         if self.diffs[self.file_index].is_some() {
             // A fast diff whose refinement was dropped — its request replaced in
             // the slot while the reviewer scrolled past — is re-asked on return.
@@ -130,6 +133,33 @@ impl App {
         if self.engine == DiffEngine::Auto {
             self.refine(self.file_index, old, new);
         }
+        Ok(())
+    }
+
+    /// A tree review's file, read once and shown whole: one blob, no diff
+    /// engine, no refinement and no merge — the lines are already the file.
+    fn load_whole_file(&mut self) -> Result<()> {
+        let index = self.file_index;
+        if self.diffs[index].is_some() {
+            return Ok(());
+        }
+        let path = self.review.files[index].path.clone();
+        let commit = self.review.session.head_commit.clone();
+        let text = self
+            .review
+            .repo
+            .read_blob(&commit, &path)
+            .with_context(|| format!("could not read {path} in the tree under review"))?
+            .unwrap_or_default();
+        let shown = diff::whole_file(&path, &text);
+        let is_text = shown.source == diff::DiffSource::WholeFile;
+        self.diffs[index] = Some(shown);
+        self.watch
+            .follow(self.review.store.root(), std::path::PathBuf::from(&path));
+        if is_text {
+            self.parse_highlights(commit, path, Some(&text));
+        }
+        self.blobs[index] = Some((text.clone(), text));
         Ok(())
     }
 

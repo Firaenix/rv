@@ -25,15 +25,20 @@ use rv_core::store::Comment;
 use rv_core::store::Session;
 use rv_core::store::Store;
 
+pub mod brief;
 mod comments;
 pub mod flags;
 pub mod reviewed;
+mod tree;
 
 pub use comments::add_comment;
 pub use comments::owning_change;
 pub use comments::reply;
 pub use comments::save_comment;
+use rv_core::model::ChangeRef;
 use rv_core::vcs::Repository;
+pub use tree::browse;
+pub use tree::read_tree;
 
 /// The revision the review starts from when the user names none. Rendered into
 /// [`Session::revset`] verbatim, so the string here has to match the default
@@ -59,6 +64,37 @@ pub struct Review {
     /// which is the whole point of refreshing; re-using the resolved commits
     /// would pin the review to the moment it was opened.
     pub asked: (Option<String>, Option<String>),
+    pub kind: ReviewKind,
+}
+
+/// What a review compares: a range's two ends, or one tree with itself.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ReviewKind {
+    Range,
+    /// Every file at `head`, optionally only those under `subpath`. `head` is
+    /// the change a comment is filed under, since no change in a range owns it.
+    Tree {
+        head: ChangeRef,
+        subpath: Option<String>,
+    },
+}
+
+impl Review {
+    #[must_use]
+    pub fn is_tree(&self) -> bool {
+        matches!(self.kind, ReviewKind::Tree { .. })
+    }
+
+    /// The same question asked of the repository as it is now: `@` resolves to
+    /// where `@` has moved, which is the point of asking again.
+    pub fn reopen(&self) -> Result<Self> {
+        let root = self.store.root();
+        let (from, to) = &self.asked;
+        match &self.kind {
+            ReviewKind::Range => build(root, from.as_deref(), to.as_deref()),
+            ReviewKind::Tree { subpath, .. } => browse(root, to.as_deref(), subpath.as_deref()),
+        }
+    }
 }
 
 /// Resolves `base..head` in the workspace at `repo_root` into a [`Review`].
@@ -154,15 +190,7 @@ fn resolve(repo_root: &Path, base: Option<&str>, head: Option<&str>) -> Result<R
         base.unwrap_or(DEFAULT_BASE),
         head.unwrap_or(DEFAULT_HEAD)
     );
-    // `started_at` says when the reviewer started, so it is kept across
-    // re-openings of the same range: re-stamping it on every command would
-    // make it say when they last ran one. A different range is a different
-    // question, and gets now.
-    let started_at = if stored.revset == revset {
-        stored.started_at
-    } else {
-        started_at()
-    };
+    let started_at = kept_start(&stored, &revset);
 
     let session = Session {
         revset,
@@ -173,6 +201,7 @@ fn resolve(repo_root: &Path, base: Option<&str>, head: Option<&str>) -> Result<R
         comments: stored.comments,
         flags: stored.flags,
         reviewed: stored.reviewed,
+        agent_session: stored.agent_session,
     };
 
     Ok(Review {
@@ -181,6 +210,7 @@ fn resolve(repo_root: &Path, base: Option<&str>, head: Option<&str>) -> Result<R
         session,
         files,
         asked: (base.map(str::to_owned), head.map(str::to_owned)),
+        kind: ReviewKind::Range,
     })
 }
 
@@ -236,6 +266,17 @@ fn started_at() -> String {
         .map(|elapsed| elapsed.as_secs())
         .unwrap_or(0);
     format!("epoch:{seconds}")
+}
+
+/// When the reviewer started on `revset`: kept across re-openings, since
+/// re-stamping it on every command would make it say when they last ran one.
+/// A different range is a different question, and gets now.
+fn kept_start(stored: &Session, revset: &str) -> String {
+    if stored.revset == revset {
+        stored.started_at.clone()
+    } else {
+        started_at()
+    }
 }
 
 /// The comments this review can show: the ones anchored to a file it covers.

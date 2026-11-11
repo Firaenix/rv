@@ -217,6 +217,7 @@ pub(super) fn session(text_max: usize, max_changes: usize) -> impl Strategy<Valu
                 head_commit,
                 changes,
                 started_at,
+                agent_session: None,
                 comments,
                 flags: Vec::new(),
                 reviewed: Vec::new(),

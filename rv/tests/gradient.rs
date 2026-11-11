@@ -372,7 +372,8 @@ fn a_file_with_no_line_changes_has_no_ratio() {
     assert_eq!(
         Stat {
             added: 0,
-            removed: 0
+            removed: 0,
+            bytes: 0,
         }
         .added_ratio(),
         None
@@ -380,7 +381,8 @@ fn a_file_with_no_line_changes_has_no_ratio() {
     assert_eq!(
         Stat {
             added: 3,
-            removed: 1
+            removed: 1,
+            bytes: 0,
         }
         .added_ratio(),
         Some(0.75)
@@ -392,7 +394,8 @@ fn a_stat_counts_both_hands() {
     assert_eq!(
         Stat {
             added: 3,
-            removed: 1
+            removed: 1,
+            bytes: 0,
         }
         .total(),
         4
@@ -401,7 +404,8 @@ fn a_stat_counts_both_hands() {
         Stat::default(),
         Stat {
             added: 0,
-            removed: 0
+            removed: 0,
+            bytes: 0,
         }
     );
 }
@@ -412,10 +416,12 @@ fn stats_add_up_so_a_directory_can_stand_for_its_subtree() {
         Stat {
             added: 3,
             removed: 1,
+            bytes: 0,
         },
         Stat {
             added: 0,
             removed: 5,
+            bytes: 0,
         },
         Stat::default(),
     ];
@@ -424,7 +430,8 @@ fn stats_add_up_so_a_directory_can_stand_for_its_subtree() {
         total,
         Stat {
             added: 3,
-            removed: 6
+            removed: 6,
+            bytes: 0,
         }
     );
     assert_eq!(total.added_ratio(), Some(3.0 / 9.0));
@@ -435,6 +442,7 @@ fn a_stat_that_would_overflow_saturates_rather_than_panicking() {
     let huge = Stat {
         added: u32::MAX,
         removed: u32::MAX,
+        bytes: 0,
     };
     assert_eq!(huge.total(), u32::MAX);
     assert_eq!((huge + huge).added, u32::MAX);

@@ -21,6 +21,29 @@ pub struct Flag {
     pub reason: String,
     #[serde(default)]
     pub acknowledged: bool,
+    /// Defaulted on read: every flag written before agents could flag was a
+    /// person's.
+    #[serde(default)]
+    pub by: FlaggedBy,
+}
+
+/// Who raised a flag, in the vocabulary [`super::SettledBy`] uses.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum FlaggedBy {
+    #[default]
+    User,
+    Agent,
+}
+
+impl FlaggedBy {
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            FlaggedBy::User => "user",
+            FlaggedBy::Agent => "agent",
+        }
+    }
 }
 
 impl Store {

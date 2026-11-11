@@ -57,6 +57,11 @@ pub struct View {
     /// it regardless, and that decision belongs to [`crate::layout`], which is
     /// the only place that knows how wide the screen is.
     pub sidebar_hidden: bool,
+    /// Whether the pointer resting on a name opens its hover card.
+    pub hover_on_pointer: bool,
+    /// Whether the head side carries the gutter of which change last touched
+    /// each line — see [`crate::app::provenance`].
+    pub provenance: bool,
 }
 
 impl View {
@@ -78,6 +83,8 @@ impl View {
             view_side: ViewSide::default(),
             info_dismissed: false,
             sidebar_hidden: settings.sidebar_hidden.unwrap_or(false),
+            hover_on_pointer: settings.hover.unwrap_or(false),
+            provenance: settings.provenance.unwrap_or(false),
         }
     }
 }

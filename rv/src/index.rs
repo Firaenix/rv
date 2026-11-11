@@ -113,7 +113,26 @@ pub fn indexed_side(kind: ChangeKind) -> Side {
     anchored_side(match kind {
         ChangeKind::Removed => LineKind::Removed,
         ChangeKind::Added | ChangeKind::Modified | ChangeKind::Renamed => LineKind::Added,
+        ChangeKind::Unchanged => LineKind::Context,
     })
+}
+
+/// The largest file a tree scope reads for symbols: a tree holds generated
+/// and vendored files no reviewer steps through, and parsing them would stall
+/// the first `n`.
+pub const MAX_INDEXED_BYTES: u64 = 512 * 1024;
+
+/// Whether a tree file of `bytes` is small enough to index — `0` when its size
+/// is unknown, which reads it and lets [`indexable_text`] decide.
+#[must_use]
+pub fn worth_indexing(bytes: u64) -> bool {
+    bytes <= MAX_INDEXED_BYTES
+}
+
+/// Whether `blob` is text small enough to index.
+#[must_use]
+pub fn indexable_text(blob: &[u8]) -> bool {
+    worth_indexing(u64::try_from(blob.len()).unwrap_or(u64::MAX)) && !blob.contains(&0)
 }
 
 /// One place a name is used, and where that is.

@@ -34,33 +34,32 @@
 
 use std::fs;
 use std::io::ErrorKind;
-use std::io::Write as _;
 use std::path::Path;
 use std::path::PathBuf;
 
+mod agent;
+mod atomic;
 mod comments;
 mod flags;
+mod key;
 mod reviewed;
 
+pub(crate) use atomic::write_atomic;
 pub use flags::Flag;
+pub use flags::FlaggedBy;
+pub use key::review_key;
+pub use key::tree_review_key;
 pub use reviewed::ReviewedFile;
 pub use reviewed::reviewed_hash;
 
 use serde::Deserialize;
 use serde::Serialize;
-use tempfile::Builder;
 
 use crate::model::Anchor;
 use crate::model::ChangeRef;
 
 /// The line [`Store::ensure_excluded`] appends to `.git/info/exclude`.
 const EXCLUDE_LINE: &str = "/.review/";
-
-/// Prefix on the temp file [`write_atomic`] creates before renaming it into
-/// place, so a leftover (only possible if the process is killed between the
-/// `fsync` and the `rename` — every other early return drops and so deletes
-/// the [`tempfile::NamedTempFile`]) is easy to recognize as `rv`'s.
-const ATOMIC_TEMP_PREFIX: &str = ".rv-store-";
 
 /// Errors from reading or writing `.review/`.
 #[derive(Debug, thiserror::Error)]
@@ -159,6 +158,8 @@ pub struct Session {
     pub head_commit: String,
     pub changes: Vec<ChangeRef>,
     pub started_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_session: Option<String>,
     /// Defaulted on read so that a `session.toml` written before the
     /// consolidation — or hand-trimmed to its scope — still loads.
     #[serde(default)]
@@ -167,40 +168,6 @@ pub struct Session {
     pub flags: Vec<Flag>,
     #[serde(default)]
     pub reviewed: Vec<ReviewedFile>,
-}
-
-/// The identity a review is stored under — what lets two branches be
-/// reviewed on one repo without clobbering each other.
-///
-/// The asked head's own name where it has one: a bookmark survives amends
-/// and rebases, which is exactly the lifetime a review's notes need. The
-/// anonymous working copy gets the one ambient `working-copy` review — `@`
-/// is wherever you are, and a review of "wherever I am" cannot be pinned to
-/// a branch without inventing an identity `jj` does not have. Sanitized to
-/// one path segment, so a revset expression asked as the head cannot escape
-/// `.review/reviews/`.
-#[must_use]
-pub fn review_key(asked_head: Option<&str>) -> String {
-    let raw = match asked_head {
-        Some(name) if name != "@" => name,
-        _ => return "working-copy".to_owned(),
-    };
-    let cleaned: String = raw
-        .chars()
-        .map(|character| {
-            if character.is_ascii_alphanumeric() || matches!(character, '.' | '_' | '-') {
-                character
-            } else {
-                '-'
-            }
-        })
-        .collect();
-    let cleaned = cleaned.trim_start_matches(['.', '-']).to_owned();
-    if cleaned.is_empty() {
-        "review".to_owned()
-    } else {
-        cleaned
-    }
 }
 
 /// A handle on one review's directory — `.review/reviews/<key>/` — under a
@@ -429,51 +396,4 @@ impl Store {
     fn exclude_path(&self) -> PathBuf {
         self.root.join(".git").join("info").join("exclude")
     }
-}
-
-/// Writes `contents` to `path` without ever leaving `path` itself partially
-/// written.
-///
-/// The bytes go to a fresh, uniquely-named temp file created in `path`'s own
-/// directory — never a shared temp directory, since `rename` is only atomic
-/// when source and destination share a filesystem — and are fsynced there
-/// (so the write survives a power loss, not just a killed process) before
-/// the temp file is renamed onto `path`. `rename` on POSIX is atomic: any
-/// reader of `path` sees either the old complete contents or the new
-/// complete contents, never a mix. This function does not additionally
-/// fsync `path`'s parent directory after the rename, so it does not
-/// guarantee the *directory entry* update itself survives a power loss the
-/// instant after `persist` returns — closing that gap needs an extra
-/// directory fsync this module skips as unwarranted complexity for a local
-/// review scratch directory.
-pub(crate) fn write_atomic(path: &Path, contents: &[u8]) -> Result<(), Error> {
-    let dir = path.parent().ok_or_else(|| Error::Io {
-        path: path.to_owned(),
-        source: std::io::Error::new(
-            ErrorKind::InvalidInput,
-            "path has no parent directory to hold its temp file",
-        ),
-    })?;
-
-    let mut temp = Builder::new()
-        .prefix(ATOMIC_TEMP_PREFIX)
-        .suffix(".tmp")
-        .tempfile_in(dir)
-        .map_err(|source| Error::Io {
-            path: dir.to_owned(),
-            source,
-        })?;
-    temp.write_all(contents).map_err(|source| Error::Io {
-        path: path.to_owned(),
-        source,
-    })?;
-    temp.as_file().sync_all().map_err(|source| Error::Io {
-        path: path.to_owned(),
-        source,
-    })?;
-    temp.persist(path).map_err(|error| Error::Io {
-        path: path.to_owned(),
-        source: error.error,
-    })?;
-    Ok(())
 }

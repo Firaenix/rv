@@ -25,10 +25,15 @@ use super::Target;
 /// [`pane_row`].
 #[must_use]
 pub fn hit(layout: &Layout, column: u16, row: u16) -> Option<Target> {
-    if let Some(popup) = layout.popup
+    if let Some(popup) = layout.popup.or(layout.answer)
         && within(popup, column, row)
     {
         return Some(Target::Popup);
+    }
+    if let Some(card) = layout.hover
+        && within(card, column, row)
+    {
+        return Some(Target::Hover);
     }
     // Before the bar, which it is one cell of. Everything else is tested in
     // painting order; this is the one target that sits inside another.

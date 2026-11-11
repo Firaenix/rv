@@ -97,7 +97,33 @@ lying. You never compute any of this — `rv comment` does.
    ```sh
    rv comments --json --state open
    rv flags --json --open
+   rv brief                  # every unsettled note with the code around it now
    ```
+
+   `rv brief` is also the handoff: one self-contained document (or `--json`)
+   with each open comment, its anchor's confidence, an excerpt of the head as
+   it stands, and the exact `rv reply` / `rv resolve` commands that answer it.
+   Point the worker at it rather than paraphrasing your findings.
+
+## Reviewing the whole tree instead of a range
+
+A review can also be of the repository *as it stands* — every file at `@` (or
+`--to REV`), shown whole — rather than of `trunk()..@`. The human opens it
+with `rv browse [PATH]`; every CLI command reaches it with the global
+`--tree` flag:
+
+```sh
+rv --tree status --json
+rv --tree diff <file> --json      # every line is `context`, left == right
+rv --tree comment <file> --line <n> -m "<finding>"
+rv --tree flag <file> --line <n> -m "<why look here>"
+```
+
+The tree review and the range review are **separate stores**: a comment made
+without `--tree` is not in the tree review, and vice versa. Pick one and pass
+the same flags (`--tree`, or `--from`/`--to`) to every command in the loop.
+In a tree review every line is commentable on the `right` side; there are no
+removed lines.
 
 ## What makes a good rv comment
 
@@ -129,3 +155,8 @@ verify, say so in the comment ("unverified: …").
 - Never delete comments — deletion is behind the TUI's human confirmation.
 - Never `rv ack` a flag or `rv review` a file — both record that a *human*
   looked.
+- Never run `rv brief --ask` — it sends the review to the human's configured
+  agent and files that agent's flags; choosing to spend that is theirs.
+- Flags with `"by": "agent"` in `rv flags --json` came from that configured
+  agent (the TUI's `K`/`B`, or `rv brief --ask`). Treat them as another
+  reviewer's pointers: don't duplicate them, and don't `rv unflag` them.

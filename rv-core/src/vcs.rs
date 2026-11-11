@@ -11,8 +11,10 @@
 //! * **Nothing is mutated.** No transaction is started, no working copy is
 //!   snapshotted, nothing under `.jj/` is written.
 
+mod annotate;
 mod errors;
 mod revsets;
+mod tree;
 
 use std::path::Path;
 use std::sync::Arc;
@@ -43,6 +45,8 @@ use jj_lib::revset::SymbolResolverExtension;
 use jj_lib::revset::UserRevsetExpression;
 use jj_lib::workspace::Workspace;
 
+pub use annotate::Annotation;
+pub use annotate::LineOrigin;
 pub use errors::Error;
 pub use errors::LINKED_JJ_LIB;
 use errors::chain;
@@ -50,6 +54,7 @@ use errors::load_error;
 use revsets::settings;
 use revsets::trunk_expression;
 use revsets::working_copy_generations;
+pub use tree::TreeEntry;
 
 use crate::model::ChangeKind;
 use crate::model::ChangeRef;

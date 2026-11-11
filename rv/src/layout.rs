@@ -35,9 +35,12 @@
 //! is the only thing the mode decides, and passing the number of rows keeps
 //! this module from having to know what a mode means.
 
+mod agent;
+mod card;
 mod hit;
 mod split;
 
+pub use card::CardChrome;
 pub use hit::hit;
 pub use split::Split;
 
@@ -137,6 +140,14 @@ pub struct Layout {
     pub toast: Option<Rect>,
     /// The change tooltip, hanging off the highlighted row.
     pub tooltip: Option<Rect>,
+    /// The hover card, over the diff pane — placed by [`Layout::with_card`].
+    pub hover: Option<Rect>,
+    /// The agent's one-line corner, on the diff pane's bottom border, and its
+    /// answer popup — placed by [`Layout::with_agent`].
+    pub corner: Option<Rect>,
+    pub answer: Option<Rect>,
+    /// The tooltip saying an ask is running, top right of the diff pane.
+    pub thinking: Option<Rect>,
     /// The one cell that opens and closes the sidebar by pointer.
     ///
     /// A key is not enough on a phone over ssh, which is the whole reason the
@@ -166,6 +177,8 @@ pub enum Target {
     /// The status line or the comment box.
     Bar,
     Popup,
+    /// The hover card, which covers the diff rows beneath it.
+    Hover,
     /// The one cell that opens and closes the sidebar.
     Chevron,
 }
@@ -237,6 +250,10 @@ pub fn layout(area: Rect, split: Split, chrome: Chrome) -> Layout {
             .and_then(|(row, rows)| beside(sidebar, diff, row, rows))
             .filter(non_empty),
         toast: chrome.toast.then(|| floating(area)).filter(non_empty),
+        hover: None,
+        corner: None,
+        answer: None,
+        thinking: None,
     }
 }
 

@@ -63,6 +63,8 @@ pub enum DiffSource {
     Similar { reason: FallbackReason },
     /// Neither side was diffed: a NUL byte was found on at least one side.
     Binary,
+    /// A tree review's file, every line context: nothing was diffed.
+    WholeFile,
 }
 
 /// Why a diff is a `similar` line diff rather than difftastic's structural

@@ -100,6 +100,23 @@ impl Keymap {
             .unwrap_or_else(|| leader.key())
     }
 
+    /// How a reviewer types `command` from the diff as the keymap now stands,
+    /// leader included — `None` where the config unbound it there.
+    pub(in crate::app) fn chord_for(&self, command: Command) -> Option<String> {
+        let row = self.bindings.iter().find(|row| {
+            row.command == command
+                && (row.contexts.is_empty() || row.contexts.contains(&Context::Diff))
+        })?;
+        Some(match row.leader {
+            Some(leader) => format!(
+                "{} {}",
+                label(KeyCode::Char(self.leader_key(leader))),
+                row.keys_label
+            ),
+            None => row.keys_label.clone(),
+        })
+    }
+
     /// The row `key` runs from `context`, scoped rows ahead of global ones so
     /// a pane-specific bind beats an everywhere bind whatever order the table
     /// holds them in.

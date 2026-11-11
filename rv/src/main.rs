@@ -1,11 +1,13 @@
 //! The `rv` command line.
 //!
-//! One invariant decides who writes what: **only the bare TUI opens a review**
-//! — [`session::build`], which records the session — and every subcommand
-//! resolves the same range through [`session::read`] and writes no session
-//! record. The subcommands fall into two families: queries (`status`, `render`)
+//! One invariant decides who writes what: **only the TUI opens a review** —
+//! [`session::build`] for a range, [`session::browse`] for a tree, each of
+//! which records the session — and every subcommand resolves the same review
+//! through [`session::read`] (or [`session::read_tree`] under `--tree`) and
+//! writes no session record. The subcommands fall into two families: queries (`status`, `render`, `brief`)
 //! and the agent's comment operations (`comment`, `resolve`, `abandon`), which
-//! write comments and the export but never the session.
+//! write comments and the export but never the session. `brief --ask` is the
+//! one query that writes: the agent's flags and its session id.
 //!
 //! # Naming the range
 //!
@@ -72,6 +74,16 @@ struct Cli {
     #[arg(long)]
     no_difft: bool,
 
+    /// Run no agent this time, whatever `[agent]` in Config.toml says.
+    #[arg(long, global = true)]
+    no_agent: bool,
+
+    /// Act on the tree review `rv browse` opens — every file at `--to`
+    /// [default: @] — instead of the range review. A bare `rv --tree` opens
+    /// that review in the reviewer.
+    #[arg(long, global = true)]
+    tree: bool,
+
     #[command(subcommand)]
     command: Option<Command>,
 }
@@ -87,6 +99,25 @@ fn body_from(message: String) -> Result<String> {
     std::io::Read::read_to_string(&mut std::io::stdin(), &mut body)
         .context("could not read the message from stdin")?;
     Ok(body)
+}
+
+fn review_in_tui(review: session::Review, no_difft: bool, no_agent: bool) -> Result<()> {
+    let config = config::load()?;
+    let mut settings = config::load_settings()?;
+    if no_agent {
+        settings.agent = None;
+    }
+    // The flag outranks the settings file: `--no-difft` on the command line is
+    // an answer for this run, whatever the default is.
+    let engine = if no_difft {
+        DiffEngine::Fallback
+    } else {
+        match settings.engine {
+            Some(config::EngineName::Fallback) => DiffEngine::Fallback,
+            Some(config::EngineName::Auto) | None => DiffEngine::Auto,
+        }
+    };
+    App::run_with_config(review, engine, &config, &settings)
 }
 
 fn main() -> ExitCode {
@@ -110,32 +141,39 @@ fn run() -> Result<ExitCode> {
     };
     // `--to` wins over the positional target; see the module docs.
     let head = cli.to.or(cli.target);
+    if cli.tree && cli.from.is_some() {
+        anyhow::bail!("--tree reviews one tree as it stands; --from names a range");
+    }
 
     // A bare `rv` is the reviewer, which is where a review *begins* and so the
     // one command that writes the session record. The subcommands are queries
     // over the same range: `status` reports it and `render` writes only the
     // export, and neither re-points `session.toml`.
-    let read = || session::read(&repo_root, cli.from.as_deref(), head.as_deref());
+    let read = || {
+        if cli.tree {
+            session::read_tree(&repo_root, head.as_deref())
+        } else {
+            session::read(&repo_root, cli.from.as_deref(), head.as_deref())
+        }
+    };
     match cli.command {
-        None => {
-            let config = config::load()?;
-            let settings = config::load_settings()?;
-            // The flag outranks the settings file: `--no-difft` on the command
-            // line is an answer for this run, whatever the default is.
-            let engine = if cli.no_difft {
-                DiffEngine::Fallback
-            } else {
-                match settings.engine {
-                    Some(config::EngineName::Fallback) => DiffEngine::Fallback,
-                    Some(config::EngineName::Auto) | None => DiffEngine::Auto,
-                }
-            };
-            App::run_with_config(
-                session::build(&repo_root, cli.from.as_deref(), head.as_deref())?,
-                engine,
-                &config,
-                &settings,
+        None if cli.tree => {
+            review_in_tui(
+                session::browse(&repo_root, head.as_deref(), None)?,
+                cli.no_difft,
+                cli.no_agent,
             )?;
+            Ok(ExitCode::SUCCESS)
+        }
+        None => {
+            let review = session::build(&repo_root, cli.from.as_deref(), head.as_deref())?;
+            review_in_tui(review, cli.no_difft, cli.no_agent)?;
+            Ok(ExitCode::SUCCESS)
+        }
+        Some(Command::Browse { path, to }) => {
+            let head = to.or(head);
+            let review = session::browse(&repo_root, head.as_deref(), path.as_deref())?;
+            review_in_tui(review, cli.no_difft, cli.no_agent)?;
             Ok(ExitCode::SUCCESS)
         }
         Some(Command::Comment {
@@ -185,12 +223,28 @@ fn run() -> Result<ExitCode> {
             render(&read()?, out.as_deref())?;
             Ok(ExitCode::SUCCESS)
         }
+        Some(Command::Brief {
+            ask: true, context, ..
+        }) => {
+            commands::ask_about_brief(&read()?, context, cli.no_agent)?;
+            Ok(ExitCode::SUCCESS)
+        }
+        Some(Command::Brief {
+            json, out, context, ..
+        }) => {
+            commands::brief(&read()?, json, out.as_deref(), context)?;
+            Ok(ExitCode::SUCCESS)
+        }
         Some(Command::Config) => {
             commands::edit_config()?;
             Ok(ExitCode::SUCCESS)
         }
         Some(Command::Reviews) => {
             commands::reviews(&repo_root)?;
+            Ok(ExitCode::SUCCESS)
+        }
+        Some(Command::Lsp) => {
+            commands::list_language_servers(&repo_root)?;
             Ok(ExitCode::SUCCESS)
         }
         Some(Command::Keymap { show }) => {

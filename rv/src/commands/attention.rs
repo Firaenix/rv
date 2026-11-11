@@ -55,6 +55,7 @@ pub fn flags(review: &Review, json: bool, open_only: bool) -> Result<()> {
                     "line": flag.anchor.line,
                     "reason": flag.reason,
                     "acknowledged": flag.acknowledged,
+                    "by": flag.by.name(),
                 })
             })
             .collect();

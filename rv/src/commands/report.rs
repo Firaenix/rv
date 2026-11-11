@@ -310,5 +310,6 @@ fn kind_name(kind: ChangeKind) -> &'static str {
         ChangeKind::Modified => "modified",
         ChangeKind::Removed => "removed",
         ChangeKind::Renamed => "renamed",
+        ChangeKind::Unchanged => "unchanged",
     }
 }

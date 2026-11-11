@@ -101,6 +101,7 @@ fn protocol_lines() -> usize {
         head_commit: "1".repeat(40),
         changes: Vec::new(),
         started_at: "epoch:0".to_owned(),
+        agent_session: None,
         comments: Vec::new(),
         flags: Vec::new(),
         reviewed: Vec::new(),
@@ -126,6 +127,7 @@ fn session_with(changes: &[&str]) -> Session {
             })
             .collect(),
         started_at: "epoch:1755440000".to_owned(),
+        agent_session: None,
         // `render` takes its comments as an argument; the stored array plays
         // no part in the page.
         comments: Vec::new(),

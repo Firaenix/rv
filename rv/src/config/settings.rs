@@ -9,14 +9,19 @@ use anyhow::Context as _;
 use anyhow::Result;
 use serde::Deserialize;
 
+use super::agent::AgentSettings;
 use crate::tree::Sort;
 
-#[derive(Deserialize, Debug, Default, Clone, Copy)]
+mod lsp;
+
+#[derive(Deserialize, Debug, Default, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct Settings {
     /// Open the file list as a tree rather than a flat list.
     pub tree: Option<bool>,
-    /// The file list's initial order: `natural`, `added` or `removed`.
+    /// The file list's initial order: `natural` (or `path`), `added`,
+    /// `removed` or `size` — the last for `rv browse`, whose files changed
+    /// nothing.
     pub sort: Option<SortName>,
     /// Open the diff with full-file context (the default) or changes only.
     pub full_context: Option<bool>,
@@ -45,6 +50,30 @@ pub struct Settings {
     /// in the commits list, rather than clipping the subject to one. Off by
     /// default — one row per commit is what fits the most changes on screen.
     pub wrap_commit_subjects: Option<bool>,
+    /// Open a symbol's hover card when the pointer rests on its name. Off by
+    /// default: motion reporting is terminal-dependent, and `g i` is the key.
+    pub hover: Option<bool>,
+    /// Open with the line provenance gutter showing. Off by default.
+    pub provenance: Option<bool>,
+    /// `off` (the default) or `auto`: refine `g d`, `g r` and `g i` with a
+    /// language server when the reviewed head is the working copy.
+    pub lsp: Option<lsp::LspMode>,
+    /// Which server runs for which language, overriding the built-in.
+    pub lsp_servers: Option<lsp::LspServers>,
+    /// The agent CLI rv may run; absent, rv runs none.
+    pub agent: Option<AgentSettings>,
+}
+
+impl Settings {
+    pub fn validate(&self) -> Result<()> {
+        self.agent.as_ref().map_or(Ok(()), AgentSettings::validate)
+    }
+
+    /// What `--no-agent` and an absent `[agent]` both come to: `None`.
+    #[must_use]
+    pub fn agent_config(&self) -> Option<rv_core::agent::AgentConfig> {
+        self.agent.as_ref().and_then(AgentSettings::to_config)
+    }
 }
 
 #[derive(Deserialize, Debug, Clone, Copy)]
@@ -57,9 +86,11 @@ pub enum EngineName {
 #[derive(Deserialize, Debug, Clone, Copy)]
 #[serde(rename_all = "lowercase")]
 pub enum SortName {
+    #[serde(alias = "path")]
     Natural,
     Added,
     Removed,
+    Size,
 }
 
 impl From<SortName> for Sort {
@@ -68,6 +99,7 @@ impl From<SortName> for Sort {
             SortName::Natural => Sort::Natural,
             SortName::Added => Sort::Added,
             SortName::Removed => Sort::Removed,
+            SortName::Size => Sort::Size,
         }
     }
 }
@@ -86,7 +118,12 @@ pub fn load_settings() -> Result<Settings> {
     }
     let text = std::fs::read_to_string(&path)
         .with_context(|| format!("could not read {}", path.display()))?;
-    toml::from_str(&text).with_context(|| format!("could not parse {}", path.display()))
+    let settings: Settings =
+        toml::from_str(&text).with_context(|| format!("could not parse {}", path.display()))?;
+    settings
+        .validate()
+        .with_context(|| format!("could not use {}", path.display()))?;
+    Ok(settings)
 }
 
 #[cfg(test)]

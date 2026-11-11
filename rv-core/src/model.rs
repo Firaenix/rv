@@ -30,6 +30,8 @@ pub enum ChangeKind {
     Modified,
     Removed,
     Renamed,
+    /// A file a tree review lists as it stands, compared with nothing.
+    Unchanged,
 }
 
 /// A file that differs between the two endpoints of the review.

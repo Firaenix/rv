@@ -5,6 +5,7 @@ use anyhow::Context as _;
 use anyhow::Result;
 use rv_core::diff::DiffLine;
 use rv_core::store::Flag;
+use rv_core::store::FlaggedBy;
 
 use super::App;
 use super::Focus;
@@ -169,13 +170,14 @@ impl App {
         Ok(())
     }
 
-    /// Every flag in the review in reading order: by file as the review
-    /// lists it, then by line.
-    fn flags_in_order(&self) -> Vec<(usize, usize)> {
+    /// Every flag in the review in reading order — only `by`'s, where given —
+    /// by file as the review lists it, then by line.
+    fn flags_in_order(&self, by: Option<FlaggedBy>) -> Vec<(usize, usize)> {
         let mut order: Vec<(usize, usize)> = self
             .flags
             .iter()
             .enumerate()
+            .filter(|(_, flag)| by.is_none_or(|by| flag.by == by))
             .filter_map(|(index, flag)| {
                 let file = self.review.files.iter().position(|file| {
                     file.path == flag.anchor.file
@@ -188,16 +190,20 @@ impl App {
         order
     }
 
-    pub(super) fn has_flags(&self) -> bool {
-        !self.flags_in_order().is_empty()
+    pub(super) fn has_flags(&self, by: Option<FlaggedBy>) -> bool {
+        !self.flags_in_order(by).is_empty()
     }
 
-    /// `g f` / `g F`: to the next or previous flag after the cursor, wrapping
-    /// round the review.
-    pub(super) fn jump_flag(&mut self, forward: bool) -> Result<()> {
-        let order = self.flags_in_order();
+    /// `g f` / `g F` (and `g a` / `g A` for the agent's): to the next or
+    /// previous flag after the cursor, wrapping round the review.
+    pub(super) fn jump_flag(&mut self, forward: bool, by: Option<FlaggedBy>) -> Result<()> {
+        let order = self.flags_in_order(by);
         if order.is_empty() {
-            self.status = "no flags in this review".to_owned();
+            self.status = match by {
+                Some(FlaggedBy::Agent) => "no agent flags in this review",
+                _ => "no flags in this review",
+            }
+            .to_owned();
             return Ok(());
         }
         let here_line = self

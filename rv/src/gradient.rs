@@ -141,11 +141,13 @@ pub fn readable_on(background: Rgb) -> Rgb {
     }
 }
 
-/// How many lines a file (or a subtree of them) added and removed.
+/// How many lines a file (or a subtree of them) added and removed, and — in a
+/// tree review, which changed nothing — how big it is.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Stat {
     pub added: u32,
     pub removed: u32,
+    pub bytes: u64,
 }
 
 impl Stat {
@@ -176,6 +178,7 @@ impl Add for Stat {
         Self {
             added: self.added.saturating_add(other.added),
             removed: self.removed.saturating_add(other.removed),
+            bytes: self.bytes.saturating_add(other.bytes),
         }
     }
 }

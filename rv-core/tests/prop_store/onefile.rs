@@ -192,6 +192,7 @@ proptest! {
             head_commit: "def456".to_owned(),
             changes: changes.clone(),
             started_at: "epoch:1755460770".to_owned(),
+            agent_session: None,
             comments: Vec::new(),
         flags: Vec::new(),
         reviewed: Vec::new(),
