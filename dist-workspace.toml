@@ -25,6 +25,12 @@ cargo-dist-version = "0.32.0"
 # Whether to install an updater program
 install-updater = false
 
+# dist 0.32 builds aarch64-apple-darwin on `macos-14`, an image GitHub no
+# longer serves ("The configuration 'macos-14-arm64-us-default' is not
+# supported"), which cancelled the v2.7.0 release. `macos-15` is arm64.
+[dist.github-custom-runners]
+aarch64-apple-darwin = "macos-15"
+
 # rv shells out to `difft` for its structural diff and degrades to an
 # in-process fallback without it. The nix package wraps difftastic onto the
 # binary's PATH; `stage = ["run"]` is how the Homebrew formula says the same
