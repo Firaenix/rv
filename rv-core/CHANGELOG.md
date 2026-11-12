@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.7.1](https://github.com/Firaenix/rv/compare/v2.7.0...v2.7.1) - 2026-11-12
+
+### Fixed
+
+- *(ci)* build aarch64-apple-darwin on macos-15; 2.7.0 was never published
+
 ## [2.7.0](https://github.com/Firaenix/rv/compare/v2.6.0...v2.7.0) - 2026-11-12
 
 ### Added
