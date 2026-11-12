@@ -12,6 +12,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - review the whole tree, navigate with a language server, and hand the review to an agent
+  - `rv browse [PATH] [--to REV]` reviews the tree as it stands: every file shown whole, with comments, flags and ticks working as in a range review. Every subcommand reaches it with the global `--tree`.
+  - `g i` symbol card, `g o` open a file, `g s` search the repo, `g b` jump back; `hover = true` opens the card when the pointer rests on a name.
+  - `lsp = "auto"`: `g d`, `g r` and `g i` ask a language server and swap its answer in over tree-sitter's. Servers are discovered per language (rust-analyzer, gopls, typescript-language-server, pyright, clangd, zls, nixd, …) on `PATH`, in installer directories and in the repo's untracked tool directories. `rv lsp` shows what was found.
+  - `rv brief [--json] [--out PATH] [--context N]`: the review's unsettled notes as one self-contained handoff, with the code around each anchor as it stands now and the commands that answer it.
+  - `[agent]` in Config.toml runs a CLI you choose (maki, claude) with the prompt on stdin. `K` asks about a line, `B` briefs the whole review, `a` shows the answer, `g a`/`g A` walk the agent's flags (`✦`), and a tooltip top right shows a running ask. `rv brief --ask` does the same from the CLI. rv itself still makes no model call.
+  - `v p` shows which change last touched each line; `i` names it.
+  - The column cursor is a single block cell in the character's own colour, and a selected unchanged line is a faint lift rather than a grey band.
 
 ## [2.6.0](https://github.com/Firaenix/rv/compare/v2.5.0...v2.6.0) - 2026-10-21
 
